@@ -541,3 +541,101 @@ theorem gamesKeyed_reuse (r : gamesSys.Req) (key : String) (w : gamesKeyed.World
   Keyed.keyed_reuse r key () w f res h hf
 
 end PrivateGames.Model
+
+/-! ## Keyed replay after any interleaving, for the model's own receipts -/
+
+namespace PrivateGames.Model
+
+open LeanApi LeanApi.Props PrivateGames.App
+
+/-- No proved route removes or changes a receipt: receipts only grow. -/
+theorem step_receipts (r : Req) (w : World) : ∃ xs, (step r w).2.receipts = w.receipts ++ xs := by
+  have hrec : ∀ (p : PlayerId) (k : Option Keyed) (res : Res) (w : World),
+      ∃ xs, (recordReceipt p k res w).receipts = w.receipts ++ xs := by
+    intro p k res w; cases k with
+    | none => exact ⟨[], by simp [recordReceipt]⟩
+    | some k => exact ⟨_, rfl⟩
+  unfold step
+  cases Router.resolveIn entries .redirect r with
+  | respond _ => exact ⟨[], by simp⟩
+  | route op ps =>
+    simp only [operate]
+    cases authenticate { r with params := ps } w with
+    | error _ => exact ⟨[], by simp⟩
+    | ok q =>
+      simp only
+      cases decode op { r with params := ps } with
+      | error _ => exact ⟨[], by simp⟩
+      | ok i =>
+        simp only
+        cases core q i (load q w i.need) with
+        | respond _ => exact ⟨[], by simp [runPlan]⟩
+        | write wr k b =>
+          cases wr with
+          | insertGame g => simp only [runPlan, commit]; exact hrec _ _ _ _
+          | updateGame old new =>
+            simp only [runPlan, commit]; split
+            · exact hrec _ _ _ _
+            · exact ⟨[], by simp⟩
+
+theorem runReqs_receipts (rs : List Req) (w : World) :
+    ∃ xs, (runReqs rs w).receipts = w.receipts ++ xs ∧ (runReqs rs w).sessions = w.sessions := by
+  induction rs generalizing w with
+  | nil => exact ⟨[], by simp [runReqs], rfl⟩
+  | cons r rs ih =>
+    obtain ⟨xs, h1, h2⟩ := ih (step r w).2
+    obtain ⟨ys, h3⟩ := step_receipts r w
+    refine ⟨ys ++ xs, ?_, ?_⟩
+    · show (runReqs rs (step r w).2).receipts = _; rw [h1, h3, List.append_assoc]
+    · show (runReqs rs (step r w).2).sessions = _; rw [h2, step_sessions]
+
+/-- A receipt found by the scoped load stays the first match after any
+    later requests. -/
+theorem find_receipt_stable (p : PlayerId) (k : Keyed) (w : World) (rs : List Req) (e : ReceiptKey × Receipt)
+    (h : (ownReceipts p w).find? (fun (x : ReceiptKey × Receipt) => x.1.op = k.op ∧ x.1.key = k.key) = some e) :
+    (ownReceipts p (runReqs rs w)).find? (fun (x : ReceiptKey × Receipt) => x.1.op = k.op ∧ x.1.key = k.key) = some e := by
+  obtain ⟨xs, hx, _⟩ := runReqs_receipts rs w
+  simp only [ownReceipts] at h ⊢
+  rw [hx, List.filter_append, List.find?_append, h]; rfl
+
+/-- **Keyed idempotence after any interleaving, for the model itself.**
+    Like `keyed_replay`, but any sequence of requests (from any player,
+    keyed or not) may run between the committed keyed request and its
+    replay. The replay returns the recorded response, marked, and changes
+    nothing. This is the model's own receipt path, not the `Keyed`
+    wrapper. -/
+theorem keyed_replay_after (r : Req) (w : World) (p : PlayerId) (op : Op) (ps : List (String × String))
+    (i : Input) (k : Keyed) (wr : Write) (build : Game → Res)
+    (hroute : Router.resolveIn entries .redirect r = .route op ps)
+    (hauth : authenticate { r with params := ps } w = .ok p)
+    (hdec : decode op { r with params := ps } = .ok i)
+    (hk : i.keyed = some k)
+    (hfresh : Fresh p k w)
+    (hplan : core p i (load p w i.need) = .write wr (some k) build)
+    (hcommitted : (commit p wr (some k) build w).1 ≠ hidden ∨ ∃ g, wr = .insertGame g)
+    (rs : List Req) :
+    step r (runReqs rs (step r w).2) = (markReplay (step r w).1, runReqs rs (step r w).2) := by
+  have hfirst : step r w = commit p wr (some k) build w := by
+    rw [resolve_route_params hroute]; simp only [operate, hauth, hdec, hplan, runPlan]
+  rw [hfirst]
+  generalize hwn : runReqs rs (commit p wr (some k) build w).2 = wn
+  obtain ⟨_, _, hs⟩ := runReqs_receipts rs (commit p wr (some k) build w).2
+  rw [hwn] at hs
+  have hs0 : (commit p wr (some k) build w).2.sessions = w.sessions := by
+    cases wr with
+    | insertGame g => simp [commit, (record_fields _ _ _ _).1]
+    | updateGame old new =>
+      simp only [commit]; split
+      · exact (record_fields _ _ _ _).1
+      · rfl
+  have hauth' : authenticate { r with params := ps } wn = .ok p := by
+    rw [authenticate_view (hs.trans hs0), hauth]
+  have hfind := find_receipt_stable p k _ rs _ (commit_records p wr k build w hfresh hcommitted)
+  rw [hwn] at hfind
+  have hrc := load_receipt p wn i k _ hk hfind
+  rw [resolve_route_params hroute]
+  simp only [operate, hauth', hdec]
+  rw [core_replay p i _ k _ hk hrc rfl]
+  simp [runPlan, Receipt.toRes, Receipt.ofRes]
+
+end PrivateGames.Model

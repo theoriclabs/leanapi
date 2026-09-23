@@ -135,3 +135,5 @@ PrivateGames.Model.Shapes PrivateGames.Model.gamesKeyed_reuse
 PrivateGames.Model.Shapes PrivateGames.Model.step_sessions
 PrivateGames.Model.Shapes PrivateGames.Model.byCoalition_of_auth
 LeanApi.Props.Bridge LeanApi.Proofs.ScopedApp.safe_of_pure_plans
+PrivateGames.Model.Shapes PrivateGames.Model.step_receipts
+PrivateGames.Model.Shapes PrivateGames.Model.keyed_replay_after

@@ -51,7 +51,8 @@ player and token tables. They reveal whether a name is taken, by design.
 |---|---|---|
 | For a request that authenticates as `p`, only `p`'s view (sessions, visible games in order, own receipts, player ids, next id) matters for the complete response (status, all headers, body bytes), even if another player's view differs | **Proved** | `PrivateGames.Model.step_noninterference_caller`, `PrivateGames.Model.generic_isolation_caller` |
 | If two worlds agree on every player's view, responses are identical and the successor worlds again agree | **Proved** | `PrivateGames.Model.step_noninterference` |
-| The caller view is not vacuous: for every player, two different worlds look the same to them (hiddenness witness); the all-players view is detected as having none | **Proved** | `PrivateGames.Model.gamesObs_hidden`, `LeanApi.Props.Observation.not_hidden_of_injective` |
+| The caller view is not vacuous: for every player, two different worlds look the same to them (hiddenness witness) | **Proved** | `PrivateGames.Model.gamesObs_hidden` |
+| An observation whose view determines the world has no hiddenness witness (review C1); the search reports the all-players view as such | **Checked** | `LeanApi.Props.Observation.not_hidden_of_injective` (proved, generic); `tests/Tests/Props.lean` "hiddenness witness" (search) |
 | A request that authenticates as `p` preserves `p`'s view in the successor worlds, even if other players' views differ | **Proved** | `PrivateGames.Model.step_view_caller` |
 | Trace noninterference for a coalition: after any sequence of requests by coalition members, every member's response depends only on what the coalition can see together | **Proved** | `PrivateGames.Model.trace_noninterference`, `PrivateGames.Model.byCoalition_of_auth` |
 | Existence privacy: a game you do not participate in is indistinguishable from a game that does not exist | **Proved** | `PrivateGames.Model.existence_private` |
@@ -70,8 +71,9 @@ the total number of games; this is decision 0009's known release.
 | Claim | Status | Where |
 |---|---|---|
 | Immediate keyed replay after a successful write with a fresh key returns the recorded response with `Idempotent-Replayed: true` and leaves the model world unchanged | **Proved** | `PrivateGames.Model.keyed_replay` |
-| Keyed replay after any sequence of intervening requests, from anyone, returns the first response and changes nothing (library `Keyed` transformer over the list ledger) | **Proved** | `PrivateGames.Model.gamesKeyed_replay_after`, `LeanApi.Props.Keyed.keyed_replay_after`, `LeanApi.Props.listLedger_laws` |
-| Reusing a key with different input is refused and changes nothing (keyed model) | **Proved** | `PrivateGames.Model.gamesKeyed_reuse`, `LeanApi.Props.Keyed.keyed_reuse` |
+| Keyed replay after any sequence of intervening requests, from any player, returns the recorded response (marked) and changes nothing, in the model's own receipt path. Same premises as the immediate replay | **Proved** | `PrivateGames.Model.keyed_replay_after`, `PrivateGames.Model.step_receipts` |
+| The same holds for any system wrapped by the library's `Keyed` transformer with a ledger satisfying `LedgerLaws`; private-games instantiated with the list ledger | **Proved** | `LeanApi.Props.Keyed.keyed_replay_after`, `LeanApi.Props.listLedger_laws`, `PrivateGames.Model.gamesKeyed_replay_after` |
+| Reusing a key with different input is refused and changes nothing (`Keyed` wrapper over the model; the model's own `keyReused` branch has no separate theorem) | **Proved** | `PrivateGames.Model.gamesKeyed_reuse`, `LeanApi.Props.Keyed.keyed_reuse` |
 | Reusing a key with different input is refused (422) natively | **Checked** | `tests/Tests/Games.lean` "keyed idempotence" |
 | Resigning twice has the same domain state effect; the model's second unkeyed resignation leaves its state unchanged | **Proved** | `PrivateGames.resign_idem`, `PrivateGames.resign_resign`, `PrivateGames.Model.resign_state_idem` |
 | Reads (`GET /games`, `GET /games/{id}`) never change the world, on any branch, and so preserve every invariant | **Proved** | `PrivateGames.Model.reads_safe`, `LeanApi.Proofs.ScopedApp.safe_of_pure_plans`, `PrivateGames.Model.reads_preserve` |
@@ -120,7 +122,7 @@ is decision 0010.
 | Any `ScopedApp` whose authentication, scoped load and run response depend only on one caller's view has identical responses when only that view matches | **Proved** | `LeanApi.Proofs.ScopedApp.step_noninterference_caller` |
 | Under the stronger premise that every actor's view matches, the relation is also preserved across one step | **Proved** | `LeanApi.Proofs.ScopedApp.step_noninterference` |
 | private-games discharges both sets of obligations; its routed steps coincide with the M6 model | **Proved** | `PrivateGames.Model.gamesApp_caller_obligations`, `PrivateGames.Model.gamesApp_obligations`, `PrivateGames.Model.gamesApp_step_route` |
-| A second app with a different policy (notes shared with other users) discharges both sets too | **Checked** | `Notes.Shared.callerObligations`, `Notes.Shared.isolation_caller` (audited; Notes is not imported here) |
+| A second app with a different policy (notes shared with other users) discharges both sets too | **Proved** | `Notes.Shared.callerObligations`, `Notes.Shared.isolation_caller`, `Notes.Shared.obligations`, `Notes.Shared.isolation` |
 | Invariant kernel: `Inductive` gives `Invariant`; `I` is an invariant iff every initial world satisfies its weakest inductive strengthening; a counterexample to induction from a reachable world refutes `I` | **Proved** | `LeanApi.Props.Invariant.of_inductive`, `LeanApi.Props.invariant_iff`, `LeanApi.Props.CTI.not_invariant` |
 | Entity invariants lift to the store with one obligation per writer kind; unique ids are inductive with `Fresh` and not without it | **Proved** | `LeanApi.Props.ListStore.allOf_inductive`, `LeanApi.Props.ListStore.ids_invariant`, `LeanApi.Props.ListStore.unique_not_inductive` |
 | Invariants and step properties transfer along simulations; step properties are invariants of the transition-augmented system | **Proved** | `LeanApi.Props.Invariant.pullback`, `LeanApi.Props.StepProp.pullback`, `LeanApi.Props.stepInv_iff` |
@@ -167,9 +169,9 @@ is decision 0010.
 - Proof (not test) that the native shell refines the model.
 - Concurrency in the model.
 - Receipt expiry.
-- The keyed theorems are proved for the `Keyed` transformer over the model
-  with the list ledger. That the LeanDB receipt table satisfies
-  `LedgerLaws` (unique index on actor, op and key; written in the same
+- The keyed theorems are about the model (and the generic `Keyed`
+  wrapper). That the LeanDB receipt table behaves like the model's receipt
+  list (unique index on actor, op and key; written in the same
   transaction) is **checked** by the restart and concurrency tests, not
   proved.
 
