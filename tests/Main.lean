@@ -5,6 +5,8 @@ import Tests.Auth
 import Tests.Games
 import Tests.Differential
 import Tests.Tier2
+import Tests.Props
+import Tests.PropsCommands
 
 open LeanApi.Test
 
@@ -17,6 +19,7 @@ def main : IO UInt32 := do
     Tests.Games.run
     Tests.Differential.run
     Tests.Tier2.run
+    Tests.Props.run
     : TestM Unit).run {}
   IO.println s!"\n{r.passed} passed, {r.failed.length} failed"
   return if r.failed.isEmpty then 0 else 1

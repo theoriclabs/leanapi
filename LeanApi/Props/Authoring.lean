@@ -265,6 +265,21 @@ def closeField (hI : Option Name) (lemmas : Array Term) (g : MVarId) : TacticM (
     if let some [] ← tryOn g a then return []
   return [g]
 
+/-- Split a goal `N x` for a structure `N` into one goal per field, tagged
+    with the field name (so the frame closer and the report can use it). -/
+def splitFields (g : MVarId) : TacticM (List MVarId) := do
+  let tag ← g.getTag
+  let sn? ← g.withContext do return (← whnfR (← instantiateMVars (← g.getType))).getAppFn.constName?
+  let some gs ← tryOn g (evalTactic (← `(tactic| constructor))) | return [g]
+  if let some sn := sn? then
+    let env ← getEnv
+    if isStructure env sn then
+      let fs := getStructureFields env sn
+      if fs.size == gs.length then
+        for (g', f) in gs.zip fs.toList do
+          g'.setTag (tag ++ f)
+  return gs
+
 /-- Unfold the decision in `h`, split on its branches, close refusals, split
     the invariant into fields, and close every routine field. The remaining
     goals are tagged with the field name; branch conditions are `c₁, c₂, …`. -/
@@ -286,7 +301,7 @@ def invariantCasesCore (h : Name) (hI : Option Name) (lemmas : Array Term) : Tac
   let mut remaining := []
   for b in branches do
     let b ← nameBranchConditions b
-    let fields := (← tryOn b (evalTactic (← `(tactic| constructor)))).getD [b]
+    let fields ← splitFields b
     for fg in fields do
       remaining := remaining ++ (← closeField hI lemmas fg)
   replaceMainGoal remaining

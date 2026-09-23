@@ -8,3 +8,5 @@ import LeanApi.Props.Bridge
 import LeanApi.Props.Registry
 import LeanApi.Props.Authoring
 import LeanApi.Props.Stored
+import LeanApi.Props.Enumerate
+import LeanApi.Props.Check
