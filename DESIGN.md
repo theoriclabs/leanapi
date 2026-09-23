@@ -418,7 +418,7 @@ That split comes from how `Reads` is defined, not from LeanDB. What the proofs n
 
 LeanDB already provides both, as long as queries are treated as **values** rather than as `IO` code:
 
-- **Reads are distinguishable by value, not by monad.** `DbM` is `ReaderT Conn (ExceptT DbError IO)` (`LeanDb/Db.lean:142`), and `untrackedSqlite` hands out the raw handle, so a function of type `DbM α` may write. A query value is different: `select ts where' sortBy`, with its plan reified as a `Pred ts` and a `Footprint` of the tables and columns it touches (`Pred.lean:270`). A handler built only from query values is read-only by construction.
+- **Reads can be distinguished by value, not by monad.** `DbM` is `ReaderT Conn (ExceptT DbError IO)` (`LeanDb/Db.lean:142`), and `untrackedSqlite` hands out the raw handle, so a function of type `DbM α` may write. A query's plan is already data: a `Pred ts`, with a `Footprint` of the tables and columns it touches (`Pred.lean:270`). A handler built only from query values would be read-only by construction. **Correction:** today `select …` itself is a `DbM` action, not a value; only the tuple `(ts, Pred, SortBy)` is data. LeanDB needs query and transaction values; [docs/QUERIES.md](docs/QUERIES.md) designs them.
 - **What a query returns has a pure meaning.**
   - `selectSpec` (`Select.lean:153`) defines the result: gather rows from any `Source m`, then filter with the Lean predicate and sort.
   - `select` pushes `plan.approx` into SQL and re-applies the Lean predicate to what comes back. `approx_sound` proves the pushdown never excludes a row the plan accepts.
@@ -457,7 +457,7 @@ What it needs:
 - **In LeanAPI:** `Reads`/`Writes` over a query and write-plan signature (a small free structure, so a later query can depend on an earlier result), with the two interpreters above, and the `Handler` laws restated over the pure interpretation.
 - **In LeanDB:** a pure meaning for writes (insert, update, append, delete as functions on table contents; today only reads have one); query values usable outside `DbM`; and an in-memory `Source` for `selectSpec`.
 
-The open choices are in Q13.
+The open choices are in Q13. The design of the query and transaction language LeanDB needs, what exists, the LeanDB bugs that stand in the way, and how proofs carry over to the API are in [docs/QUERIES.md](docs/QUERIES.md); the staging is PLAN.md M13–M16.
 
 ## 8. Proof surface
 

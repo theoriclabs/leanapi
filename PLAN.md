@@ -401,6 +401,90 @@ flowchart LR
 | The kernel's `Sys` doesn't fit real apps | M8 must instantiate private-games through `ScopedApp.toSys` before M9 starts |
 | Generated evidence hides nuance | Only claim tables are generated; scopes and assumptions stay hand-written prose |
 
+## Next: one API over LeanDB (M13–M16)
+
+The design is [docs/QUERIES.md](docs/QUERIES.md). **The goal:** each endpoint is one definition over LeanDB query and transaction *values*. Its pure meaning is what the API proofs are about, and LeanDB runs the same value in production. The only trusted step is LeanDB's: executing a value equals its meaning. That carries every API theorem to the running service.
+
+M13–M15 are LeanDB work, in the LeanDB repository (`theoriclabs/LeanDB`), as LDB tickets. M16 is LeanAPI work, on the new LeanDB release.
+
+```mermaid
+flowchart LR
+    M13["M13 LeanDB fixes"] --> M14["M14 Values and<br/>their meaning"]
+    M14 --> M15["M15 Laws"]
+    M14 --> M16["M16 LeanAPI on<br/>LeanDB programs"]
+    M15 --> M16
+```
+
+| Milestone | Where | Ships | Size |
+|---|---|---|---|
+| M13 Fixes | LeanDB | The seven bugs of QUERIES.md §6 | S |
+| M14 Values | LeanDB | `DbState`, `Query`/`Agg`, `WriteOp`, `Prog`/`Reads`/`Txn`, their meaning and compilation, the execution-equals-meaning differential harness | L |
+| M15 Laws | LeanDB | Exact plans, aggregates, codec laws, frame lemmas, well-formedness preservation, write algebra, `run = denote` | L |
+| M16 LeanAPI | LeanAPI | `Reads`/`Writes` as LeanDB programs, private-games on the schema, theorems re-established, `Model/` and the hand-written service deleted | L |
+
+### M13: LeanDB fixes
+
+Independent of the new language, and worth shipping first. Each gets a regression test.
+
+1. Apply `order`/`window` after the residual filter unless the plan is exact. Fixes the `existsP` false negatives and pagination (`Db.lean:629`, `:1164`, `:1168`).
+2. Make `SqlOrd` lawful: bound `Nat` columns or remove `SqlOrd Nat` (`Core.lean:245-254`).
+3. `Runtime.Service.withReader`: lock readers per connection; never hand out the writer connection as a reader (`Runtime.lean:162-176`).
+4. SAVEPOINT around multi-statement verbs that join an outer transaction (`Db.lean:387`).
+5. Reject opaque leaves in `patch` guards (`Db.lean:1195`).
+6. `count`/`exists?`: honour the lambda's residual, or refuse non-exact plans (`Db.lean:1158`, `:1176`).
+7. `Snapshot.rows`: fail on undecodable rows instead of dropping them (`Pred.lean:197-201`).
+8. Publish the deferred read snapshot (currently private, `Db.lean:380`); LeanAPI's `Repo.readSnapshot` then goes away.
+
+**Exit:** a LeanDB release with the fixes. LeanAPI pins it and all its tests pass.
+
+### M14: Values and their meaning
+
+- **Pure database state.** `DbState` holds, per table, the AUTOINCREMENT counter and the rows in id order, with child lists. Also `DbState.WF`: every row decodes, satisfies its invariant, and every constraint holds.
+- **Queries.** `Query ts` holds a `Pred`, typed order keys ending in the id, and a `Window`; `Agg` is `rows`, `count`, `exists` or `first`. The meaning extends `selectSpec`. The SQL pushes the window and aggregate only for exact plans.
+- **Writes.** `WriteOp` (`insert`, `update`, `append`, `patch`, `delete`) with `denote : DbState → Except DbError (β × DbState)`. It models id assignment, CAS with `IS` semantics, list replacement or growth, unique/foreign-key/restrict/cascade, enum checks and invariants, and which error comes first.
+- **Programs.** `Prog` is a free monad. `Reads := Prog ReadOp` has no write constructor; `Txn` has reads and writes. `Reads` executes in one deferred transaction; `Txn` under `BEGIN IMMEDIATE`, with a SAVEPOINT per write.
+- **Surface syntax.** The lambda form of `select` elaborates to a `Query` and is refused when it cannot be planned exactly where exactness matters (windows, counts).
+- **The execution-equals-meaning harness.** Random well-formed `DbState`s and random `Query`/`WriteOp`/`Prog` values run against SQLite and against `denote`; results and final states are compared. It ships in LeanDB and runs in its CI.
+
+**Exit:** the harness passes on a schema with joins, child lists, unique indexes, foreign keys and invariants, and the private-games schema expresses every query and write that `Storage/Repo.lean` performs today.
+
+### M15: Laws
+
+Proved in LeanDB and audited as LeanAPI's theorems are:
+- **Exact plans:** no opaque leaf implies `approx = pred`.
+- **Aggregates:** `count`, `exists` and `first` are functions of `rows`.
+- **Codecs:** `ColCodec` gains a round-trip law and `LawfulSqlOrd` an order-preservation law; existing codecs are proved.
+- **Frame lemmas:** a query's meaning depends only on its footprint's tables; a write changes only its table, its children and cascades. Footprints become part of query and write values.
+- **Well-formedness:** every successful `WriteOp` preserves `WF`.
+- **Write algebra:** fresh ids; CAS succeeds exactly when the stored row equals `old`; `get` after `insert` or `delete`.
+- **Programs:** `run p = denote p` for `Reads` and `Txn`, by induction from the per-operation trusted step.
+
+**Exit:** all laws proved, with no `sorry` and only the standard axioms. The trusted base of LeanDB is exactly: per-operation execution equals meaning on well-formed states (checked by the M14 harness), and SQLite's semantics.
+
+### M16: LeanAPI on LeanDB programs
+
+- **Endpoints.** `Reads`/`Writes` in `LeanApi.Http.Endpoint` become LeanDB `Reads`/`Txn` over a schema. `Handler`'s laws (`step_safe`, `Preserved`, `Isolated`) are restated over `denote`. `Api.toSys` is over `DbState`.
+- **Runtime.** Each request runs its program in one LeanDB transaction; `Env` stays as it is.
+- **Proof carry-over.** A framework theorem: for a well-formed state, the running service's answer and new state equal `Api.step`'s. Every API theorem therefore holds of production, relative to LeanDB's trusted step.
+- **Isolation.** `SameView` is defined from scoped queries. Restricted logical reads (every query issued for `p` is scoped to `p`) are proved on the `Pred` values.
+- **private-games.**
+  - `gamesApi` is written over `Storage/Schema.lean`.
+  - `api_allValid`, `api_uniqueIds`, `api_noninterference` and `api_existence_private` are re-established on `DbState`. Keyed replay, `movesGrow` and coalition trace isolation move from the old model.
+  - `Model/`, `App/Service.lean`, `Storage/Repo.lean` and the app-level differential test are deleted; one end-to-end HTTP test stays.
+- **Notes** moves to a LeanDB schema too, or stays on `Store.ofMutex` as the in-memory example. Both backends stay supported.
+
+**Exit:** `EVIDENCE.md` lists the private-games theorems as holding of the running service, with LeanDB's trusted step as the only assumption between the model and SQLite. No app-level model remains.
+
+### Risks for M13–M16
+
+| Risk | Mitigation |
+|---|---|
+| Modelling SQLite's write behaviour exactly (errors, their order) is fiddly | The M14 harness compares error *values* too; start with the verbs private-games uses |
+| A free-monad program language is less ergonomic than `DbM` | Surface syntax: `do` notation over `Prog`; the lambda form of `select` elaborates to `Query` |
+| Proof effort for the write algebra and well-formedness | Prove for the entity features private-games uses first (no FTS, no partial indexes), then widen |
+| Performance: `denote` is a specification over whole tables | It never runs in production; SQL does. Only proofs and the harness use `denote` |
+| Two repositories moving together | M13 ships on its own; M16 starts only against a tagged LeanDB release |
+
 ## Later, not scheduled
 
 - Trace noninterference across request sequences and several actors.
