@@ -40,3 +40,5 @@ jobs:
         run: lake build leanapi_tests && ./.lake/build/bin/leanapi_tests
       - name: Proof audit
         run: ./scripts/axiom_audit.sh
+      - name: README snippets compile
+        run: ./scripts/check_readme.sh

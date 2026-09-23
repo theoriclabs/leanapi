@@ -67,7 +67,7 @@ def recordReceipt (p : PlayerId) (k : Option Keyed) (res : Res) (w : World) : Wo
     replaced game is still exactly what was decided on and visible to the
     actor, the new game is valid, and a write never changes participants. -/
 def commitOk (p : PlayerId) (old new : Game) (w : World) : Bool :=
-  (visibleGames p w).contains old && validB new && new.x == old.x && new.o == old.o
+  (visibleGames p w).contains old && Valid.holdsB new && new.x == old.x && new.o == old.o
 
 /-- The model commit: the same checks the native transaction makes. -/
 def commit (p : PlayerId) (wr : Write) (k : Option Keyed) (build : Game → Res) (w : World) : Res × World :=

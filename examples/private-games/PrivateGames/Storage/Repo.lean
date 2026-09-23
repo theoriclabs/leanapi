@@ -132,11 +132,11 @@ def commitDb (p : PlayerId) (w : Write) (keyed : Option Keyed) (build : Game →
     -- (2) write
     let written ← match w with
       | .insertGame g =>
-        if !validB g then pure (Except.error (RepoError.corrupt "refusing to write an invalid game")) else
+        if let .error why := Valid.stored.guardWrite g then pure (Except.error (RepoError.corrupt why)) else
         let s ← insert GameRow (GameRow.ofGame g)
         pure (.ok { g with id := ⟨s.id.toInt64.toNatClampNeg⟩ })
       | .updateGame old new =>
-        if !validB new then pure (.error (RepoError.corrupt "refusing to write an invalid game")) else
+        if let .error why := Valid.stored.guardWrite new then pure (.error (RepoError.corrupt why)) else
         -- authority and revision re-checked against the row being replaced,
         -- under the write lock (BEGIN IMMEDIATE)
         match ← loadVisibleDb p old.id with

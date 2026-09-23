@@ -11,6 +11,8 @@ import PrivateGames.Domain.Game
 
 namespace PrivateGames
 
+open LeanApi.Props
+
 open Game
 
 theorem take_append_single {α} (l : List α) (a : α) (k : Nat) (hk : k ≤ l.length) :
@@ -71,15 +73,6 @@ theorem playMove_ok {p : PlayerId} {e : Revision} {c : Cell} {g g' : Game}
   subst h2
   exact ⟨h1, rfl, h3, h4, h5, h.symm⟩
 
-theorem playMove_valid {p : PlayerId} {e : Revision} {c : Cell} {g g' : Game}
-    (v : Valid g) (h : playMove p e c g = .ok g') : Valid g' := by
-  obtain ⟨_, _, hon, _, hfree, rfl⟩ := playMove_ok h
-  obtain ⟨hres, hwin, hlen⟩ := outcome_ongoing hon
-  refine ⟨v.distinct, isFree_nodup v.nodup hfree, legalHistory_snoc _ _ v.history hwin, ?_, ?_, ?_⟩
-  · simp; omega
-  · have := v.rev; simp [hres] at this ⊢; omega
-  · intro q hq; simp [hres] at hq
-
 theorem playMove_allowed {p : PlayerId} {e : Revision} {c : Cell} {g g' : Game}
     (h : playMove p e c g = .ok g') : Allowed p g (.play e c) := by
   obtain ⟨h1, _, h3, h4, _, _⟩ := playMove_ok h
@@ -113,15 +106,6 @@ theorem resign_ok {p : PlayerId} {g g' : Game} (h : resign p g = .ok g') :
 theorem participant_cases {g : Game} {p : PlayerId} (h : g.isParticipant p = true) : p = g.x ∨ p = g.o := by
   simp [Game.isParticipant] at h; exact h
 
-theorem resign_valid {p : PlayerId} {g g' : Game} (v : Valid g) (h : resign p g = .ok g') : Valid g' := by
-  obtain ⟨hp, hcase⟩ := resign_ok h
-  rcases hcase with ⟨_, rfl⟩ | ⟨_, hon, rfl⟩
-  · exact v
-  · obtain ⟨hres, _, _⟩ := outcome_ongoing hon
-    refine ⟨v.distinct, v.nodup, v.history, v.length, ?_, ?_⟩
-    · have := v.rev; simp [hres] at this ⊢; omega
-    · intro q hq; simp at hq; subst hq; exact participant_cases hp
-
 theorem resign_allowed {p : PlayerId} {g g' : Game} (h : resign p g = .ok g') : Allowed p g .resign :=
   (resign_ok h).1
 
@@ -146,12 +130,35 @@ theorem resign_resign (p : PlayerId) (g : Game) : (resign p g >>= resign p) = re
   | error e => rfl
   | ok g' => simp only [bind, Except.bind]; exact resign_idem h
 
+/-! ## Preservation of `Valid`, via the property library
+
+`preserves` generates `Valid.preserved_openGame`, `Valid.preserved_playMove`
+and `Valid.preserved_resign`. `invariant_cases` closes every refusal branch
+and every field the transition does not touch; the cases below are the
+only fields that needed a domain fact. -/
+
+preserves Valid by openGame, playMove, resign using [Game.opened, Rules.legalHistory]
+  | playMove =>
+    all_goals obtain ⟨hres, hwin, hlen⟩ := outcome_ongoing (by simpa using c3)
+    case nodup => exact isFree_nodup hI.nodup (by simpa using c5)
+    case history => exact legalHistory_snoc _ _ hI.history hwin
+    case length => simp; omega
+    case rev => have := hI.rev; simp_all
+  | resign =>
+    all_goals obtain ⟨hres, _, _⟩ := outcome_ongoing (by simpa using c3)
+    case rev => have := hI.rev; simp_all
+    case resignedBy => intro q hq; cases hq; exact participant_cases (by simpa using c1)
+
+theorem playMove_valid {p : PlayerId} {e : Revision} {c : Cell} {g g' : Game}
+    (v : Valid g) (h : playMove p e c g = .ok g') : Valid g' :=
+  Valid.preserved_playMove p e c g g' v h
+
+theorem resign_valid {p : PlayerId} {g g' : Game} (v : Valid g) (h : resign p g = .ok g') : Valid g' :=
+  Valid.preserved_resign p g g' v h
+
 theorem openGame_valid {id : GameId} {p o : PlayerId} {tc : TimeControl} {g : Game}
-    (h : openGame id p o tc = .ok g) : Valid g := by
-  unfold openGame at h
-  by_cases hpo : p = o <;> simp [hpo] at h
-  subst h
-  exact ⟨hpo, List.nodup_nil, rfl, by simp [Game.opened], by simp [Game.opened], by simp [Game.opened]⟩
+    (h : openGame id p o tc = .ok g) : Valid g :=
+  Valid.preserved_openGame id p o tc g h
 
 theorem decide_valid {p : PlayerId} {g g' : Game} {cmd : Command} (v : Valid g)
     (h : PrivateGames.decide p g cmd = .ok g') : Valid g' := by

@@ -143,7 +143,7 @@ theorem commit_sim (p : PlayerId) (wr : Write) (k : Option Keyed) (b : Game → 
       refine .inr ⟨.update old new, ?_⟩
       have hid : new.id = old.id := hw
       simp only [commitOk, Bool.and_eq_true, beq_iff_eq] at hok
-      have hv : Valid new := (validB_iff new).mp hok.1.1.2
+      have hv : Valid new := (Valid.holdsB_iff new).mp hok.1.1.2
       rw [toStore_record]
       simp [toStore, ListStore.step, gameStore, hid, hv, ListStore.replace]
       intro _ _; rfl

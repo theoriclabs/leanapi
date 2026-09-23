@@ -41,7 +41,7 @@ The core idea: write the domain in plain Lean, state its invariant, prove that e
 
 ```lean
 import LeanApi
-open LeanApi Lean
+open LeanApi LeanApi.Props Lean
 
 -- 1. Values carry their rules. The only way to get a `Title` is `Title.make`.
 structure Title where
@@ -52,23 +52,24 @@ instance : SmartCtor Title String where
   make s := if s.trimAscii.isEmpty then .error "title must be nonempty" else .ok ⟨s⟩
   raw := (·.raw)
 
--- 2. State, and the invariant it must keep.
+-- 2. State, and the invariant it must keep. `invariant` also generates the
+--    runtime check `Board.Valid.check` (naming failing fields), a
+--    `Decidable` instance, and a proof that the check matches the `Prop`.
 structure Board where
   items : List Title
   deriving ToJson
 
-def Board.Valid (b : Board) : Prop := b.items.length ≤ 100
+invariant Board.Valid (b : Board) where
+  bounded : b.items.length ≤ 100
 
 -- 3. A decision: pure, and allowed to refuse.
 def Board.add (t : Title) (b : Board) : Except String Board :=
   if b.items.length < 100 then .ok { items := b.items ++ [t] } else .error "board is full"
 
--- 4. The proof that every accepted decision keeps the invariant.
-theorem Board.add_valid {t : Title} {b b' : Board} (h : b.add t = .ok b') : b'.Valid := by
-  unfold Board.add at h
-  split at h
-  · cases h; simp [Board.Valid]; omega   -- accepted: one more item, still ≤ 100
-  · cases h                              -- refused: nothing to show
+-- 4. The proof that every accepted decision keeps the invariant. `preserves`
+--    generates `Board.Valid.preserved_add` and proves it: refusals close
+--    themselves, and the accepted branch is arithmetic.
+preserves Board.Valid by Board.add
 
 -- 5. Expose it. `Extract.json` decodes the body through `Title.make`.
 def routes (board : IO.Ref Board) : List Route := routes! [
@@ -79,7 +80,7 @@ def routes (board : IO.Ref Board) : List Route := routes! [
 ]
 ```
 
-`POST /items` with `{"title": ""}` → **422**, rejected at the boundary by `Title.make`. The 101st item → **409** `board is full`. The theorem guarantees that no sequence of successful requests can produce a board that breaks `Valid`.
+`POST /items` with `{"title": ""}` → **422**, rejected at the boundary by `Title.make`. The 101st item → **409** `board is full`. The generated theorem guarantees that no sequence of successful requests can produce a board that breaks `Valid`. When `preserves` cannot close an obligation by itself, it fails and prints each remaining goal, tagged with the field and the branch conditions, and you add `| Board.add => tactic` for just that goal.
 
 This example proves a property of *one decision*. The next section shows properties of the *whole API*.
 

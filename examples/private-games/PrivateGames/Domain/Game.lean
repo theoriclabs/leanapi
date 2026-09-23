@@ -12,6 +12,7 @@
   only allowed commands, to follow `Transition`, and to preserve `Valid`.
 -/
 import PrivateGames.Domain.Values
+import LeanApi.Props.Stored
 
 namespace PrivateGames
 
@@ -98,8 +99,13 @@ def visible (p : PlayerId) (g : Game) : Bool := g.isParticipant p
 
 /-! ## Specifications -/
 
-/-- A stored game is valid. -/
-structure Valid (g : Game) : Prop where
+/-- A stored game is valid. Declared with the property library's
+    `invariant` command, which also generates the runtime check
+    `Valid.check` (naming failing fields), `Valid.holdsB`, the proof
+    `Valid.holdsB_iff` that the check agrees with the `Prop`, and a
+    `Decidable` instance. Storage runs `Valid.check` on every load and before
+    every write, so the runtime check and the proved property cannot drift. -/
+invariant Valid (g : Game) where
   distinct : g.x ≠ g.o
   nodup : (g.moves.map (·.i)).Nodup
   history : Rules.legalHistory g.moves = true
@@ -107,35 +113,9 @@ structure Valid (g : Game) : Prop where
   rev : g.rev = g.moves.length + (if g.resigned.isSome then 1 else 0)
   resignedBy : ∀ p, g.resigned = some p → p = g.x ∨ p = g.o
 
-/-- The resignation clause as a checkable condition. -/
-def resignedOk (g : Game) : Bool :=
-  match g.resigned with
-  | some p => p == g.x || p == g.o
-  | none => true
-
-/-- `Valid`, as a Boolean check (run on every load and before every write). -/
-def validB (g : Game) : Bool :=
-  g.x != g.o && (g.moves.map (·.i)).Nodup && Rules.legalHistory g.moves &&
-  decide (g.moves.length ≤ 9) &&
-  g.rev == g.moves.length + (if g.resigned.isSome then 1 else 0) && resignedOk g
-
-theorem validB_iff (g : Game) : validB g = true ↔ Valid g := by
-  constructor
-  · intro h
-    simp only [validB, Bool.and_eq_true, bne_iff_ne, ne_eq, decide_eq_true_eq, beq_iff_eq] at h
-    obtain ⟨⟨⟨⟨⟨h1, h2⟩, h3⟩, h4⟩, h5⟩, h6⟩ := h
-    refine ⟨h1, h2, h3, h4, h5, fun p hp => ?_⟩
-    simp only [resignedOk, hp] at h6
-    simpa using h6
-  · intro v
-    have h6 : resignedOk g = true := by
-      unfold resignedOk
-      cases hr : g.resigned with
-      | none => rfl
-      | some p => simpa using v.resignedBy p hr
-    simp [validB, v.distinct, v.nodup, v.history, v.length, v.rev, h6]
-
-instance (g : Game) : Decidable (Valid g) := decidable_of_iff _ (validB_iff g)
+/-- `Valid` as a storage invariant: the generated check, with its proof. -/
+def Valid.stored : LeanApi.Props.StoredInvariant Game :=
+  { name := "Valid", Holds := Valid, check := Valid.check, sound := fun g h => (Valid.check_iff g).mp h }
 
 inductive Command where
   | play (expected : Revision) (cell : Cell)

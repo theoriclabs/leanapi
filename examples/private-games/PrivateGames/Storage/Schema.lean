@@ -112,6 +112,6 @@ def GameRow.ofGame (g : Game) : GameRow :=
     typed error, never a crash and never a game. -/
 def reconstruct (s : Stored GameRow) : Except String Game :=
   let g := s.val.toGame s.id
-  if validB g then .ok g else .error s!"stored game {g.id} does not satisfy Valid"
+  Valid.stored.guardLoad s!"stored game {g.id}" g
 
 end PrivateGames.Storage

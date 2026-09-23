@@ -11,7 +11,7 @@ PrivateGames.Domain.Proofs PrivateGames.resign_resign
 PrivateGames.Domain.Proofs PrivateGames.openGame_valid
 PrivateGames.Domain.Proofs PrivateGames.decide_valid
 PrivateGames.Domain.Proofs PrivateGames.decide_nonparticipant
-PrivateGames.Domain.Game PrivateGames.validB_iff
+PrivateGames.Domain.Game PrivateGames.Valid.holdsB_iff
 PrivateGames.Domain.Values PrivateGames.Cell.make_i
 PrivateGames.Domain.Values PrivateGames.TimeControl.make_minutes
 # M3: execution spike
@@ -94,3 +94,11 @@ PrivateGames.Model.Invariants PrivateGames.Model.allValid
 PrivateGames.Model.Invariants PrivateGames.Model.uniqueIds
 PrivateGames.Model.Invariants PrivateGames.Model.freshIds
 PrivateGames.Model.Invariants PrivateGames.Model.uniqueIds_needs_fresh
+# M9: authoring
+LeanApi.Props.Authoring LeanApi.Props.Checks.run_ok_iff
+LeanApi.Props.Stored LeanApi.Props.StoredInvariant.guardWrite_ok
+LeanApi.Props.Stored LeanApi.Props.StoredInvariant.guardLoad_ok
+PrivateGames.Domain.Game PrivateGames.Valid.check_iff
+PrivateGames.Domain.Proofs PrivateGames.Valid.preserved_openGame
+PrivateGames.Domain.Proofs PrivateGames.Valid.preserved_playMove
+PrivateGames.Domain.Proofs PrivateGames.Valid.preserved_resign
