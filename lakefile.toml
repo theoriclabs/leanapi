@@ -1,0 +1,29 @@
+name = "leanapi"
+version = "0.1.0"
+defaultTargets = ["LeanApi"]
+
+# Toolchain pinned to leanprover/lean4:v4.33.0 (see lean-toolchain), matching
+# LeanDB 0.4.0, leanhttp and leanws. Bump in lockstep.
+
+[[lean_lib]]
+name = "LeanApi"
+
+[[lean_lib]]
+name = "Notes"
+srcDir = "examples/notes"
+globs = ["Notes.+"]
+
+[[lean_exe]]
+name = "notes"
+srcDir = "examples/notes"
+root = "NotesMain"
+
+[[lean_lib]]
+name = "Tests"
+srcDir = "tests"
+globs = ["Tests.+"]
+
+[[lean_exe]]
+name = "leanapi_tests"
+srcDir = "tests"
+root = "Main"

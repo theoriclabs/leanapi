@@ -1,0 +1,4 @@
+.lake/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
