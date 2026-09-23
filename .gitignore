@@ -2,3 +2,4 @@
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+.lake/test-db/
