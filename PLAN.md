@@ -1,6 +1,6 @@
 # LeanAPI: implementation plan
 
-Status: draft, 2026-09-22. Implements [DESIGN.md](DESIGN.md), which is based on [intent.md](intent.md).
+Status: M0–M7 shipped (0.1.0–0.5.0); M8–M12 planned, 2026-09-23. Implements [DESIGN.md](DESIGN.md), which is based on [intent.md](intent.md).
 
 The plan ships in small releases. Each milestone ends in something usable, a tag, and ideally a short post. Open questions from DESIGN.md §12 are settled by building, not in advance. When a milestone has to pick an answer, it records the choice as a decision record in `docs/decisions/` and updates the Q table in DESIGN.md. Choices are provisional until a later milestone confirms them.
 
@@ -238,6 +238,159 @@ For each, try writing one custom theorem, one query with pagination, and one ext
 - **Q12 revisit:** write down what 1.0 means.
 
 ---
+
+## Next: the property library (M8–M12)
+
+M0–M7 shipped as 0.1.0–0.5.0. The next milestones implement [docs/PROPERTIES.md](docs/PROPERTIES.md).
+
+**Goal:** make invariants easy to define. Today an author writes four things by hand, and private-games shows the cost (`Domain/Game.lean`, `Domain/Proofs.lean`):
+- a `Prop` (`Valid`) and a matching `Bool` check (`validB`);
+- a proof that they agree (`validB_iff`);
+- a preservation proof per command;
+- a runtime check wired into storage.
+
+Beyond that, the lift to "every stored game is valid" is not proved at all; storage only checks it at runtime.
+
+The target authoring experience:
+
+```lean
+invariant Game.Valid (g : Game) where
+  distinct : g.x ≠ g.o
+  nodup    : (g.moves.map (·.i)).Nodup
+  history  : Rules.legalHistory g.moves
+  length   : g.moves.length ≤ 9
+
+preserves Game.Valid by decide, openGame   -- generates one obligation per command
+```
+
+From that, the library produces:
+- the decidable check, which reports which field failed;
+- the runtime validation used by storage;
+- the per-command obligations, discharged by an `invariant_cases` tactic where they are routine;
+- the lift to a whole-system invariant;
+- a counterexample search to run before anyone writes a proof.
+
+```mermaid
+flowchart LR
+    M8["M8 Kernel"] --> M9["M9 Authoring"]
+    M8 --> M11["M11 Registry<br/>+ evidence"]
+    M9 --> M10["M10 Check<br/>before proving"]
+    M8 --> M12["M12 Other shapes"]
+    M9 --> M12
+```
+
+| Milestone | Ships | Settles (PROPERTIES.md §8) | Size |
+|---|---|---|---|
+| M8 Kernel | `LeanApi.Props`: systems, invariants, induction, the operator algebra | P1 | M |
+| M9 Authoring | `invariant` and `preserves` commands, derived checks, entity → system lift | P2, P6, P7 | L |
+| M10 Check before proving | `#check_invariant`: well-formedness, vacuity, counterexample search | P3 | M |
+| M11 Registry and evidence | Property registry, generated evidence tables, coverage of writers | — | M |
+| M12 Other shapes | Safe, step, relational and keyed properties on the kernel | P4, P5 | L |
+
+### M8: Kernel
+
+**Goal:** the generic theory from PROPERTIES.md §2 and §6, proved once, with no automation yet.
+
+- **`LeanApi/Props/Sys.lean`:** `Sys` (world, request, response, environment, `step`, `init`), `Reachable`, `Invariant`, `Inductive`, `Invariant.of_inductive`.
+- **Operators with their proved rules (§6.3):**
+  - conjunction, including the relative form (`J` inductive given `I`)
+  - disjunction
+  - indexed conjunction and disjunction, with the frame-based local form
+  - pullback along a simulation
+  - union of transition sources (one obligation per writer)
+- **`Inductive.restrict`:** the subsystem on `{w // I w}` (§6.2).
+- **Canonical strengthening (§6.5):** `pre`, `WeakestInductive` (defined as "every run from `w` stays in `I`"), `invariant_iff`, and a `CTI` structure for counterexamples to induction.
+- **Bridge:** `ScopedApp.toSys`, so existing apps are `Sys` instances.
+- **Demonstrator.** Prove two system-level invariants of private-games that are currently only checked at runtime:
+  1. Every stored game is `Valid`.
+  2. Game ids are unique. This needs the strengthening `∀ g ∈ w.games, g.id < w.nextGame`, which makes it the worked example of §6.5.
+- **Audit:** every kernel theorem is added to `scripts/audited_theorems.txt`.
+
+**Exit:** the two private-games invariants proved through the kernel and listed in EVIDENCE.md as Proved.
+
+### M9: Authoring
+
+**Goal:** the target authoring experience above.
+
+- **`invariant` command.** Takes a structure of fields and generates:
+  - the `Prop` structure;
+  - a `Decidable` instance;
+  - `check : α → Except (List String) Unit`, naming the failing fields;
+  - `check_iff`;
+  - a registry entry.
+
+  Fields must be decidable. A non-decidable field is an error that names the field and suggests either a `Decidable` instance or marking the field `proof_only`, which leaves it out of the runtime check.
+- **`preserves I by f₁, f₂, …` command.** Generates one theorem statement per decision function, in the shape `I s → f … s = .ok s' → I s'`. It tries `invariant_cases` on each and leaves the rest as named goals, listing them clearly.
+- **`invariant_cases` tactic.**
+  - Unfolds the decision and splits on its `if`/`match` branches.
+  - Closes refusal branches.
+  - Closes each invariant field that the transition doesn't touch, using a frame lemma or `simp`.
+  - Leaves the remaining goals per field and branch, so the author sees exactly which rule each branch must re-establish.
+- **Entity → system lift.**
+  - A store is described by an `EntityStore` interface (where entities live, and which ones a plan writes).
+  - An entity invariant plus the `preserves` obligations then gives the system invariant from M8, with no further proof.
+  - Supported first for list- and map-shaped stores.
+- **Runtime check from the same definition (P7).**
+  - The private-games repository calls the generated `check` on load and before write, replacing `validB`.
+  - An optional adapter emits LeanDB's `@[leandb_invariant]` from the same check, so the runtime check and the proved property cannot drift.
+- **Migration and docs:**
+  - Rewrite private-games `Valid` and its preservation proofs with the new commands. The audit must stay green, and the line count should drop.
+  - Update the README `Board` example to use `invariant` and `preserves`.
+  - Add a README snippet check to the test suite, so documented examples keep compiling.
+
+**Exit:** a new entity invariant with routine preservation takes one declaration plus one `preserves` line. The private-games migration is merged with the audit passing.
+
+### M10: Check before proving
+
+**Goal:** tell the author that an invariant is ill-formed, vacuous or not inductive before they spend time on a proof (PROPERTIES.md §5.2, §6.4, §6.5).
+
+- **`#check_invariant I` reports:**
+  - **Well-formedness:** carrier, decidability, and a warning when an invariant over a `List` isn't shown to respect permutation (§6.4, representation independence).
+  - **Vacuity:** a satisfying initial world, and a world that violates `I`. If `I` is `True`, or admits no initial world, the command says so.
+  - **Counterexamples to induction:** found by bounded search over small worlds. The command reports the world, the request and the violated field, and says whether it could tell the world is reachable.
+  - **Next candidate strengthening:** it offers `I ∧ pre I` (§6.5).
+- **Generators.** A small `Enumerate`/`Sample` class for domain types, derived for inductives and structures.
+  - **Spike first:** check whether Plausible builds on toolchain 4.33. If it does, use it; if not, keep our own small generator. Record the choice as a decision (P3).
+- **Regression targets.** The command must find:
+  - the "unique ids without `Fresh`" counterexample from M8;
+  - the review's C1-style vacuity. An observation whose view determines the world fails the hiddenness-witness check.
+
+**Exit:** both regression targets reported automatically, with tests.
+
+### M11: Registry and evidence
+
+**Goal:** properties are data that tools can list, so the evidence record can't claim more than the checked theorems say.
+
+- **Registry.** An environment extension recording each property: shape, statement, status (proved, checked, assumed or open), theorem name, and the routes or writers it covers.
+- **`#properties` command** prints the registry.
+- **Generated evidence.** A script generates EVIDENCE.md's claim tables from the registry and the axiom audit. The prose sections stay hand-written.
+- **Writer coverage.** Every route and writer (jobs and admin commands too) must discharge each system invariant it can touch, or be listed as unproved. The build fails on drift, closing the EVIDENCE.md open item "coverage enforced by the build itself".
+
+**Exit:** EVIDENCE.md's proved rows are generated. Removing a theorem or adding an uncovered writer fails CI.
+
+### M12: Other shapes on the kernel
+
+**Goal:** the rest of PROPERTIES.md §4, each as an invariant of a derived system (§6.1).
+
+- **`Safe`.** Discharged automatically for plans with no writes. This replaces the hand proof of `reads_pure`.
+- **Step properties.** `Monotone` (move logs only grow, revisions only increase) and `Frame`, via the transition-augmented system.
+- **Noninterference over projections.**
+  - Restated over projections, with a hiddenness witness required.
+  - Always paired with an `Enabled` property.
+  - A successor-view clause for one caller (an EVIDENCE.md open item).
+- **Generic keyed idempotence.** A `Keyed` system transformer with `LedgerLaws`, proved once for the LeanDB receipt table. It covers replay after intervening requests. This closes two EVIDENCE.md open items: the app-generic keyed theorem, and replay after other requests.
+- **Trace noninterference** via unwinding, for sequences of requests from several actors (an open item).
+
+**Exit:** private-games' remaining hand-written proofs are re-expressed through the library, and the open items above move to Proved.
+
+### Risks for M8–M12
+
+| Risk | Mitigation |
+|---|---|
+| Metaprogramming (`invariant`, `preserves`, `invariant_cases`) becomes the hard part | M8 is usable without any of it. Commands generate plain definitions and theorem statements a user could write by hand. Keep generated code readable |
+| Counterexample search is slow or finds nothing useful | Bounded, opt-in, reports what it searched. Proofs never depend on it |
+| The kernel's `Sys` doesn't fit real apps | M8 must instantiate private-games through `ScopedApp.toSys` before M9 starts |
+| Generated evidence hides nuance | Only claim tables are generated; scopes and assumptions stay hand-written prose |
 
 ## Later, not scheduled
 

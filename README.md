@@ -1,31 +1,28 @@
 # LeanAPI
 
-**An Express/FastAPI-style web framework for Lean 4.**
+**A web framework for Lean 4 where your API's guarantees are theorems.**
 
-Routing, typed extraction and validation, middleware, and authentication,
-on top of `Std.Http`. The long-term aim ([DESIGN.md](DESIGN.md)) is to
-carry domain meaning across the API and the database ([LeanDB](../LeanDB))
-so an application can prove properties such as "no route returns another
-user's data" and "retrying this request is idempotent". The plan is in
-[PLAN.md](PLAN.md).
+LeanAPI gives you what you expect from Express or FastAPI: routing, typed request extraction, validation, middleware, authentication, OpenAPI. It is also built so you can **prove** properties of the running service, across the HTTP boundary, your domain logic and the database ([LeanDB](https://github.com/theoriclabs/LeanDB)). For example:
 
-## Example
+- *No route ever returns another user's data*, including through status codes, error messages or counts.
+- *Retrying a request with the same idempotency key never applies it twice.*
+- *Every accepted command keeps the domain valid.*
+
+Tests can show a bug is present. A proof shows a whole class of bugs is absent, for every request and every state. LeanAPI is a framework for writing services where that is practical.
+
+> **Status: 0.5.0, experimental.** The toolkit is usable, and the proved example is real. APIs will change. [EVIDENCE.md](EVIDENCE.md) lists exactly what is proved, what is only tested, and what is assumed.
+
+---
+
+## Hello, LeanAPI
 
 ```lean
 import LeanApi
 open LeanApi Lean
 
-structure Title where raw : String
-
-instance : SmartCtor Title String where
-  make s := if s.trimAscii.isEmpty then .error "title must be nonempty" else .ok ⟨s⟩
-  raw := (·.raw)
-
 def routes : List Route := routes! [
   Route.get "/hello/{name}" fun req =>
     pure (Res.text s!"hello {req.param? "name" |>.getD ""}"),
-  Route.post "/notes" (handleJson (Extract.json (α := Json)) fun j =>
-    pure (Res.created j)),
   Route.get "/search" (handle ((·, ·) <$> Extract.query (α := Nat) "page" <*> Extract.queryD "q" "")
     fun (page, q) => pure (Res.text s!"page {page}, q {q}"))
 ]
@@ -36,76 +33,160 @@ def main : IO Unit :=
     { port := 8080 }
 ```
 
-`routes!` rejects conflicting routes (`/a/{x}` and `/a/{y}` for the same
-method) at compile time.
+`routes!` rejects conflicting routes (for example `/a/{x}` and `/a/{y}` on the same method) **at compile time**. A missing or malformed `page` produces a 422 in RFC 9457 `problem+json`, naming the field.
+
+## From a domain rule to a proof
+
+The core idea: write the domain in plain Lean, state its invariant, prove that every accepted decision preserves it, and expose the decision over HTTP. The HTTP layer decodes input through the same constructors the domain uses, so invalid data never reaches the decision.
+
+```lean
+import LeanApi
+open LeanApi Lean
+
+-- 1. Values carry their rules. The only way to get a `Title` is `Title.make`.
+structure Title where
+  raw : String
+  deriving ToJson
+
+instance : SmartCtor Title String where
+  make s := if s.trimAscii.isEmpty then .error "title must be nonempty" else .ok ⟨s⟩
+  raw := (·.raw)
+
+-- 2. State, and the invariant it must keep.
+structure Board where
+  items : List Title
+  deriving ToJson
+
+def Board.Valid (b : Board) : Prop := b.items.length ≤ 100
+
+-- 3. A decision: pure, and allowed to refuse.
+def Board.add (t : Title) (b : Board) : Except String Board :=
+  if b.items.length < 100 then .ok { items := b.items ++ [t] } else .error "board is full"
+
+-- 4. The proof that every accepted decision keeps the invariant.
+theorem Board.add_valid {t : Title} {b b' : Board} (h : b.add t = .ok b') : b'.Valid := by
+  unfold Board.add at h
+  split at h
+  · cases h; simp [Board.Valid]; omega   -- accepted: one more item, still ≤ 100
+  · cases h                              -- refused: nothing to show
+
+-- 5. Expose it. `Extract.json` decodes the body through `Title.make`.
+def routes (board : IO.Ref Board) : List Route := routes! [
+  Route.post "/items" (handleJson (Extract.json (α := Title)) fun t => do
+    match (← board.get).add t with
+    | .ok b => board.set b; pure (Res.created (toJson b))
+    | .error why => pure (Problem.conflict why).toRes)
+]
+```
+
+`POST /items` with `{"title": ""}` → **422**, rejected at the boundary by `Title.make`. The 101st item → **409** `board is full`. The theorem guarantees that no sequence of successful requests can produce a board that breaks `Valid`.
+
+This example proves a property of *one decision*. The next section shows properties of the *whole API*.
+
+## Whole-API guarantees: the private-games example
+
+[`examples/private-games`](examples/private-games/README.md) is a LeanDB-backed service of private tic-tac-toe games. Only a game's two players may see or play it. It has authentication, revision-checked moves (`ETag` / `If-Match`) and idempotency keys. The same decision code runs in the native server and in a reference model, and Lean proves the following about the model:
+
+| Guarantee | Theorem |
+|---|---|
+| **Isolation.** For a request authenticated as player `p`, the complete response (status, every header, body bytes) depends only on `p`'s view. Other players' games may differ arbitrarily | `step_noninterference_caller` |
+| **Existence privacy.** A game you're not in is indistinguishable from a game that doesn't exist | `existence_private` |
+| **Keyed idempotence.** Replaying a committed keyed request returns the recorded response and changes nothing | `keyed_replay` |
+| **Safe reads.** `GET` routes, and unrouted requests (404, 405, OPTIONS), never change state | `reads_pure`, `unrouted_pure` |
+| **Domain.** Accepted moves are allowed, follow the transition rules and keep every game valid | `decide_allowed`, `decide_transition`, `decide_valid` |
+| **Availability.** A player can always read their own game (so "reject everyone" doesn't count as secure) | `read_available` |
+
+The precise scopes (what "view" includes, what is only checked by tests, and the trusted base: `Std.Http`, SQLite, crypto, middleware, and model ≡ native) are in [EVIDENCE.md](EVIDENCE.md). Every listed theorem is checked by `./scripts/axiom_audit.sh`: no `sorry`, no `native_decide`, no extra axioms.
+
+### Reusing the isolation proof
+
+Isolation doesn't have to be re-proved per app. Describe your service as a `LeanApi.Proofs.ScopedApp`:
+
+```
+route → authenticate → decode → load (scoped to the caller) → core → commit
+```
+
+Then prove three small facts about your storage model: authentication, the scoped load and the commit's response depend only on the caller's view. You get `step_noninterference_caller` for every route. `decode` and `core`, your actual business logic, need **no** proof. Both private-games and a second app with sharing (`examples/notes`, `Notes/Shared.lean`) are instances.
+
+## Invariants and properties
+
+Today you state invariants as ordinary Lean propositions and prove them preserved, as in the `Board` example above and in private-games' [`Domain/Game.lean`](examples/private-games/PrivateGames/Domain/Game.lean). This works, but it is manual:
+
+- you write the `Prop` and a matching `Bool` check for runtime validation;
+- you prove they agree;
+- you prove preservation per command;
+- you lift the result to "every stored game is valid" yourself.
+
+The next milestones turn this into a library: define an invariant once and get the runtime check, the per-command obligations, the lift to the whole system, and counterexample search before you try to prove anything. The design is in [docs/PROPERTIES.md](docs/PROPERTIES.md), including how invariants compose and how to tell whether one is admissible. The implementation plan is [PLAN.md §M8–M12](PLAN.md#next-the-property-library-m8m12).
 
 ## Features
 
 | Area | What you get |
 |---|---|
-| Routing | `{id}`, `{id:int}`, `{id:nat}`, `{*rest}`; groups; precedence literal > constrained > param > catch-all; 404 vs 405 + `Allow`; auto `HEAD`, `OPTIONS`; trailing-slash policy; `..` refused |
-| Extraction | path, query, header, cookie, JSON, form; `SmartCtor` plugs domain constructors in; errors carry locations (`body.title`) and are all reported at once (422) |
-| Content | 415 on wrong `Content-Type`, 406 on `Accept`, per-route body limits enforced while streaming (413) |
-| Errors | RFC 9457 `application/problem+json`; exceptions become a 500 with no internal detail, logged under the request id |
-| Middleware | `App → App`, named stacks with printable order; `recover`, `requestId`, `accessLog`, `cors`, `trustedProxy`, `timeout`, `health`, `securityHeaders` |
-| Auth | `Authenticator` interface; bearer, Basic, session cookie over your verifier; `orElse`, `requireAuth`, `optionalAuth`; 401 with `WWW-Authenticate` |
-| Runtime | `serve` with graceful shutdown; handlers on dedicated threads; bounded `Worker`/`Pool` for SQLite and FFI |
-| Testing | in-process client over `Std.Http.Server.serveConnection`: the real parser and writer, no socket |
-| JWT and passwords (0.2) | HS256 JWT verification (`alg: none` rejected), opaque tokens stored by SHA-256 digest, scrypt Basic auth; crypto from [leancrypto](https://github.com/theoriclabs/leancrypto) (OpenSSL 3) |
-| HTTP extras (0.5) | conditional requests (304/412/428), rate limiting (429), SSE, `traceparent`, multipart, OpenAPI 3.1 + `/docs` |
-| Proofs (0.4, 0.5) | `ScopedApp`: prove three caller-view obligations about your model, get response noninterference for authenticated requests; typed middleware stages with proved contracts; axiom audit in CI |
+| **Routing** | `{id}`, `{id:int}`, `{id:nat}`, `{*rest}`; groups; precedence literal > constrained > param > catch-all; 404 vs 405 with `Allow`; automatic `HEAD` and `OPTIONS`; trailing-slash policy; conflicting routes rejected at compile time |
+| **Extraction** | Path, query, header, cookie, JSON and form bodies. `SmartCtor` plugs your domain constructors in. All errors are reported at once, with locations (`body.title`) |
+| **Content** | 415 on a wrong `Content-Type`, 406 on `Accept`, per-route body limits enforced while streaming (413) |
+| **Errors** | RFC 9457 `application/problem+json`. Exceptions become a 500 with no internal detail, logged under the request id |
+| **Middleware** | `App → App`, named stacks with printable order: `recover`, `requestId`, `accessLog`, `cors`, `trustedProxy`, `timeout`, `health`, `securityHeaders`. Typed stages with proved contracts |
+| **Auth** | `Authenticator` interface; bearer, Basic and session cookies over your verifier; `orElse`, `requireAuth`, `optionalAuth`; 401 with `WWW-Authenticate` |
+| **JWT and passwords** | HS256 JWT verification (`alg: none` and algorithm confusion rejected), opaque tokens stored as SHA-256 digests, scrypt password hashes |
+| **HTTP extras** | Conditional requests (304/412/428), rate limiting (429), Server-Sent Events, `traceparent`, multipart, OpenAPI 3.1 with a `/docs` page |
+| **Persistence** | LeanDB integration in the example: scoped queries, compare-and-swap commits, idempotency receipts in the same transaction, single writer with read-only reader pool |
+| **Testing** | In-process test client over `Std.Http.Server.serveConnection`: the real parser and writer, no sockets |
+| **Proofs** | `ScopedApp` isolation theorem; axiom audit script; route coverage report listing routes outside the proved set |
 
-Middleware is trusted code: see [decision 0001](docs/decisions/0001-q8-middleware-v01.md).
-What an accepted credential does and does not establish: [decision 0003](docs/decisions/0003-authenticator-contract.md).
+## Using it in your project
 
-## Paths
+In `lakefile.toml`:
 
-Path segments are percent-decoded *after* splitting, so `/files/a%2Fb`
-has one segment `a/b`. Empty segments (`//`) are 400. `.` and `..` are
-refused with 400, not normalized. A trailing slash redirects (308) to the
-path without it for `GET`/`HEAD` when that path has a route, and is 404
-otherwise. Use `Router.build routes .strict` or `.ignore` to change this.
+```toml
+[[require]]
+name = "leanapi"
+git = "https://github.com/theoriclabs/leanapi"
+rev = "v0.5.0"
+```
 
-## Build and test
+Requirements:
+- Toolchain `leanprover/lean4:v4.33.0`.
+- OpenSSL 3 (`brew install openssl@3` or `apt install libssl-dev`) for [leancrypto](https://github.com/theoriclabs/leancrypto).
+- SQLite development headers if you use LeanDB.
+
+> The `leanapi` and `leancrypto` repositories are currently private. You need read access to both.
+
+## Build, test, audit
 
 ```bash
-lake build
+lake build                                                # the library
 lake build leanapi_tests && ./.lake/build/bin/leanapi_tests
-./scripts/axiom_audit.sh
+./scripts/axiom_audit.sh                                  # every theorem in EVIDENCE.md
+lake build notes games                                    # the example servers
 ```
 
-Toolchain: `leanprover/lean4:v4.33.0`.
-
-## Proved example: private-games
-
-[`examples/private-games`](examples/private-games/README.md) is a LeanDB-backed
-service of private games. For an authenticated player, Lean proves that
-changing data outside that player's defined view does not change a proved
-route's response, and that a hidden game is indistinguishable from a missing
-one. The defined view includes the next game id, so sequential ids can reveal
-the number of games. Lean also proves that **retrying a keyed request returns
-the recorded outcome without applying it twice**. What is proved, checked
-and assumed is listed in [EVIDENCE.md](EVIDENCE.md).
-
-Design questions are settled by [decision records](docs/decisions/README.md).
-
-## Example app
-
-`examples/notes`: registration (JSON or form), Basic login issuing a bearer
-token and a cookie, per-user notes with `ETag`/`If-Match`, pagination, CORS,
-and every middleware above.
+Run the examples:
 
 ```bash
-lake build notes && ./.lake/build/bin/notes 8080
+./.lake/build/bin/notes 8080                              # notes: auth, ETags, CORS, pagination
+./.lake/build/bin/games --port 8080 --db games.sqlite     # private-games
+./examples/private-games/seed.sh http://127.0.0.1:8080
 ```
 
-Load sanity check (Apple M-series laptop, `ab`, notes app with the full
-middleware stack including access logging to stderr; not a benchmark):
+## Limits worth knowing
 
-| Run | Result |
+- **Throughput is modest.** LeanAPI runs on Lean's built-in `Std.Http` server (toolchain 4.33). On a 10-core laptop with `ab` and keep-alive, a trivial route serves roughly **2,000–3,500 req/s**. Bare `Std.Http` without LeanAPI is within about 10% of that, so the transport is the ceiling. The transport sits behind one module (`Runtime/Server.lean`) and can be replaced without touching routes or proofs.
+- **Proofs are about a model.** The native server runs the same decision code, and a differential test compares the two, but that correspondence is *checked*, not proved.
+- **What remains open** is listed in [EVIDENCE.md](EVIDENCE.md#open) and the latest [review](docs/reviews/).
+
+## Documentation
+
+| Document | What it covers |
 |---|---|
-| `ab -n 3000 -c 16` `GET /api/notes` (bearer auth, new connection per request) | 3000/3000 ok, ~2,200 req/s |
-| `ab -k -n 5000 -c 32` `GET /healthz` (keep-alive) | 5000/5000 ok, ~2,600 req/s |
+| [DESIGN.md](DESIGN.md) | The architecture: domain first, HTTP and persistence as adapters, proof surface, open questions |
+| [docs/PROPERTIES.md](docs/PROPERTIES.md) | The property library: shapes, admissibility, composing invariants |
+| [PLAN.md](PLAN.md) | Milestones M0–M7 (shipped) and M8–M12 (property library) |
+| [EVIDENCE.md](EVIDENCE.md) | Proved / checked / assumed / open, claim by claim |
+| [docs/decisions/](docs/decisions/README.md) | Decision records for each settled design question |
+| [docs/reviews/](docs/reviews/) | External reviews and follow-ups |
+| [CHANGELOG.md](CHANGELOG.md) | Release notes |
 
 ## License
 
