@@ -21,3 +21,4 @@ may revise it; the revision gets a new record that supersedes the old one.
 | [0013](0013-q8-typed-stages.md) | Q8 typed middleware stages | Accepted, provisional (M7) |
 | [0014](0014-q12-one-point-oh.md) | Q12 what 1.0 means | Proposed (M7) |
 | [0015](0015-q4-caller-isolation.md) | Q4 per-caller isolation claim | Accepted, provisional (M7) |
+| [0016](0016-p1-one-signature.md) | P1 one signature or several | Accepted, provisional (M8) |

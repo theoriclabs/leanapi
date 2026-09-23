@@ -16,3 +16,4 @@ import LeanApi.Http.OpenApi
 import LeanApi.Http.Features
 import LeanApi.Http.Multipart
 import LeanApi.Http.Typed
+import LeanApi.Props
