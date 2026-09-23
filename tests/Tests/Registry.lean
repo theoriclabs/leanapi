@@ -30,4 +30,35 @@ writer `adminResetGame` touches [games] but is not covered by the proof of "Game
 #guard_msgs (error) in
 #check_writer_coverage
 
+/-! Review H5 (eb67460): coverage metadata is derived, not asserted. -/
+
+/-- error: register_invariant: `Nat.add_comm` does not state `Invariant S I`, so it is not a system invariant; list it after one that is, or use `register_property` -/
+#guard_msgs (error) in
+register_invariant "Test" "Every stored game is Valid (forged)" by Nat.add_comm touches "games"
+
+/-- error: declare_writer `adminWipe`: unknown table `everything`; declare it with `declare_tables` (known: games, receipts, players, tokens) -/
+#guard_msgs (error) in
+declare_writer "adminWipe" touches "everything"
+
+/-- error: register_invariant: unknown table `nonexistent_table`; declare it with `declare_tables` (known: games, receipts, players, tokens) -/
+#guard_msgs (error) in
+register_invariant "Test" "valid again" by PrivateGames.Model.allValid touches "nonexistent_table"
+
+/-- error: register_invariant: `unproved` names `nobody`, which is not a declared writer -/
+#guard_msgs (error) in
+register_invariant "Test" "valid again" by PrivateGames.Model.allValid touches "games" unproved "nobody"
+
+-- The `unproved` clause parses (review M1) and lets coverage pass.
+register_invariant "Test" "valid, admin reset excepted" by PrivateGames.Model.allValid
+  touches "games" unproved "adminResetGame"
+
+open Lean in
+run_cmd do
+  let some e := (LeanApi.Props.allProperties (← getEnv)).find? (·.claim == "valid, admin reset excepted")
+    | throwError "not registered"
+  unless e.covers.toList == ["openGame", "listGames", "readGame", "playMove", "resign"] do
+    throwError "covers not derived from the route table: {e.covers}"
+  unless (e.row.splitOn "not covering: `adminResetGame`").length == 2 do
+    throwError "row does not name the unproved writer: {e.row}"
+
 end Tests.Registry

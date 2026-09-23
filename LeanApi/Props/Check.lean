@@ -7,6 +7,9 @@
   * **well-formedness**: `I` is decidable (else an error naming the fix);
     the carrier; and a warning when the world stores a `List` but the spec
     gives no `reorder` to test that `I` respects permutation (§6.4);
+  * **initial worlds**: every searched initial world must satisfy `I`
+    (`Inductive.init`). One that does not makes `I` false, and the report
+    never says "inductive" then;
   * **vacuity**: an initial world satisfying `I`, and a world violating it.
     If `I` rules nothing out, or admits no initial world, it says so;
   * **counterexamples to induction**: a world satisfying `I`, a request,
@@ -56,6 +59,10 @@ structure InvReport where
   name : String
   searched : Nat × Nat × Nat
   initWitness : Option String
+  /-- Searched initial worlds that violate `I`: the invariant is false. -/
+  initViolations : List String
+  /-- Depth of the reachability search, for reporting its bound. -/
+  depth : Nat
   violating : Option String
   ctis : List CTIReport
   /-- CTIs of `I ∧ pre I` (over the searched requests). -/
@@ -75,19 +82,26 @@ def render (r : InvReport) : String := Id.run do
   match r.initWitness with
   | some w => out := out ++ [s!"  ✓ satisfiable: initial world {w}"]
   | none => out := out ++ ["  ✗ vacuous: no searched initial world satisfies the invariant"]
+  unless r.initViolations.isEmpty do
+    out := out ++ [s!"  ✗ false initially: {r.initViolations.length} searched initial world(s) violate the \
+invariant, e.g. {r.initViolations.head!}. An invariant must hold in every initial world"]
   match r.violating with
   | some w => out := out ++ [s!"  ✓ restrictive: rules out {w}"]
   | none => out := out ++ ["  ✗ vacuous: no searched world violates the invariant (it may be `True`)"]
   if let some (a, b) := r.reorderBreaks then
     out := out ++ [s!"  ✗ representation-dependent: holds for {a} but not for its reordering {b}"]
-  if r.ctis.isEmpty then
+  if r.ctis.isEmpty && !r.initViolations.isEmpty then
+    out := out ++ ["  ✗ not inductive: no counterexample to induction among the searched steps, but it fails \
+in an initial world (above)"]
+  else if r.ctis.isEmpty then
     out := out ++ ["  ✓ inductive within the bound: no counterexample to induction"]
   else
     out := out ++ [s!"  ✗ not inductive: {r.ctis.length} counterexample(s) to induction"]
     for c in r.ctis.take 3 do
       let reach := match c.reachableAt with
-        | some k => s!"REACHABLE in {k} step(s): the invariant is false"
-        | none => "not reached from the searched initial worlds: strengthen the invariant to exclude it"
+        | some k => s!"REACHABLE in {k} step(s) from an initial world (per the spec's `initB`): the invariant is false"
+        | none => s!"not reached within {r.depth} step(s) of the searched initial worlds: if it is unreachable, \
+strengthen the invariant to exclude it; if it is reachable at a greater depth, the invariant is false"
       out := out ++ [s!"    world {c.world}", s!"      request {c.req} breaks {c.failing}", s!"      {reach}"]
     if r.strengthenedCtis == 0 then
       out := out ++ ["  candidate strengthening `I ∧ pre I`: inductive within the bound"]
@@ -145,6 +159,8 @@ permutation. If order is not meaningful, give `reorder` in the spec, or state th
     else []
   { name, searched := (spec.worlds.length, spec.envs.length, spec.reqs.length),
     initWitness := (spec.worlds.find? fun w => spec.initB w && holds w).map spec.showW,
+    initViolations := (spec.worlds.filter fun w => spec.initB w && !holds w).map spec.showW,
+    depth := spec.depth,
     violating := (spec.worlds.find? fun w => !holds w).map spec.showW,
     ctis, strengthenedCtis := sctis, reorderBreaks, warnings }
 

@@ -61,4 +61,33 @@ example := Counter.Ok.preserved_incr
 #guard_msgs (error) in
 preserves Counter.Ok by Counter.shrink
 
+/-! Review H4 (eb67460): with several arguments of the carrier type, the
+    state must be named; guessing proved a true but useless theorem. -/
+
+invariant Small (n : Nat) where
+  lt : n < 10
+
+def setTo (_s k : Nat) : Except String Nat := .ok k
+
+/-- error: preserves: `Tests.PropsCommands.setTo` has 2 arguments of type `Nat` (_s, k), so the state is ambiguous. Name it: `preserves Tests.PropsCommands.Small by Tests.PropsCommands.setTo[k]` -/
+#guard_msgs (error) in
+preserves Small by setTo
+
+-- The state named explicitly: `setTo` does not preserve `Small`, and the
+-- command fails instead of proving something about `k`.
+#guard_msgs (drop error) in
+preserves Small by setTo[_s]
+
+open Lean in
+run_cmd do
+  if (← getEnv).contains `Tests.PropsCommands.Small.preserved_setTo then
+    throwError "preserves proved `setTo` preserves `Small`, which is false"
+
+def clampTo (s k : Nat) : Except String Nat := .ok (if k < 10 then k else s)
+
+preserves Small by clampTo[s]
+  | clampTo => have := hI.lt; split <;> omega
+
+example : ∀ s k s', Small s → clampTo s k = .ok s' → Small s' := Small.preserved_clampTo
+
 end Tests.PropsCommands

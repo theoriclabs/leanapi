@@ -24,10 +24,15 @@ the generic `ListStore` and pulled back to an app along a `Simulation`.
 **Evidence that `Sys` fits a real app** (the M8 risk). private-games is
 instantiated as `gamesSys := gamesApp.toSys gamesInit`, and two invariants
 that were only checked at runtime are now proved about every reachable
-model world: `allValid` and `uniqueIds`. The only app-specific proof is
-`core_writeOk` (inserts are valid, updates keep ids). The rest is the
+model world: `allValid` and `uniqueIds`. The store's writers are the
+domain decisions (`create` is `openGame`, `apply` is `decide`), so its
+obligations are the domain's `preserves`-generated theorems
+(`gameStore_preserves`). The app-specific simulation fact is `core_writeOk`:
+every write `core` plans is the result of a domain decision. The rest is the
 library: `ListStore.allOf_invariant`, `ListStore.ids_invariant` (with the
-`Fresh` strengthening) and `Invariant.pullback`.
+`Fresh` strengthening) and `Invariant.pullback`. The model commit's runtime
+validity check is not used (corrected after review H1, eb67460: the first
+version took update validity from that runtime check).
 
 **Revisit when** an app needs a non-`Unit` environment (clocks, expiry): the
 `toSys` lifting would then take the environment from the request context.

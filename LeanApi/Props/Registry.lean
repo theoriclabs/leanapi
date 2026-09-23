@@ -10,13 +10,18 @@
     `Quot.sound`, is refused.
   * `#properties` prints the registry. `#evidence_tables` prints the claim
     tables of EVIDENCE.md, which `scripts/gen_evidence.sh` splices in.
-  * Writers (routes, jobs, admin commands) and the tables they touch are
-    declared with `declare_writer`. `#check_writer_coverage` fails the build
-    when a writer touches a table that some registered system invariant is
-    about, but is neither covered by that invariant's proof nor listed as
-    unproved for it.
+  * Tables are declared with `declare_tables`. Writers (routes, jobs, admin
+    commands) are declared with `declare_writer`, with the tables they touch,
+    or as `readonly`. Unknown tables are refused.
+  * `register_invariant` records a system invariant. Its first theorem must
+    have the form `Invariant S I`, and the writers its proof covers are not
+    written by the author: they come from the `HasWriters S` instance of the
+    system `S` that theorem quantifies over (review H5, eb67460).
+    `#check_writer_coverage` fails the build when a writer touches a table
+    the invariant is about but is neither covered nor listed as `unproved`.
 -/
 import Lean
+import LeanApi.Props.Sys
 
 namespace LeanApi.Props
 
@@ -55,6 +60,12 @@ structure WriterEntry where
   touches : Array String
   deriving Inhabited
 
+/-- The writers whose steps make up system `S`: what an `Invariant S I`
+    proof covers. An app gives this once per system, computed from the same
+    route table (or writer list) that defines `S.step`. -/
+class HasWriters (S : Sys) where
+  writers : List String
+
 initialize propertyExt : SimplePersistentEnvExtension PropEntry (Array PropEntry) ←
   registerSimplePersistentEnvExtension {
     addEntryFn := Array.push
@@ -72,6 +83,20 @@ def allProperties (env : Environment) : Array PropEntry :=
   es.qsort (fun a b => a.order < b.order)
 
 def allWriters (env : Environment) : Array WriterEntry := writerExt.getState env
+
+initialize tableExt : SimplePersistentEnvExtension String (Array String) ←
+  registerSimplePersistentEnvExtension {
+    addEntryFn := Array.push
+    addImportedFn := fun as => as.foldl (· ++ ·) #[]
+  }
+
+def allTables (env : Environment) : Array String := tableExt.getState env
+
+def checkTables (what : String) (ts : Array String) : CommandElabM Unit := do
+  let known := allTables (← getEnv)
+  for t in ts do
+    unless known.contains t do
+      throwError "{what}: unknown table `{t}`; declare it with `declare_tables` (known: {", ".intercalate known.toList})"
 
 /-- Axioms a proved claim may use. -/
 def allowedAxioms : List Name := [``propext, ``Classical.choice, ``Quot.sound]
@@ -130,51 +155,95 @@ elab_rules : command
     addProperty { section_ := sec.getString, claim := claim.getString, status, thms := thms,
                   where_ := (w.map (·.getString)).getD "", shape := (sh.map (·.getString)).getD "" }
 
-/-- Declare a writer (route, job, admin command) and the tables it touches. -/
-syntax (name := declareWriter) "declare_writer " str &" touches " str,* : command
+/-- Declare the tables writers and invariants may refer to. -/
+syntax (name := declareTables) "declare_tables " str,+ : command
 
 elab_rules : command
-  | `(declare_writer $n:str touches $ts,*) => do
-    let name := n.getString
-    if (allWriters (← getEnv)).any (·.name == name) then
-      throwError "declare_writer: `{name}` is already declared"
-    modifyEnv (writerExt.addEntry · { name, touches := ts.getElems.map (·.getString) })
+  | `(declare_tables $ts,*) => do
+    for t in ts.getElems do
+      let t := t.getString
+      unless (allTables (← getEnv)).contains t do
+        modifyEnv (tableExt.addEntry · t)
 
-/-- Evaluate a `List String` term at elaboration time. -/
-unsafe def evalStringsUnsafe (t : Term) : TermElabM (List String) := do
-  let e ← Term.elabTerm t (some (mkApp (mkConst ``List [0]) (mkConst ``String)))
-  Term.synthesizeSyntheticMVarsNoPostponing
-  let e ← instantiateMVars e
+/-- Declare a writer (route, job, admin command) and the tables it touches,
+    or `readonly`. A writer that touches nothing must say so. -/
+syntax (name := declareWriter) "declare_writer " str &" touches " str,+ : command
+@[inherit_doc declareWriter]
+syntax (name := declareReadonly) "declare_writer " str &" readonly" : command
+
+def addWriter (name : String) (touches : Array String) : CommandElabM Unit := do
+  if (allWriters (← getEnv)).any (·.name == name) then
+    throwError "declare_writer: `{name}` is already declared"
+  checkTables s!"declare_writer `{name}`" touches
+  modifyEnv (writerExt.addEntry · { name, touches })
+
+elab_rules : command
+  | `(declare_writer $n:str touches $ts,*) => addWriter n.getString (ts.getElems.map (·.getString))
+  | `(declare_writer $n:str readonly) => addWriter n.getString #[]
+
+/-- Evaluate a `List String` expression at elaboration time. -/
+unsafe def evalStringListUnsafe (e : Expr) : MetaM (List String) :=
   evalExpr (List String) (mkApp (mkConst ``List [0]) (mkConst ``String)) e
 
-@[implemented_by evalStringsUnsafe]
-opaque evalStrings (t : Term) : TermElabM (List String)
+@[implemented_by evalStringListUnsafe]
+opaque evalStringList (e : Expr) : MetaM (List String)
 
-/-- Register a proved system invariant with the writers its proof covers.
+/-- The system `S` of a theorem stating `Invariant S I`, if it does. -/
+def invariantSys? (thm : Name) : MetaM (Option Expr) := do
+  let ty ← instantiateMVars (← inferType (mkConst thm ((← getConstInfo thm).levelParams.map mkLevelParam)))
+  let ty ← whnfR ty
+  if ty.isAppOfArity ``Invariant 2 then return some ty.appFn!.appArg! else return none
+
+/-- The writers covered by a proof of `Invariant S I`: `HasWriters.writers S`. -/
+def coveredWriters (thm : Name) : MetaM (List String) := do
+  let some sys ← invariantSys? thm
+    | throwError "register_invariant: `{thm}` does not state `Invariant S I`, so it is not a system \
+invariant; list it after one that is, or use `register_property`"
+  let inst ← try synthInstance (mkApp (mkConst ``HasWriters) sys)
+    catch _ => throwError "register_invariant: no `HasWriters` instance for the system of `{thm}`{indentExpr sys}\n\
+Give one, computed from the route table or writer list that defines its `step`."
+  evalStringList (← instantiateMVars (mkApp2 (mkConst ``HasWriters.writers) sys inst))
+
+/-- Register a proved system invariant. The first theorem must state
+    `Invariant S I`; the writers its proof covers come from `HasWriters S`.
+    Other theorems (strengthenings, counterexamples) are supporting evidence;
+    any that also state `Invariant _ _` must be about the same `S`.
 
 ```
-register_invariant "Domain" "Every stored game is `Valid`" by allValid
-  touches "games" covers PrivateGames.Model.provedWriters
-```
-`covers` is a `List String` term evaluated at build time, so it can be
-computed from the same route table the model routes through. -/
+register_invariant "Domain" "Every stored game is `Valid`" by allValid touches "games"
+register_invariant "Domain" "…" by allValid touches "games" unproved "adminResetGame"
+``` -/
 syntax (name := registerInvariant) "register_invariant " str str " by " ident,+
-  &" touches " str,* &" covers " term (&" unproved " str,*)? : command
+  &" touches " str,+ (&" unproved " str,+)? : command
 
 elab_rules : command
-  | `(register_invariant $sec:str $claim:str by $thms,* touches $ts,* covers $cov $[unproved $un,*]?) => do
+  | `(register_invariant $sec:str $claim:str by $thms,* touches $ts,* $[unproved $un,*]?) => do
     let thms ← thms.getElems.mapM fun id => liftCoreM (realizeGlobalConstNoOverloadWithInfo id)
     thms.forM checkEvidenceTheorem
-    let covers ← liftTermElabM (evalStrings cov)
+    let touches := ts.getElems.map (·.getString)
+    checkTables "register_invariant" touches
+    let covers ← liftTermElabM do
+      let covers ← coveredWriters thms[0]!
+      let some s₀ ← invariantSys? thms[0]! | unreachable!
+      for t in thms[1:] do
+        if let some s ← invariantSys? t then
+          unless ← isDefEq s s₀ do
+            throwError "register_invariant: `{t}` is an invariant of a different system than `{thms[0]!}`"
+      pure covers
+    let unproved := (un.map (·.getElems.map (·.getString))).getD #[]
+    for u in unproved do
+      unless (allWriters (← getEnv)).any (·.name == u) do
+        throwError "register_invariant: `unproved` names `{u}`, which is not a declared writer"
     addProperty { section_ := sec.getString, claim := claim.getString, status := .proved, thms,
-                  shape := "system invariant", touches := ts.getElems.map (·.getString),
-                  covers := covers.toArray, unproved := (un.map (·.getElems.map (·.getString))).getD #[] }
+                  shape := "system invariant", touches, covers := covers.toArray, unproved }
 
 /-! ## Reports -/
 
 def PropEntry.whereText (e : PropEntry) : String :=
-  if e.thms.isEmpty then e.where_
-  else ", ".intercalate (e.thms.toList.map fun n => s!"`{n}`")
+  let base := if e.thms.isEmpty then e.where_
+    else ", ".intercalate (e.thms.toList.map fun n => s!"`{n}`")
+  if e.unproved.isEmpty then base
+  else base ++ s!" (not covering: {", ".intercalate (e.unproved.toList.map fun w => s!"`{w}`")})"
 
 def PropEntry.row (e : PropEntry) : String :=
   let claim := e.claim.replace "|" "\\|"

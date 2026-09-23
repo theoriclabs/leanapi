@@ -153,19 +153,52 @@ theorem NIUnwinding.ni {acts : O.Observer → S.Req → S.World → Prop} (h : O
 
 end Observation
 
-/-- A noninterference claim that the library accepts as evidence: the
-    property, a hiddenness witness, and an enabledness companion. "Deny
-    everything" satisfies `NI` but cannot supply `enabled` with a
-    satisfiable precondition. -/
+/-- A noninterference claim that the library accepts as evidence.
+    Besides `NI`, it must show that the claim is not vacuous in any of the
+    ways a bare `NI` can be (review H2, eb67460):
+
+    * `hidden`: for every observer, two different worlds they cannot tell
+      apart **in which they send a request** (`acts`). This rules out
+      `acts := False`, and a view that determines the world (review C1).
+    * `enabled`: an availability companion stated on what the observer
+      sees, whose precondition implies `acts`.
+    * `enabledWitness`: that precondition holds somewhere, for every
+      observer.
+    * `refusal`: some acting request is *not* a success. This rules out a
+      trivial success predicate (`ok := True`), so `enabled` says something.
+
+    "Deny everything" satisfies `NI` but cannot supply `enabled` together
+    with `enabledWitness`; "allow everything" cannot supply `refusal`. -/
 structure NIPackage (S : Sys) (O : Observation S) where
   acts : O.Observer → S.Req → S.World → Prop
   ni : O.NI acts
-  hidden : O.Hidden
-  enabledPre : S.World → S.Req → Prop
-  enabledOk : S.Res → Prop
-  enabled : Enabled S enabledPre enabledOk
-  /-- The precondition is satisfiable (so `enabled` is not vacuous either). -/
-  enabledWitness : ∃ w r, enabledPre w r
+  hidden : ∀ a, ∃ w₁ w₂ r, O.SameView a w₁ w₂ ∧ w₁ ≠ w₂ ∧ acts a r w₁
+  ok : O.Observer → O.Obs → Prop
+  enabledPre : O.Observer → S.World → S.Req → Prop
+  enabled : ∀ a e w r, enabledPre a w r → acts a r w ∧ ok a (O.obs a (S.step e r w).1)
+  enabledWitness : ∀ a, ∃ w r, enabledPre a w r
+  refusal : ∃ a e w r, acts a r w ∧ ¬ ok a (O.obs a (S.step e r w).1)
+
+namespace NIPackage
+
+variable {S : Sys} {O : Observation S}
+
+/-- A package's view is never injective: the plain hiddenness witness. -/
+theorem toHidden (P : NIPackage S O) : O.Hidden := fun a =>
+  let ⟨w₁, w₂, _, hv, hne, _⟩ := P.hidden a
+  ⟨w₁, w₂, hv, hne⟩
+
+/-- Every observer can act: the claim covers at least one request each. -/
+theorem acts_nonempty (P : NIPackage S O) (a : O.Observer) : ∃ r w, P.acts a r w :=
+  let ⟨_, _, r, _, _, h⟩ := P.hidden a
+  ⟨r, _, h⟩
+
+/-- The success predicate is not trivially true. -/
+theorem ok_nontrivial (P : NIPackage S O) : ∃ a o, ¬ P.ok a o :=
+  let ⟨a, e, w, r, _, h⟩ := P.refusal
+  ⟨a, _, h⟩
+
+end NIPackage
 
 end LeanApi.Props
 

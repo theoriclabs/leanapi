@@ -24,19 +24,22 @@ open LeanApi LeanApi.Props PrivateGames.App
 
 /-! ## Writers -/
 
--- The proved routes run through `Model.step`; their names come from the
--- same route table the model routes through (`routeTable`).
+declare_tables "games", "receipts", "players", "tokens"
+
+-- The proved routes run through `Model.step`.
 declare_writer "openGame" touches "games", "receipts"
-declare_writer "listGames" touches
-declare_writer "readGame" touches
+declare_writer "listGames" readonly
+declare_writer "readGame" readonly
 declare_writer "playMove" touches "games", "receipts"
 declare_writer "resign" touches "games", "receipts"
 -- Unproved M1 handlers (EVIDENCE.md "Unproved routes").
 declare_writer "POST /players" touches "players"
 declare_writer "POST /sessions" touches "tokens"
 
-/-- The writers the model's proofs cover: exactly the proved route table. -/
-def provedWriters : List String := routeTable.map (·.1.name)
+/-- The writers of the model system: exactly the route table `entries` is
+    compiled from, which is what `Model.step` routes through. An
+    `Invariant gamesSys I` proof covers these and nothing else. -/
+instance : HasWriters PrivateGames.Model.gamesSys := ⟨routeTable.map (·.1.name)⟩
 
 /-! ## 1. Isolation -/
 
@@ -52,6 +55,10 @@ register_property "Isolation" "A request that authenticates as `p` preserves `p`
   proved by PrivateGames.Model.step_view_caller shape "relational"
 register_property "Isolation" "Trace noninterference for a coalition: after any sequence of requests by coalition members, every member's response depends only on what the coalition can see together"
   proved by PrivateGames.Model.trace_noninterference, PrivateGames.Model.byCoalition_of_auth shape "trace"
+register_property "Isolation" "The per-caller claim as a library `NIPackage`, with every non-vacuity obligation discharged (for every player: a hidden difference in a world where they act, a successful read of their own game; and a refused read), given `ReadPlumbing`: some request routes to `GET /games/{id}`, decodes and carries a bearer token"
+  proved by PrivateGames.Model.gamesNI, LeanApi.Props.NIPackage.acts_nonempty, LeanApi.Props.NIPackage.ok_nontrivial shape "relational"
+register_property "Isolation" "`ReadPlumbing` holds for a concrete request (`GET /games/1` with a bearer token)"
+  checked at "`tests/Tests/Props.lean` \"read plumbing\""
 register_property "Isolation" "Existence privacy: a game you do not participate in is indistinguishable from a game that does not exist"
   proved by PrivateGames.Model.existence_private shape "relational"
 register_property "Isolation" "The native repository puts the policy into the SQL predicate and re-checks it on the decoded row; other user's game ≡ missing id, byte for byte, for read, move and resign"
@@ -92,9 +99,9 @@ register_property "Domain" "Opening a game yields a valid game"
 register_property "Domain" "The runtime check `Valid.check` (run on every load and before every write) agrees with the proved `Valid`"
   proved by PrivateGames.Valid.check_iff, LeanApi.Props.StoredInvariant.guardWrite_ok, LeanApi.Props.StoredInvariant.guardLoad_ok
 register_invariant "Domain" "Every stored game is `Valid`, in every reachable model world"
-  by PrivateGames.Model.allValid touches "games" covers provedWriters
+  by PrivateGames.Model.allValid touches "games"
 register_invariant "Domain" "Game ids are unique, in every reachable model world (with the strengthening: every id is below `nextGame`)"
-  by PrivateGames.Model.uniqueIds, PrivateGames.Model.freshIds, PrivateGames.Model.uniqueIds_needs_fresh touches "games" covers provedWriters
+  by PrivateGames.Model.uniqueIds, PrivateGames.Model.freshIds, PrivateGames.Model.uniqueIds_needs_fresh touches "games"
 register_property "Domain" "A game's move log only grows and its revision never decreases; games are never removed"
   proved by PrivateGames.Model.movesGrow shape "step"
 register_property "Domain" "Availability: a participant's read of their visible game succeeds with 200 and the game, through the full HTTP step"

@@ -137,3 +137,12 @@ PrivateGames.Model.Shapes PrivateGames.Model.byCoalition_of_auth
 LeanApi.Props.Bridge LeanApi.Proofs.ScopedApp.safe_of_pure_plans
 PrivateGames.Model.Shapes PrivateGames.Model.step_receipts
 PrivateGames.Model.Shapes PrivateGames.Model.keyed_replay_after
+# Review eb67460 fixes: allValid on the domain's preservation theorems (H1); NIPackage non-vacuity (H2)
+PrivateGames.Model.Invariants PrivateGames.Model.gameStore_preserves
+PrivateGames.Model.Invariants PrivateGames.Model.openGame_id
+LeanApi.Props.Shapes LeanApi.Props.NIPackage.toHidden
+LeanApi.Props.Shapes LeanApi.Props.NIPackage.acts_nonempty
+LeanApi.Props.Shapes LeanApi.Props.NIPackage.ok_nontrivial
+PrivateGames.Model.Shapes PrivateGames.Model.step_read
+PrivateGames.Model.Shapes PrivateGames.Model.read_missing
+PrivateGames.Model.Shapes PrivateGames.Model.gamesNI

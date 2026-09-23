@@ -29,8 +29,9 @@
   names the field.
 
   `preserves N by f₁, f₂` generates, for each decision function
-  `f : … → α → Except ε α` (the state is the last argument of type `α`; a
-  function with no such argument is a constructor), the theorem
+  `f : … → α → Except ε α` (the state is its only argument of type `α`; a
+  function with no such argument is a constructor; a function with several
+  must name the state: `preserves N by setTo[s]`), the theorem
   `N.preserved_f : ∀ args s', N s → f args = .ok s' → N s'` (or
   `f args = .ok s' → N s'`). It runs `invariant_cases`, then the optional
   tactic given for that function. If goals remain, the command fails and
@@ -320,7 +321,7 @@ elab_rules : tactic
 
 /-- The obligation for `f` (see the module docstring), with the names of
     the binders to introduce. -/
-def preservesType (inv f : Name) : MetaM (Expr × Array Name × Bool) := do
+def preservesType (inv f : Name) (stateName? : Option Name := none) : MetaM (Expr × Array Name × Bool) := do
   let invTy ← inferType (mkConst inv)
   let α ← forallTelescopeReducing invTy fun xs _ => do
     unless xs.size == 1 do throwError "preserves: `{inv}` must take exactly one argument"
@@ -332,12 +333,28 @@ def preservesType (inv f : Name) : MetaM (Expr × Array Name × Bool) := do
       throwError "preserves: `{f}` must return `Except ε {α}`, but returns{indentExpr res}"
     unless ← isDefEq res.appArg! α do
       throwError "preserves: `{f}` returns `Except _ {res.appArg!}`, not the invariant's carrier `{α}`"
-    let mut stateIdx : Option Nat := none
-    for i in [0:xs.size] do
-      if ← isDefEq (← inferType xs[i]!) α then stateIdx := some i
     let names ← xs.mapIdxM fun i x => do
       let n := (← x.fvarId!.getDecl).userName
       pure (if n.hasMacroScopes || n.isAnonymous then Name.mkSimple s!"a{i}" else n)
+    -- Which argument is the state? Guessing among several arguments of the
+    -- carrier type can put the hypothesis on the wrong one and prove a
+    -- true but useless theorem (review H4), so the author must say.
+    let mut carrierIdxs : Array Nat := #[]
+    for i in [0:xs.size] do
+      if ← isDefEq (← inferType xs[i]!) α then carrierIdxs := carrierIdxs.push i
+    let stateIdx : Option Nat ← match stateName? with
+      | some sn =>
+        match names.findIdx? (· == sn) with
+        | none => throwError "preserves: `{f}` has no argument named `{sn}`; its arguments are {names.toList}"
+        | some i =>
+          unless carrierIdxs.contains i do
+            throwError "preserves: argument `{sn}` of `{f}` does not have the invariant's carrier type `{α}`"
+          pure (some i)
+      | none =>
+        if carrierIdxs.size > 1 then
+          throwError "preserves: `{f}` has {carrierIdxs.size} arguments of type `{α}` \
+({", ".intercalate ((carrierIdxs.map (names[·]!)).toList.map toString)}), so the state is ambiguous. Name it: `preserves {inv} by {f}[{names[carrierIdxs.back!]!}]`"
+        pure carrierIdxs[0]?
     withLocalDeclD `s' α fun s' => do
       let ok ← mkAppOptM ``Except.ok #[res.appFn!.appArg!, α, s']
       let heq ← mkEq (mkAppN (← mkConstWithFreshMVarLevels f) xs) ok
@@ -354,8 +371,11 @@ def preservesType (inv f : Name) : MetaM (Expr × Array Name × Bool) := do
 
 syntax preservesAlt := ppLine "| " ident " => " tacticSeq
 
-/-- `preserves N by f₁, f₂ [using [lemmas]] (| fᵢ => tactic)*`. -/
-syntax (name := preservesCmd) "preserves " ident " by " ident,+ (" using " "[" term,* "]")? preservesAlt* : command
+/-- A decision function, optionally naming its state argument: `f` or `f[s]`. -/
+syntax preservesFn := ident ("[" ident "]")?
+
+/-- `preserves N by f₁, f₂[s] [using [lemmas]] (| fᵢ => tactic)*`. -/
+syntax (name := preservesCmd) "preserves " ident " by " preservesFn,+ (" using " "[" term,* "]")? preservesAlt* : command
 
 elab_rules : command
   | `(preserves $inv:ident by $fs,* $[using [$ls,*]]? $alts:preservesAlt*) => do
@@ -368,10 +388,13 @@ elab_rules : command
         pure ((← liftCoreM (realizeGlobalConstNoOverloadWithInfo f)), tac)
       | _ => throwUnsupportedSyntax
     let mut failures : Array MessageData := #[]
-    for fid in fs.getElems do
+    for fstx in fs.getElems do
+      let (fid, stateName?) ← match fstx with
+        | `(preservesFn| $fid:ident $[[$st]]?) => pure (fid, st.map (·.getId))
+        | _ => throwUnsupportedSyntax
       let f ← liftCoreM (realizeGlobalConstNoOverloadWithInfo fid)
       let thmName := invName ++ Name.mkSimple s!"preserved_{f.getString!}"
-      let (ty, names, _) ← liftTermElabM (preservesType invName f)
+      let (ty, names, _) ← liftTermElabM (preservesType invName f stateName?)
       let userTac := altMap.find? (·.1 == f) |>.map (·.2)
       let result ← liftTermElabM do
         let mvar ← mkFreshExprMVar ty (kind := .syntheticOpaque)

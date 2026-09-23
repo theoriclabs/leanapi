@@ -39,7 +39,7 @@ def showStore (w : gameStore.World) : String :=
 def storeSpec : CheckSpec gameStore.sys where
   worlds := storeWorlds
   envs := [()]
-  reqs := [.create g0]
+  reqs := [.create (⟨1⟩, ⟨2⟩, TimeControl.default)]
   initB w := w.items.isEmpty
   beq a b := a.items == b.items && a.next == b.next
   showW := showStore
@@ -58,6 +58,19 @@ def freshReport := checkInvariant gameStore.sys storeSpec "Fresh ∧ UniqueIds" 
 
 def trueReport := checkInvariant gameStore.sys storeSpec "True" (fun _ => True)
 def falseReport := checkInvariant gameStore.sys storeSpec "False" (fun _ => False)
+
+/-- Review H3 (eb67460): initial worlds 0 and 1, invariant `n % 2 = 0`.
+    Initial world 1 violates it, and the step preserves parity, so there is
+    no CTI: the checker must still not call it inductive. -/
+abbrev parity01 : Sys :=
+  { World := Nat, Req := Unit, Res := Unit, Env := Unit,
+    step := fun _ _ n => ((), n + 2), init := fun n => n = 0 ∨ n = 1 }
+
+def parity01Spec : CheckSpec parity01 :=
+  { worlds := List.range 10, envs := [()], reqs := [()], initB := fun n => n == 0 || n == 1,
+    beq := (· == ·), showW := toString, showR := fun _ => "tick" }
+
+def parityReport := checkInvariant parity01 parity01Spec "even" (fun n => n % 2 = 0)
 
 /-! ## Hiddenness witnesses (review C1) -/
 
@@ -83,6 +96,34 @@ def showModel (w : World) : String := s!"games {w.games.map (·.id.n)}"
 def callerHidden := checkHidden modelWorlds modelEq [⟨1⟩, ⟨3⟩] callerView (toString ·.n) showModel
 def allHidden := checkHidden modelWorlds modelEq [⟨1⟩, ⟨3⟩] allView (toString ·.n) showModel
 
+/-! ## Isolation package (review H2, eb67460) -/
+
+/-- No package can cover no requests (`acts := False`)… -/
+example (P : NIPackage gamesSys gamesObs) (a : gamesObs.Observer) (h : ∀ r w, ¬ P.acts a r w) : False :=
+  let ⟨_, _, ha⟩ := P.acts_nonempty a
+  h _ _ ha
+
+/-- …or call every response a success (`ok := True`). -/
+example (P : NIPackage gamesSys gamesObs) (h : ∀ a o, P.ok a o) : False :=
+  let ⟨a, o, hn⟩ := P.ok_nontrivial
+  hn (h a o)
+
+/-- A concrete request for `ReadPlumbing`, the one assumption of `gamesNI`. -/
+def plumbingReq : Req :=
+  { method := .get, path := ["games", "1"], headers := [("authorization", "Bearer tok")] }
+
+/-- `ReadPlumbing`, evaluated on `plumbingReq`. -/
+def plumbingHolds : Bool :=
+  match Router.resolveIn PrivateGames.App.entries .redirect plumbingReq with
+  | .route .readGame ps =>
+    (match PrivateGames.App.decode .readGame { plumbingReq with params := ps } with
+      | .ok (.readGame _) => true
+      | _ => false) &&
+    (match PrivateGames.App.authDigest plumbingReq with
+      | .ok _ => true
+      | .error _ => false)
+  | _ => false
+
 /-! ## Authoring -/
 
 def badGame : Game := { g0 with rev := 5, x := ⟨2⟩ }
@@ -100,6 +141,12 @@ def run : TestM Unit := do
   section_ "check before proving: vacuity" do
     check "True is reported vacuous (rules nothing out)" (trueReport.violating.isNone && trueReport.vacuous)
     check "False is reported vacuous (no initial world)" (falseReport.initWitness.isNone && falseReport.vacuous)
+  section_ "isolation package: its one assumption (review H2)" do
+    check "private-games: read plumbing (ReadPlumbing holds for GET /games/1 with a bearer token)" plumbingHolds
+  section_ "check before proving: every initial world (review H3)" do
+    checkEq "the violating initial world is reported" parityReport.initViolations ["1"]
+    check "no CTI among the searched steps" parityReport.ctis.isEmpty
+    check "never reported inductive" ((parityReport.render.splitOn "✓ inductive").length == 1)
   section_ "check before proving: hiddenness witness (review C1)" do
     IO.println (renderHidden allHidden)
     check "caller view has a hiddenness witness for every observer" (callerHidden.all (·.witness.isSome))

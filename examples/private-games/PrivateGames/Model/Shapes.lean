@@ -263,24 +263,126 @@ theorem reads_own_enabled : Enabled gamesSys ReadsOwn (fun res => res.status = 2
   rw [read_available p w g gid hfind]
   exact gameRes_status g
 
-/-- **Isolation, as a library package.** Per-caller response
-    noninterference over the projection `gamesObs`, a hiddenness witness
-    (another player's game really is hidden, proved), and the `Enabled`
-    companion `reads_own_enabled` (the response is not constant).
+/-! ### The package
 
-    The package takes the satisfiability of `ReadsOwn` as a hypothesis:
-    exhibiting a concrete request needs the router and decoder to evaluate
-    on string literals, which the kernel cannot do. It is **checked** by the
-    HTTP tests ("participant reads their game → 200") and proved at the core
-    level for every world by `read_available`. -/
-def gamesNI (wit : ∃ w r, ReadsOwn w r) : NIPackage gamesSys gamesObs where
+`NIPackage` needs concrete witnesses: for every player, a world in which a
+request authenticates as them. The HTTP plumbing of such a request (the
+router on string literals, the decoder, the SHA-256 token digest) does not
+evaluate in the kernel, so it is one named assumption, `ReadPlumbing`:
+*some* request routes to `GET /games/{id}`, decodes, and carries a bearer
+token. It is **checked** by the test suite on a concrete request
+("private-games: read plumbing"). Everything else is proved. -/
+
+/-- Some request is routed to `readGame`, decodes to a game id, and carries
+    a bearer token with digest `d`. -/
+def ReadPlumbing : Prop :=
+  ∃ (r : Req) (ps : List (String × String)) (gid : GameId) (d : String),
+    Router.resolveIn entries .redirect r = .route .readGame ps ∧
+    decode .readGame { r with params := ps } = .ok (.readGame gid) ∧
+    authDigest r = .ok d
+
+/-- Authentication ignores the router's path parameters. -/
+theorem auth_params (r : Req) (ps : List (String × String)) (w : World) :
+    authenticate { r with params := ps } w = authenticate r w := by
+  simp [authenticate, authDigest, Req.header?, bearerToken?]
+
+/-- A world in which token digest `d` belongs to `p`, holding `gs`. -/
+def sessionWorld (p : PlayerId) (d : String) (gs : List Game) : World :=
+  { games := gs, sessions := [(d, p)], players := [], receipts := [], nextGame := 1 }
+
+theorem authenticate_sessionWorld {r : Req} {d : String} (hd : authDigest r = .ok d) (p : PlayerId)
+    (gs : List Game) : authenticate r (sessionWorld p d gs) = .ok p := by
+  simp [authenticate, hd, sessionWorld]
+
+theorem acts_sessionWorld {r : Req} {ps : List (String × String)} {d : String}
+    (hr : Router.resolveIn entries .redirect r = .route .readGame ps) (hd : authDigest r = .ok d)
+    (p : PlayerId) (gs : List Game) : gamesApp.AuthenticatesAs r (sessionWorld p d gs) p := by
+  simp only [ScopedApp.AuthenticatesAs, gamesApp, hr]
+  rw [show authenticate { r with params := ps } = authenticate r from funext (auth_params r ps)]
+  exact authenticate_sessionWorld hd p gs
+
+/-- The full step of a routed, authenticated, decoded `readGame`. -/
+theorem step_read {r : Req} {ps : List (String × String)} {gid : GameId} {p : PlayerId} {w : World}
+    (hr : Router.resolveIn entries .redirect r = .route .readGame ps)
+    (hdec : decode .readGame { r with params := ps } = .ok (.readGame gid))
+    (ha : authenticate r w = .ok p) :
+    (gamesSys.step () r w).1 = (runPlan p (core p (.readGame gid) (load p w (Input.readGame gid).need)) w).1 := by
+  show (gamesApp.step r w).1 = _
+  have h1 : gamesApp.step r w = gamesApp.operate .readGame { r with params := ps } w := by
+    simp [ScopedApp.step, gamesApp, hr]
+  rw [h1, gamesApp_operate_eq]
+  simp only [operate, auth_params, ha, hdec]
+
+/-- A read of a game the caller cannot see answers `hidden`. -/
+theorem read_missing (p : PlayerId) (w : World) (gid : GameId)
+    (hnone : (visibleGames p w).find? (·.id = gid) = none) :
+    core p (.readGame gid) (load p w (Input.readGame gid).need) = .respond hidden := by
+  simp [core, withReceipt, Input.keyed, decideCore, load, Input.need, hnone]
+
+theorem hidden_status : hidden.status = 404 := rfl
+
+/-- The enabledness precondition, per observer: the request reads a game
+    visible to `p`, and authenticates as `p`. -/
+def ReadsOwnAs (p : PlayerId) (w : World) (r : Req) : Prop :=
+  ∃ g gid ps, Router.resolveIn entries .redirect r = .route .readGame ps ∧
+    authenticate { r with params := ps } w = .ok p ∧
+    decode .readGame { r with params := ps } = .ok (.readGame gid) ∧
+    (visibleGames p w).find? (·.id = gid) = some g
+
+/-- A game `p` plays, with id `gid`. -/
+def ownGame (p : PlayerId) (gid : GameId) : Game := Game.opened gid p ⟨p.n + 1⟩ TimeControl.default
+
+theorem find_ownGame (p : PlayerId) (gid : GameId) :
+    (visibleGames p (sessionWorld p d [ownGame p gid])).find? (·.id = gid) = some (ownGame p gid) := by
+  simp [visibleGames, sessionWorld, ownGame, visible, Game.isParticipant, Game.opened]
+
+/-- **Isolation, as a library package.** Per-caller response
+    noninterference over the projection `gamesObs`, with every
+    non-vacuity obligation of `NIPackage` discharged:
+
+    * `hidden`: for every player, a world where their token is live and a
+      world that adds another pair's game; they look the same to the
+      player, differ, and the player's read acts in the first;
+    * `enabled`: a player's read of their own game answers 200;
+    * `enabledWitness`: for every player, such a read exists;
+    * `refusal`: a read of a game the caller cannot see answers 404.
+
+    The one assumption is `ReadPlumbing` (see above), checked by a test. -/
+def gamesNI (plumb : ReadPlumbing) : NIPackage gamesSys gamesObs where
   acts p r w := gamesApp.AuthenticatesAs r w p
   ni p _ r _ _ hv ha := generic_isolation_caller r p (gamesObs_sameView hv) ha
-  hidden := gamesObs_hidden
-  enabledPre := ReadsOwn
-  enabledOk res := res.status = 200
-  enabled := reads_own_enabled
-  enabledWitness := wit
+  hidden p := by
+    obtain ⟨r, ps, _, d, hr, _, hd⟩ := plumb
+    refine ⟨sessionWorld p d [], withHidden (sessionWorld p d []) (otherGame p), r, ?_, ?_, ?_⟩
+    · have h := withHidden_view (p := p) (sessionWorld p d []) (otherGame p) (otherGame_hidden p)
+      simp only [Observation.SameView, gamesObs, h.sessions, h.games, h.receipts, h.players, h.nextGame]
+    · intro h
+      have := congrArg World.games h
+      simp [sessionWorld, withHidden] at this
+    · exact acts_sessionWorld hr hd p []
+  ok _ res := res.status = 200
+  enabledPre := ReadsOwnAs
+  enabled p _ (w : World) (r : Req) := by
+    rintro ⟨g, gid, ps, hr, ha, hdec, hfind⟩
+    rw [auth_params] at ha
+    refine ⟨?_, ?_⟩
+    · simp only [ScopedApp.AuthenticatesAs, gamesApp, hr, auth_params]
+      exact ha
+    · show (gamesSys.step () r w).1.status = 200
+      rw [step_read hr hdec ha, read_available p w g gid hfind]
+      exact gameRes_status g
+  enabledWitness p := by
+    obtain ⟨r, ps, gid, d, hr, hdec, hd⟩ := plumb
+    refine ⟨sessionWorld p d [ownGame p gid], r, ownGame p gid, gid, ps, hr, ?_, hdec, find_ownGame p gid⟩
+    rw [auth_params]
+    exact authenticate_sessionWorld hd p _
+  refusal := by
+    obtain ⟨r, ps, gid, d, hr, hdec, hd⟩ := plumb
+    refine ⟨⟨1⟩, (), sessionWorld ⟨1⟩ d [], r, acts_sessionWorld hr hd _ [], ?_⟩
+    show ¬ (gamesSys.step () r _).1.status = 200
+    rw [step_read hr hdec (authenticate_sessionWorld hd _ _),
+      read_missing _ _ gid (by simp [visibleGames, sessionWorld])]
+    simp [runPlan, hidden_status]
 
 end PrivateGames.Model
 

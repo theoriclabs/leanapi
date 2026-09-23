@@ -32,8 +32,16 @@ Two guards keep this from becoming vacuous:
 
 - the hiddenness witness (`Observation.Hidden`, `gamesObs_hidden`) must
   still hold after the release is added: something must remain hidden;
-- `NIPackage` needs an `Enabled` companion with a satisfiable
-  precondition.
+- `NIPackage` needs, for every observer, a hiddenness witness in which
+  the observer actually sends a request (`acts`); an availability
+  companion whose precondition implies `acts` and holds for every observer;
+  and a refusal (some acting request is not a success). So `acts := False`
+  and `ok := True` are both impossible (`NIPackage.acts_nonempty`,
+  `ok_nontrivial`). private-games discharges all of it in `gamesNI`, with
+  one assumption, `ReadPlumbing` (the HTTP plumbing of one read request,
+  which the kernel cannot evaluate), checked by a test. Corrected after
+  review H2 (eb67460): the first version accepted a package with no acting
+  requests and a trivially true success predicate.
 
 The coalition trace theorem (`trace_noninterference`) excludes requests by
 players outside the coalition. An outsider's write can legitimately change
