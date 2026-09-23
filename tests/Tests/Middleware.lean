@@ -66,13 +66,23 @@ def run : TestM Unit := do
     let r ← get svc "/id" [("Origin", "https://app.example")]
     checkEq "simple good origin" (r.header? "access-control-allow-origin") (some "https://app.example")
     checkEq "vary origin" (r.header? "vary") (some "Origin")
+    let unsafeCors := Service.ofRouter (Router.build! routes)
+      (Stack.of [cors { origins := .any, credentials := true }])
+    let r ← get unsafeCors "/id" [("Origin", "https://evil.example")]
+    checkEq "wildcard with credentials is denied" (r.header? "access-control-allow-origin") none
 
   section_ "trusted proxies" do
     let r ← request svc "GET" "/client" [("X-Forwarded-For", "1.2.3.4"), ("X-Forwarded-Proto", "https")] "" (peer "10.0.0.1")
     checkEq "trusted peer: xff honoured" r.body "client=1.2.3.4 scheme=https xff=-"
     let r ← request svc "GET" "/client" [("X-Forwarded-For", "1.2.3.4")] "" (peer "8.8.8.8")
     checkEq "untrusted peer: xff stripped" r.body "client=8.8.8.8:5555 scheme=- xff=-"
-    let r ← request svc "GET" "/client" [("Forwarded", "for=9.9.9.9;proto=http, for=10.0.0.1")] "" (peer "10.0.0.1")
+    let r ← request svc "GET" "/client"
+      [("Forwarded", "for=6.6.6.6"), ("X-Forwarded-For", "1.2.3.4")]
+      "" (peer "10.0.0.1")
+    checkEq "client Forwarded cannot override proxy XFF" r.body "client=1.2.3.4 scheme=- xff=-"
+    let forwardedSvc := Service.ofRouter (Router.build! routes)
+      (Stack.of [trustedProxy ["10.0.0.1"] .forwarded])
+    let r ← request forwardedSvc "GET" "/client" [("Forwarded", "for=9.9.9.9;proto=http, for=10.0.0.1")] "" (peer "10.0.0.1")
     checkEq "Forwarded chain skips trusted hops" r.body "client=9.9.9.9 scheme=- xff=-"
 
   section_ "timeout" do

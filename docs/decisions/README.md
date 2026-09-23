@@ -14,9 +14,10 @@ may revise it; the revision gets a new record that supersedes the old one.
 | [0006](0006-q2-value-representation.md) | Q2 valid values | Accepted, provisional (M3) |
 | [0007](0007-q3-state-storage.md) | Q3 unit of state | Accepted, provisional (M3) |
 | [0008](0008-q5-snapshot-authority.md) | Q5 snapshots and authority timing | Accepted, provisional (M4) |
-| [0009](0009-q4-isolation-claim.md) | Q4 the isolation claim | Accepted, provisional (M6) |
+| [0009](0009-q4-isolation-claim.md) | Q4 the initial isolation claim | Superseded by 0015 |
 | [0010](0010-q6-idempotence-contract.md) | Q6 the idempotence contract | Accepted, provisional (M6) |
 | [0011](0011-q11-evidence.md) | Q11 what qualifies as evidence | Accepted, provisional (M6) |
 | [0012](0012-q7-bindings.md) | Q7 authoring surface (first answer) | Accepted, provisional (M5) |
 | [0013](0013-q8-typed-stages.md) | Q8 typed middleware stages | Accepted, provisional (M7) |
 | [0014](0014-q12-one-point-oh.md) | Q12 what 1.0 means | Proposed (M7) |
+| [0015](0015-q4-caller-isolation.md) | Q4 per-caller isolation claim | Accepted, provisional (M7) |

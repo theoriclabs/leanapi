@@ -61,6 +61,7 @@ def run : TestM Unit := do
     checkEq "etag rev 0" (r.header? "etag") (some "\"0\"")
     checkEq "self-play 422" (← openGame svc alice aliceId).status 422
     checkEq "unknown opponent 422" (← openGame svc alice 9999).status 422
+    checkEq "wrapped opponent id refused" (← openGame svc alice (2^64 + bobId)).status 422
     checkEq "bad opponent 422" (← postJson svc "/games" (Json.mkObj [("opponent", .str "x")]) [bearer alice]).status 422
     checkEq "x reads" (← get svc s!"/games/{gid}" [bearer alice]).status 200
     checkEq "o reads" (← get svc s!"/games/{gid}" [bearer bob]).status 200
@@ -69,8 +70,32 @@ def run : TestM Unit := do
     let r ← get svc "/games" [bearer eve]
     checkEq "eve lists 0" (jnat r "total") (some 0)
     checkEq "no auth 401" (← get svc s!"/games/{gid}").status 401
+    checkEq "wrapped game id refused" (← get svc s!"/games/{2^64 + gid}" [bearer alice]).status 422
     checkEq "unknown token 401" (← get svc s!"/games/{gid}" [bearer "nope"]).status 401
     checkEq "per too big 422" (← get svc "/games?per=500" [bearer bob]).status 422
+
+  section_ "list count and page share a WAL snapshot" do
+    let snapshotEnv ← freshEnv "list-snapshot"
+    let (ownerId, owner) ← signup snapshotEnv.svc "snapshot-owner"
+    let (peerId, _) ← signup snapshotEnv.svc "snapshot-peer"
+    let _ ← openGame snapshotEnv.svc owner peerId
+    if let some reader := snapshotEnv.rt.readConns[0]? then
+      let observed ← LeanDb.DbM.run reader (readSnapshot do
+        let before ← LeanDb.countP (visiblePred ⟨ownerId⟩)
+        -- A different connection commits after the count and before the page.
+        let inserted ← liftM <| LeanDb.DbM.run snapshotEnv.rt.writeConn
+          (LeanDb.insert GameRow (GameRow.ofGame
+            (Game.opened ⟨0⟩ ⟨ownerId⟩ ⟨peerId⟩ TimeControl.default)))
+        let after ← LeanDb.countP (visiblePred ⟨ownerId⟩)
+        let page ← LeanDb.fetchFiltered GameRow (visiblePred ⟨ownerId⟩)
+          (window := { limit := some 10, offset := 0 })
+        return (before, after, page.size, inserted.isOk))
+      checkEq "count and page see the same version" observed.toOption (some (1, 1, 1, true))
+      let listed ← snapshotEnv.rt.repo.listVisible ⟨ownerId⟩ 0 10
+      checkEq "new game visible after snapshot ends" (listed.toOption.map Prod.snd) (some 2)
+    else
+      check "snapshot reader exists" false
+    snapshotEnv.rt.close
 
   section_ "§9.3: unauthorized vs missing ids" do
     let gid := 1

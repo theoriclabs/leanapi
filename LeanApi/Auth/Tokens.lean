@@ -50,7 +50,9 @@ def basicWithPasswords (lookup : String → IO (Option (actor × String))) (dumm
     match ← lookup user with
     | some (a, stored) => return if verifyPassword pw stored then some a else none
     | none =>
-      let _ := verifyPassword pw dummy
+      -- Keep the result in an observable IO branch. A discarded pure call
+      -- is erased by the compiler, removing the dummy scrypt work.
+      if verifyPassword pw dummy then IO.sleep 0
       return none
 
 end LeanApi

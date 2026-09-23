@@ -36,12 +36,17 @@ PrivateGames.Domain.Proofs PrivateGames.decide_transition
 PrivateGames.Model.Idempotence PrivateGames.Model.gameRes_status
 # M7: reusable lemmas
 LeanApi.Proofs.Scoped LeanApi.Proofs.ScopedApp.step_noninterference
+LeanApi.Proofs.Scoped LeanApi.Proofs.ScopedApp.step_noninterference_caller
 LeanApi.Proofs.Scoped LeanApi.Proofs.ScopedApp.unrouted_pure
 PrivateGames.Model.Generic PrivateGames.Model.gamesApp_obligations
+PrivateGames.Model.Generic PrivateGames.Model.gamesApp_caller_obligations
 PrivateGames.Model.Generic PrivateGames.Model.generic_isolation
+PrivateGames.Model.Generic PrivateGames.Model.generic_isolation_caller
 PrivateGames.Model.Generic PrivateGames.Model.gamesApp_step_route
 Notes.Shared Notes.Shared.obligations
 Notes.Shared Notes.Shared.isolation
+Notes.Shared Notes.Shared.callerObligations
+Notes.Shared Notes.Shared.isolation_caller
 # M7: typed middleware
 LeanApi.Http.Typed LeanApi.Stage.decorate_preserves
 LeanApi.Http.Typed LeanApi.Stage.guard_transparent

@@ -1,6 +1,6 @@
 # Evidence record: private-games on LeanAPI
 
-Status as of LeanAPI 0.5.0, 2026-09-22. Required by DESIGN.md §8.4 and
+Status as of LeanAPI 0.5.0 plus the 2026-09-23 working-tree review. Required by DESIGN.md §8.4 and
 decision Q11. The post (intent.md) should quote this file, not summarize it.
 
 Every claim below is one of:
@@ -8,7 +8,8 @@ Every claim below is one of:
 - **Proved**: a Lean theorem, checked by `./scripts/axiom_audit.sh`. It uses no
   `sorry`, no `native_decide`, and no axioms beyond `propext`,
   `Classical.choice` and `Quot.sound`.
-- **Checked**: a runtime test in `leanapi_tests` (CI).
+- **Checked**: a runtime test in `leanapi_tests`, run locally. CI execution
+  for this working tree has not been verified.
 - **Assumed**: trusted and not established here.
 - **Open**: wanted, with neither a proof nor qualifying evidence.
 
@@ -40,7 +41,7 @@ player and token tables. They reveal whether a name is taken, by design.
 | Claim | Status | Where |
 |---|---|---|
 | For any request, two worlds that agree on every player's view (sessions, visible games in order, own receipts, player ids, next id) produce **identical responses** (status, all headers, body bytes), and their successor worlds again agree | **Proved** | `PrivateGames.Model.step_noninterference` |
-| Per caller: for a request that authenticates as `p`, only `p`'s view matters | **Proved** | `step_noninterference_caller` |
+| Per caller: for a request that authenticates as `p`, only `p`'s view matters for the complete response, even if another player's view differs | **Proved** | `step_noninterference_caller`, `generic_isolation_caller` |
 | Existence privacy: a game you do not participate in is indistinguishable from a game that does not exist | **Proved** | `existence_private` |
 | The model reads only visible games, own receipts and player ids (restricted logical reads) | **Proved**, by construction of `Model.load` (the only data access in `operate`) | `PrivateGames/Model/Step.lean` |
 | The native repository puts the policy into the SQL predicate (`x = actor OR o = actor`) and re-checks it on the decoded row | **Checked** (tests: other user's game ≡ missing id, byte for byte, for read, move and resign) | `tests/Tests/Games.lean` §9.3 |
@@ -55,9 +56,9 @@ the total number of games; this is decision 0009's known release.
 
 | Claim | Status | Where |
 |---|---|---|
-| Keyed replay: after a keyed command commits with response `res`, sending the same request again returns `res` marked `Idempotent-Replayed: true` and leaves the world unchanged. Holds for every route and input | **Proved** | `PrivateGames.Model.keyed_replay` |
-| A different input under the same key is refused (422) and changes nothing | **Proved** in `core` (`withReceipt`); **checked** natively | `tests/Tests/Games.lean` "keyed idempotence" |
-| Resign twice has the same state effect as once, with or without a key | **Proved** | `PrivateGames.resign_idem`, `resign_resign`, `Model.resign_state_idem` |
+| Immediate keyed replay after a successful write with a fresh key returns the recorded response with `Idempotent-Replayed: true` and leaves the model world unchanged. The theorem requires successful routing, authentication, decoding and commit | **Proved** | `PrivateGames.Model.keyed_replay` |
+| Reusing a key with different input is refused (422) and changes nothing | **Checked** natively; model branch visible in `core`, but no audited theorem for it | `tests/Tests/Games.lean` "keyed idempotence" |
+| Resigning twice has the same domain state effect; the model's second unkeyed resignation leaves its state unchanged | **Proved** | `PrivateGames.resign_idem`, `resign_resign`, `Model.resign_state_idem` |
 | Reads (`GET /games`, `GET /games/{id}`) never change the world, on any branch | **Proved** | `Model.reads_pure` |
 | Unrouted requests (404, 405, OPTIONS, redirects) never change the world | **Proved** | `Model.unrouted_pure` |
 | The receipt is written in the same transaction as the state change | **Checked**: restart after commit, then retry returns the receipt and the move is applied once | "restart after commit" test |
@@ -82,6 +83,7 @@ is decision 0010.
 | Claim | Status | Where |
 |---|---|---|
 | Simultaneous moves on one revision: exactly one commits, the rest get 412 | **Checked** (8 concurrent) | "simultaneous moves" |
+| A list's `total` and returned page use the same WAL snapshot, even if a writer commits between the two SQL statements | **Checked** (interleaved writer) | "list count and page share a WAL snapshot" |
 | Revocation between admission and commit is refused at commit | **Checked** | "revocation between admission and commit" |
 | Commits are serializable per game (single writer, `BEGIN IMMEDIATE`, compare-and-swap) | **Checked** above; mechanism is decision 0008 | |
 | The model is sequential; concurrency is not modelled | **Open** | |
@@ -90,9 +92,10 @@ is decision 0010.
 
 | Claim | Status | Where |
 |---|---|---|
-| Any app built as route → authenticate → decode → scoped load → core → commit has response noninterference once it proves three obligations (authentication, load and commit respect the view). `decode` and `core` need no proof | **Proved** | `LeanApi.Proofs.ScopedApp.step_noninterference` |
-| private-games discharges the obligations; its routed steps coincide with the M6 model | **Proved** | `gamesApp_obligations`, `generic_isolation`, `gamesApp_step_route` |
-| A second app with a different policy (notes shared with other users, where sharing changes visibility) gets isolation the same way | **Proved** | `Notes.Shared.obligations`, `Notes.Shared.isolation` |
+| Any `ScopedApp` whose authentication, scoped load and run response depend only on one authenticated caller's view has identical responses when only that view matches. `decode` and `core` are pure and need no separate proof | **Proved** | `LeanApi.Proofs.ScopedApp.step_noninterference_caller` |
+| Under the stronger premise that **every** actor's view matches, three additional obligations also preserve that relation across one step | **Proved** | `LeanApi.Proofs.ScopedApp.step_noninterference` |
+| private-games discharges both sets of obligations; its routed steps coincide with the M6 model | **Proved** | `gamesApp_caller_obligations`, `generic_isolation_caller`, `gamesApp_obligations`, `generic_isolation`, `gamesApp_step_route` |
+| A second app with a different policy (notes shared with other users, where sharing changes visibility) discharges both sets too | **Proved** | `Notes.Shared.callerObligations`, `Notes.Shared.isolation_caller`, `Notes.Shared.obligations`, `Notes.Shared.isolation` |
 | Typed middleware: `decorate` preserves status and body, a passing `guard` is transparent, and a `guard`'s refusal depends only on its declared observation | **Proved** | `Stage.decorate_preserves`, `guard_transparent`, `guard_observes` |
 | Exported routes outside the proved set are reported, and tests fail on any not declared here | **Checked** | `Router.coverage`, `tests/Tests/Tier2.lean` |
 
@@ -127,10 +130,15 @@ is decision 0010.
 ## Open
 
 - Trace noninterference across request sequences and several actors.
+- Preservation of one caller's view across a state-changing step when only
+  that caller's view initially matches; the current caller-only theorems
+  establish response equality for one request.
 - Proof (not test) that the native shell refines the model.
 - Concurrency in the model.
 - Receipt expiry.
 - A reusable (app-generic) keyed-idempotence theorem.
+- Replay after intervening requests and the state effect of resignation with
+  different keys.
 - Coverage enforced by the build itself, not only by tests.
 
 ## How to re-check

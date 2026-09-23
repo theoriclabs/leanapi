@@ -8,6 +8,8 @@ Status: accepted (provisional), M4, 2026-09-22.
   deferred transaction. A single read sees one snapshot. The visibility policy
   is part of the SQL predicate (`x = actor OR o = actor`), and the decoded row
   is re-checked with the Lean `visible` predicate.
+  A list's count and page are one logical read and share one deferred
+  transaction, including when another connection commits between statements.
 - **Writes** go through one writer thread and one connection. Each command's
   commit is one `BEGIN IMMEDIATE` transaction that:
   1. replays or refuses a keyed command whose receipt already exists,
@@ -23,8 +25,11 @@ Status: accepted (provisional), M4, 2026-09-22.
   not-found. If the game moved on, the commit is refused as a conflict (412).
   The observable outcome is as if the command ran at the commit instant.
 - Sessions (token rows) are checked at admission only. Deleting a token does
-  not abort a command that was already admitted. Commands are short, and the
-  per-request timeout bounds the window.
+  not abort a command that was already admitted. The request timeout bounds
+  how long the client waits, but cancellation is cooperative and does not
+  guarantee that an admitted command cannot commit after a 504 response.
+  Callers must treat a timeout's write outcome as unknown and retry with an
+  idempotency key when they need a definitive result.
 
 ## Consequences
 

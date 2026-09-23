@@ -4,7 +4,7 @@
   * `keyed_replay`: replaying a keyed request that was committed returns the
     recorded response, marked as a replay, and leaves the world unchanged.
   * `reads_pure`: requests to GET routes never change the world.
-  * `resign_state_idem`: a second resignation changes nothing, key or not.
+  * `resign_state_idem`: a second unkeyed resignation changes nothing.
   * `read_available`: a participant's read of their game succeeds.
 -/
 import PrivateGames.Model.Existence

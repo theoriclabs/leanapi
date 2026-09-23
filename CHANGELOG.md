@@ -2,16 +2,17 @@
 
 ## 0.5.0 (M7): generalize
 
-- `LeanApi.Proofs.ScopedApp`: a reusable isolation theorem. An app proves
-  three view obligations and gets response noninterference. It is
-  instantiated by private-games and by a second app, `Notes.Shared` (notes
-  with sharing, where sharing changes visibility).
+- `LeanApi.Proofs.ScopedApp`: reusable response noninterference for one
+  authenticated caller's view after three caller-view obligations. The
+  stronger all-views theorem also preserves successor views. Both forms are
+  instantiated by private-games and `Notes.Shared` (notes with sharing).
 - Typed middleware stages (`guard`, `decorate`) with proved contracts
   (decision 0013).
 - OpenAPI 3.1 generation from route metadata, `/openapi.json` and `/docs`,
   and `x-leanapi-proved` markers; `Router.coverage` reports routes outside
   the proved set.
-- Conditional requests (`If-None-Match` → 304, `If-Match` → 412/428,
+- Conditional requests (`If-None-Match` → 304 for reads, pre-write
+  `checkIfNoneMatch` → 412, `If-Match` → 412/428,
   `If-Modified-Since`), token-bucket rate limiting (429 + `Retry-After`),
   Server-Sent Events formatting, W3C `traceparent` tracing, buffered
   `multipart/form-data`, `cacheControl`/`vary` helpers.
@@ -22,10 +23,12 @@
 - Reference model `PrivateGames.Model.step : Req → World → Res × World` over
   the exported proved routes, sharing `decode` and `core` with the native
   service; route resolution shared through `Router.resolveIn`.
-- Theorems: `step_noninterference` (single-request response noninterference
-  over the full response), `existence_private`, `keyed_replay`, `reads_pure`,
-  `unrouted_pure`, `resign_state_idem`, `read_available`. All 31 audited
-  theorems in CI.
+- Theorems: `step_noninterference_caller` (single-request response
+  noninterference for one authenticated player's view), `existence_private`,
+  `keyed_replay` (immediate replay after a successful fresh keyed write),
+  `reads_pure`, `unrouted_pure`, `resign_state_idem`, `read_available`.
+  Theorems are checked by the local axiom-audit script; CI execution is
+  separately tracked in [EVIDENCE.md](EVIDENCE.md).
 - Differential test: native service ≡ model on random request sequences
   (mutation-checked).
 - `EVIDENCE.md`; decisions 0009 (Q4), 0010 (Q6), 0011 (Q11).

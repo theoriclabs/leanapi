@@ -177,11 +177,40 @@ theorem obligations : app.Obligations where
       · exact ⟨rfl, fun v => ⟨(h v).sessions, put_view (h v) old.id new, (h v).nextId⟩⟩
       · exact ⟨rfl, h⟩
 
+/-- A note hidden from this user may differ even when its owner can see it. -/
+theorem callerObligations : app.CallerObligations where
+  auth_view r u w₁ w₂ h ha := by
+    change authenticate r w₂ = .ok u
+    change authenticate r w₁ = .ok u at ha
+    simpa [authenticate, h.sessions] using ha
+  load_view u w₁ w₂ n h := by
+    show load u w₁ n = load u w₂ n
+    simp only [load, h.nextId]
+    congr 1
+    cases n with
+    | none => rfl
+    | some i => exact h.notes i
+  run_response u p w₁ w₂ h := by
+    change (run u p w₁).1 = (run u p w₂).1
+    cases p with
+    | respond _ => rfl
+    | insert _ => rfl
+    | replace old new =>
+      simp only [run, replaceOk_view h]
+      split <;> rfl
+
 /-- **Isolation for notes-with-sharing**, from the reusable theorem. What a
     user sees (including notes shared with them, and whether a note exists)
     does not depend on notes they cannot see. -/
 theorem isolation (r : Req) {w₁ w₂ : World} (h : app.SameViews w₁ w₂) :
     (app.step r w₁).1 = (app.step r w₂).1 ∧ app.SameViews (app.step r w₁).2 (app.step r w₂).2 :=
   app.step_noninterference obligations r h
+
+/-- One user's full response is unchanged when only notes hidden from that
+    user differ. Other users' views need not be equal. -/
+theorem isolation_caller (r : Req) (u : User) {w₁ w₂ : World}
+    (h : SameView u w₁ w₂) (ha : app.AuthenticatesAs r w₁ u) :
+    (app.step r w₁).1 = (app.step r w₂).1 :=
+  app.step_noninterference_caller callerObligations r u h ha
 
 end Notes.Shared

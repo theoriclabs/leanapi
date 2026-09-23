@@ -1,11 +1,11 @@
 /-
   Isolation (decision 0009): single-request response noninterference.
 
-  Two worlds with the same view for the caller give the same response, and
-  their successors again have the same view. The caller of a request is not
-  known before authentication, so the view is stated for every player:
-  hidden data is "games a player does not participate in, and other
-  players' receipts". The main theorem is `step_noninterference`.
+  Two worlds with the same view for an authenticated caller give the same
+  response (`step_noninterference_caller`). The stronger
+  `step_noninterference` assumes every player's view matches and also proves
+  that this relation holds for successor worlds. Hidden data for a caller
+  includes games they do not participate in and other players' receipts.
 -/
 import PrivateGames.Model.Step
 
@@ -21,8 +21,8 @@ structure SameView (p : PlayerId) (w₁ w₂ : World) : Prop where
   players : w₁.players = w₂.players
   nextGame : w₁.nextGame = w₂.nextGame
 
-/-- Same view for every player: what an unauthenticated request can differ on
-    is nothing, and an authenticated one sees its own player's view. -/
+/-- Same view for every player. This is stronger than one caller's view:
+    another player can see a game hidden from the caller. -/
 def SameViews (w₁ w₂ : World) : Prop := ∀ p, SameView p w₁ w₂
 
 theorem load_view {p : PlayerId} {w₁ w₂ : World} (h : SameView p w₁ w₂) (n : Need) :
@@ -163,10 +163,9 @@ theorem operate_noninterference (op : Op) (r : Req) {w₁ w₂ : World} (h : Sam
       rw [load_view (h p)]
       exact runPlan_noninterference p _ h
 
-/-- **Isolation.** For every request to the exported proved routes: if two
-    worlds agree on every player's view (differing only in data hidden from
-    each player), the response is identical (status, headers, body) and the
-    successor worlds again agree on every player's view. -/
+/-- If two worlds agree on every player's view, the response is identical
+    (status, headers, body) and the successors agree on every player's view.
+    For privacy with only the caller's view fixed, see the theorem below. -/
 theorem step_noninterference (r : Req) {w₁ w₂ : World} (h : SameViews w₁ w₂) :
     (step r w₁).1 = (step r w₂).1 ∧ SameViews (step r w₁).2 (step r w₂).2 := by
   unfold step

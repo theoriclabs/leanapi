@@ -21,10 +21,10 @@ instance : ToString PlayerId := ⟨fun p => toString p.n⟩
 instance : ToString GameId := ⟨fun g => toString g.n⟩
 
 def PlayerId.make (n : Nat) : Except String PlayerId :=
-  if n == 0 then .error "player id must be positive" else .ok ⟨n⟩
+  if n == 0 || n >= 2^63 then .error "player id must be between 1 and 2^63-1" else .ok ⟨n⟩
 
 def GameId.make (n : Nat) : Except String GameId :=
-  if n == 0 then .error "game id must be positive" else .ok ⟨n⟩
+  if n == 0 || n >= 2^63 then .error "game id must be between 1 and 2^63-1" else .ok ⟨n⟩
 
 /-- A square of the 3×3 board, numbered 0–8 row by row. -/
 structure Cell where
@@ -58,7 +58,9 @@ theorem Cell.make_i (c : Cell) : Cell.make c.i = .ok c := by
 theorem TimeControl.make_minutes (t : TimeControl) : TimeControl.make t.minutes = .ok t := by
   unfold TimeControl.make; simp [t.isValid]
 
-theorem GameId.make_n (g : GameId) (h : g.n ≠ 0) : GameId.make g.n = .ok g := by
-  unfold GameId.make; simp [h]
+theorem GameId.make_n (g : GameId) (h : g.n ≠ 0) (hb : g.n < 2^63) :
+    GameId.make g.n = .ok g := by
+  unfold GameId.make
+  simp [h, Nat.not_le_of_gt hb]
 
 end PrivateGames

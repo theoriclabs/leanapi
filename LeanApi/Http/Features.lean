@@ -2,8 +2,8 @@
   Tier-2 HTTP features (M7, DESIGN §5.3):
 
   * Conditional requests: `conditionalGet` answers `If-None-Match` with 304
-    from the response's `ETag` (GET/HEAD) and `If-Match` with 412 for unsafe
-    methods; `ifModifiedSince` compares `Last-Modified` exactly.
+    from the response's `ETag` (GET/HEAD). Write preconditions must be checked
+    before a mutation with `checkIfMatch` or `checkIfNoneMatch`.
   * Rate limiting: token buckets keyed per client address, actor, or route.
   * Server-Sent Events: `sse` formats events; `sseRes` builds a response.
   * Tracing: W3C `traceparent` propagation (generate or continue a trace).
@@ -29,20 +29,28 @@ def etagMatches (header : String) (etag : String) : Bool :=
   tags.contains "*" || tags.contains et
 
 /-- For GET/HEAD: if the response has an `ETag` matched by `If-None-Match`,
-    answer 304 with the validators and no body (RFC 9110 §13.1.2). For
-    other methods, `If-None-Match` matching an existing entity is 412. -/
+    answer 304 with the validators and no body (RFC 9110 §13.1.2).
+    Unsafe methods pass through: a post-handler 412 would report failure
+    after a write had already occurred. Use `checkIfNoneMatch` before writing. -/
 def conditionalGet : NamedMiddleware :=
   ⟨"conditionalGet", fun h req => do
     let res ← h req
     match req.header? "if-none-match", res.header? "etag" with
     | some inm, some et =>
-      if res.status / 100 == 2 && etagMatches inm et then
-        if req.method == .get || req.method == .head then
-          let keep := ["etag", "cache-control", "vary", "expires", "content-location", "last-modified"]
-          pure { status := 304, headers := res.headers.filter (keep.contains ·.1), body := .empty }
-        else pure (Problem.make 412 (some "If-None-Match matched")).toRes
+      if (req.method == .get || req.method == .head) && res.status / 100 == 2 && etagMatches inm et then
+        let keep := ["etag", "cache-control", "vary", "expires", "content-location", "last-modified"]
+        pure { status := 304, headers := res.headers.filter (keep.contains ·.1), body := .empty }
       else pure res
     | _, _ => pure res⟩
+
+/-- Check `If-None-Match` against the current entity *before* an unsafe
+    handler mutates it. `none` means the request may proceed. -/
+def checkIfNoneMatch (req : Req) (current : Option String) : Option Res :=
+  match req.header? "if-none-match", current with
+  | some inm, some et =>
+    if etagMatches inm et then some (Problem.make 412 (some "If-None-Match matched")).toRes
+    else none
+  | _, _ => none
 
 /-- Precondition check for unsafe methods against the current entity tag
     (the handler supplies it, typically from a revision). `none` when the

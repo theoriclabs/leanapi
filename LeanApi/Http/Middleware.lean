@@ -109,14 +109,16 @@ structure CorsConfig where
 
 def CorsConfig.allows (c : CorsConfig) (origin : String) : Bool :=
   match c.origins with
-  | .any => true
+  | .any => !c.credentials
   | .list os => os.contains origin
   | .predicate p => p origin
 
 /-- CORS. Preflights (`OPTIONS` with `Access-Control-Request-Method`) are
     answered here and never reach the app. Disallowed origins get no CORS
-    headers (the browser then blocks the response). With `credentials`,
-    `*` is never sent; the origin is echoed and `Vary: Origin` added. -/
+    headers (the browser then blocks the response). `origins := .any` with
+    `credentials := true` is denied: echoing an arbitrary origin would expose
+    cookie-authenticated responses. Allowlisted origins with credentials are
+    echoed and add `Vary: Origin`. -/
 def cors (c : CorsConfig) : NamedMiddleware :=
   ⟨"cors", fun h req => do
     match req.header? "origin" with
@@ -157,12 +159,18 @@ def parseForwarded (v : String) : List (Option String × Option String) :=
       | _ => none
     (pairs.lookup "for", pairs.lookup "proto")
 
+inductive ProxyHeaders where
+  | xForwarded
+  | forwarded
+
 /-- Honour `Forwarded` / `X-Forwarded-For` / `X-Forwarded-Proto` only when
     the socket peer is one of `trusted` (addresses without port). Walks the
     chain from the nearest hop and stops at the first untrusted address:
     that is the client. Otherwise the headers are ignored and removed, so
-    handlers cannot mistake spoofed values for facts. -/
-def trustedProxy (trusted : List String) : NamedMiddleware :=
+    handlers cannot mistake spoofed values for facts. Select the header family
+    your trusted proxy appends; a client-supplied `Forwarded` must not override
+    the proxy's `X-Forwarded-For`. -/
+def trustedProxy (trusted : List String) (source : ProxyHeaders := .xForwarded) : NamedMiddleware :=
   ⟨"trustedProxy", fun h req => do
     let hostOf (a : String) : String :=
       if a.startsWith "[" then ((a.drop 1).takeWhile (· != ']')).toString
@@ -177,11 +185,11 @@ def trustedProxy (trusted : List String) : NamedMiddleware :=
     | some p =>
       if !trusted.contains p then h (strip req) else
       let hops : List (Option String × Option String) :=
-        match req.header? "forwarded" with
-        | some v => parseForwarded v
-        | none =>
+        match source with
+        | .forwarded => (req.headerAll "forwarded").flatMap parseForwarded
+        | .xForwarded =>
           let fors := ((req.headerAll "x-forwarded-for").flatMap (·.splitOn ",")).map (·.trimAscii.toString)
-          let proto := req.header? "x-forwarded-proto"
+          let proto := ((req.headerAll "x-forwarded-proto").flatMap (·.splitOn ",")).getLast?.map (·.trimAscii.toString)
           fors.map fun f => (some f, proto)
       -- nearest hop last: walk from the end while hops are trusted proxies
       let rev := hops.reverse

@@ -21,6 +21,24 @@ def run : TestM Unit := do
     checkEq "If-Match mismatch → 412" ((checkIfMatch req (some "\"7\"")).map (·.status)) (some 412)
     checkEq "If-Match match → proceed" ((checkIfMatch (Req.mk' .put "/doc" [("if-match", "\"7\"")]) (some "\"7\"")).map (·.status)) none
     checkEq "If-Match required → 428" ((checkIfMatch (Req.mk' .put "/doc") (some "\"7\"") true).map (·.status)) (some 428)
+    let writes ← IO.mkRef (0 : Nat)
+    let writeRoutes := [
+      Route.put "/unsafe" fun _ => do
+        writes.modify (· + 1)
+        pure ((Res.text "written").setHeader "etag" "\"7\""),
+      Route.put "/checked" fun req => do
+        if let some refusal := checkIfNoneMatch req (some "\"7\"") then
+          pure refusal
+        else
+          writes.modify (· + 1)
+          pure (Res.text "written")]
+    let writeSvc := Service.ofRouter (Router.build! writeRoutes) (Stack.of [conditionalGet])
+    checkEq "post-handler middleware never reports false 412"
+      (← request writeSvc "PUT" "/unsafe" [("If-None-Match", "\"7\"")]).status 200
+    checkEq "unsafe handler ran" (← writes.get) 1
+    checkEq "pre-write check refuses matching tag"
+      (← request writeSvc "PUT" "/checked" [("If-None-Match", "\"7\"")]).status 412
+    checkEq "pre-write refusal leaves state alone" (← writes.get) 1
 
   section_ "rate limiting" do
     let rl ← RateLimit.new 1.0 3

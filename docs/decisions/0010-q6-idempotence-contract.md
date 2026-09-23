@@ -27,9 +27,10 @@ Status: accepted (provisional), M6, 2026-09-22.
 
 ## Theorems (M6)
 
-- `keyed_replay`: after a keyed command succeeded with response `res`,
-  sending the same request again returns `res` marked as a replay and leaves
-  the world unchanged. Holds for **every** request to the proved routes.
+- `keyed_replay`: for a routed, authenticated, decoded keyed write with a
+  fresh key and a successful first commit, an **immediate** replay returns
+  `res` marked as a replay and leaves the world unchanged. Replay after
+  intervening requests remains unproved.
 - `resign_idem` (domain) and `resign_state_idem` (model): resigning twice
   has the same state effect as once, even without a key.
 - `reads_pure`: `GET` routes never change the world.

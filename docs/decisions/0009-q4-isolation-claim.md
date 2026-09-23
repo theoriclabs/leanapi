@@ -1,6 +1,8 @@
 # 0009. The isolation claim (Q4)
 
-Status: accepted (provisional), M6, 2026-09-22. Written before the proof.
+Status: superseded by [0015](0015-q4-caller-isolation.md), M7,
+2026-09-23. Written before the proof; its successor-view clause has not been
+established under the one-caller premise.
 
 ## Candidates (DESIGN §6.3)
 

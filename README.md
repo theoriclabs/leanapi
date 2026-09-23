@@ -53,7 +53,7 @@ method) at compile time.
 | Testing | in-process client over `Std.Http.Server.serveConnection`: the real parser and writer, no socket |
 | JWT and passwords (0.2) | HS256 JWT verification (`alg: none` rejected), opaque tokens stored by SHA-256 digest, scrypt Basic auth; crypto from [leancrypto](https://github.com/theoriclabs/leancrypto) (OpenSSL 3) |
 | HTTP extras (0.5) | conditional requests (304/412/428), rate limiting (429), SSE, `traceparent`, multipart, OpenAPI 3.1 + `/docs` |
-| Proofs (0.4, 0.5) | `ScopedApp`: prove three view obligations about your storage model, get response noninterference for every route; typed middleware stages with proved contracts; axiom audit in CI |
+| Proofs (0.4, 0.5) | `ScopedApp`: prove three caller-view obligations about your model, get response noninterference for authenticated requests; typed middleware stages with proved contracts; axiom audit in CI |
 
 Middleware is trusted code: see [decision 0001](docs/decisions/0001-q8-middleware-v01.md).
 What an accepted credential does and does not establish: [decision 0003](docs/decisions/0003-authenticator-contract.md).
@@ -79,10 +79,13 @@ Toolchain: `leanprover/lean4:v4.33.0`.
 ## Proved example: private-games
 
 [`examples/private-games`](examples/private-games/README.md) is a LeanDB-backed
-service of private games, with Lean proofs that **no route reveals another
-player's games** (including whether they exist) and that **retrying a keyed
-request returns the recorded outcome without applying it twice**. What is
-proved, checked and assumed is listed in [EVIDENCE.md](EVIDENCE.md).
+service of private games. For an authenticated player, Lean proves that
+changing data outside that player's defined view does not change a proved
+route's response, and that a hidden game is indistinguishable from a missing
+one. The defined view includes the next game id, so sequential ids can reveal
+the number of games. Lean also proves that **retrying a keyed request returns
+the recorded outcome without applying it twice**. What is proved, checked
+and assumed is listed in [EVIDENCE.md](EVIDENCE.md).
 
 Design questions are settled by [decision records](docs/decisions/README.md).
 
