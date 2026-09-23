@@ -1,24 +1,21 @@
 /-
-  Notes: a small CRUD-ish app using every M1 feature.
+  Notes, written with typed endpoints (docs/ENDPOINTS.md).
 
-    POST   /api/users                 {"name","password"}      register (form or JSON)
-    POST   /api/sessions              Basic auth → {"token"}   login, also sets a cookie
-    GET    /api/notes?page=&per=      list my notes
-    POST   /api/notes                 {"title","body","tags"?}
-    GET    /api/notes/{id:nat}
-    PATCH  /api/notes/{id:nat}        {"title"?,"body"?}  If-Match: "<rev>"
-    DELETE /api/notes/{id:nat}
+  Each endpoint is a pure function; its signature says what it takes, from
+  where, whether it changes state, and every way it can answer. The route
+  table at the bottom is the whole HTTP surface.
 
-  Auth: bearer token, or the `sid` cookie. Passwords here are compared
-  directly because M1 has no crypto; `examples/private-games` uses the
-  crypto dependency. Store: an in-memory map under `Std.Mutex`.
+  Auth: bearer token, or the `sid` cookie; login uses Basic credentials.
+  Passwords are compared directly here to keep the example small;
+  `examples/private-games` uses the crypto dependency. State: in memory.
 -/
 import LeanApi
-import Std.Sync.Mutex
 
 namespace Notes
 
 open LeanApi Lean
+
+/-! ## Domain values: validated at the boundary -/
 
 structure Title where
   raw : String
@@ -32,6 +29,36 @@ instance : SmartCtor Title String where
     else .ok ⟨t⟩
   raw := (·.raw)
 
+structure UserName where
+  raw : String
+  deriving Repr, BEq
+
+instance : SmartCtor UserName String where
+  make s := if s.isEmpty then .error "name required" else .ok ⟨s⟩
+  raw := (·.raw)
+
+structure Password where
+  raw : String
+
+instance : SmartCtor Password String where
+  make s := if s.length < 4 then .error "password must be at least 4 characters" else .ok ⟨s⟩
+  raw := (·.raw)
+
+structure NoteId where
+  n : Nat
+  deriving BEq
+
+instance : FromParam NoteId := ⟨fun s => (FromParam.fromParam s).map NoteId.mk⟩
+
+/-- A note's revision, as sent back in `If-Match`. -/
+structure Rev where
+  n : Nat
+  deriving BEq
+
+instance : FromParam Rev := ⟨fun s => (FromParam.fromParam s).map Rev.mk⟩
+
+/-! ## State -/
+
 structure Note where
   id : Nat
   owner : String
@@ -39,114 +66,158 @@ structure Note where
   body : String
   rev : Nat := 1
 
-def Note.toJson (n : Note) : Json :=
-  Json.mkObj [("id", Json.num n.id), ("title", .str n.title.raw), ("body", .str n.body), ("rev", Json.num n.rev)]
-
-structure Store where
+structure State where
   users : List (String × String) := []
   tokens : List (String × String) := []
   notes : Array Note := #[]
   nextId : Nat := 1
 
-abbrev Db := Std.Mutex Store
+abbrev Db := Std.Mutex State
 
 def Db.new : IO Db := Std.Mutex.new {}
 
-def atomically (db : Db) (f : Store → Store × α) : IO α :=
-  db.atomically do
-    let s ← get
-    let (s', a) := f s
-    set s'
-    return a
+def read (db : Db) (f : State → α) : IO α := db.atomically do return f (← get)
 
-def read (db : Db) (f : Store → α) : IO α := db.atomically do return f (← get)
-
-def auth (db : Db) : Authenticator String :=
-  let lookup (t : String) : IO (Option String) := read db fun s => s.tokens.lookup t
-  (bearer lookup).orElse (sessionCookie "sid" lookup)
-
-def ownNote (s : Store) (who : String) (id : Nat) : Option Note :=
+def ownNote (s : State) (who : String) (id : Nat) : Option Note :=
   s.notes.find? fun n => n.id == id && n.owner == who
 
-def etag (n : Note) : String := s!"\"{n.rev}\""
+/-! ## Actors: one type per authentication scheme -/
+
+/-- Authenticated by a session token (bearer or the `sid` cookie). -/
+structure User where
+  name : String
+
+/-- Authenticated by Basic credentials. -/
+structure ByPassword where
+  name : String
+
+instance : Authenticates State User :=
+  ⟨Authenticates.sessions (fun s t => (s.tokens.lookup t).map (⟨·⟩)) (cookie := some "sid")⟩
+
+instance : Authenticates State ByPassword :=
+  ⟨Authenticates.passwords fun s u p => if s.users.lookup u == some p then some ⟨u⟩ else none⟩
+
+/-! ## Requests -/
 
 structure Register where
+  name : UserName
+  password : Password
+
+instance : FromBody Register := .record (Register.mk <$> .req "name" <*> .req "password")
+instance : FromForm Register := .record (Register.mk <$> .req "name" <*> .req "password")
+
+structure NewNote where
+  title : Title
+  body : String
+
+instance : FromBody NewNote := .record (NewNote.mk <$> .req "title" <*> .dflt "body" "")
+
+structure NoteEdit where
+  title : Option Title
+  body : Option String
+
+instance : FromBody NoteEdit := .record (NoteEdit.mk <$> .opt "title" <*> .opt "body")
+
+/-- A page request: `page ≥ 1`, `1 ≤ per ≤ 100`, checked on decoding. -/
+structure Page where
+  page : Nat
+  per : Nat
+
+instance : FromQuery Page where
+  fromQuery r := do
+    let (page, per) ← ((·, ·) <$> Extract.queryD "page" 1 <*> Extract.queryD "per" 20) r
+    if page == 0 || per == 0 || per > 100 then .error [⟨"query.per", "page ≥ 1, 1 ≤ per ≤ 100"⟩]
+    else .ok ⟨page, per⟩
+
+/-! ## Responses and failures -/
+
+structure UserView where
   name : String
-  password : String
+  deriving ToJson
 
-def decodeRegister : Extract Register := fun r =>
-  if r.contentType? == some "application/x-www-form-urlencoded" then
-    (fun n p => ⟨n, p⟩) <$> Extract.form "name" <*> Extract.form "password" |>.run r
-  else do
-    let j ← Extract.rawJson r
-    let (n, p) ← both (field "body" j "name") (field "body" j "password")
-    return ⟨n, p⟩
+structure Session where
+  token : String
+  deriving ToJson
 
-def routes (db : Db) : List Route :=
-  let authed := requireAuth (auth db)
-  group "/api" <| routes! [
-    Route.post "/users" (requireContentType ["application/json", "application/x-www-form-urlencoded"] <|
-      handle decodeRegister fun u => do
-        if u.name.isEmpty || u.password.length < 4 then
-          return (Problem.make 422 (some "name required, password at least 4 characters")).toRes
-        let ok ← atomically db fun s =>
-          if (s.users.lookup u.name).isSome then (s, false) else ({ s with users := (u.name, u.password) :: s.users }, true)
-        if ok then return Res.created (Json.mkObj [("name", .str u.name)])
-        else return (Problem.conflict "name taken").toRes),
-    Route.post "/sessions" (requireAuth
-      (basic fun u p => read db fun s => if s.users.lookup u == some p then some u else none)
-      fun who _ => do
-        let bytes ← IO.getRandomBytes 24
-        let tok := Base64.encodeUrl bytes
-        atomically db fun s => ({ s with tokens := (tok, who) :: s.tokens }, ())
-        return (Res.created (Json.mkObj [("token", .str tok)])).setCookie { name := "sid", value := tok }),
-    Route.get "/notes" (authed fun who =>
-      handle ((·, ·) <$> Extract.queryD "page" 1 <*> Extract.queryD "per" 20) fun (page, per) => do
-        if page == 0 || per == 0 || per > 100 then
-          return (FieldError.problem [⟨"query.per", "page ≥ 1, 1 ≤ per ≤ 100"⟩]).toRes
-        let mine ← read db fun s => s.notes.filter (·.owner == who)
-        let items := (mine.toList.drop ((page - 1) * per)).take per
-        return Res.ok (Json.mkObj [("items", Json.arr (items.map Note.toJson).toArray),
-                                   ("total", Json.num mine.size), ("page", Json.num page)])),
-    Route.post "/notes" (authed fun who => handleJson (fun r => do
-        let j ← Extract.rawJson r
-        let (t, b) ← both (field (α := Title) "body" j "title") (fieldD "body" j "body" "")
-        return (t, b)) fun (t, b) => do
-      let n ← atomically db fun s =>
-        let n : Note := { id := s.nextId, owner := who, title := t, body := b }
-        ({ s with notes := s.notes.push n, nextId := s.nextId + 1 }, n)
-      return (Res.created n.toJson s!"/api/notes/{n.id}").setHeader "etag" (etag n)),
-    Route.get "/notes/{id:nat}" (authed fun who => handle (Extract.path "id") fun id => do
-      match ← read db (ownNote · who id) with
-      -- someone else's note is indistinguishable from a missing one
-      | none => return Problem.notFound.toRes
-      | some n =>
-        let r := (Res.ok n.toJson).setHeader "etag" (etag n)
-        return r),
-    (Route.patch "/notes/{id:nat}" (authed fun who => handleJson (fun r => do
-        let id ← Extract.path (α := Nat) "id" r
-        let ifMatch ← Extract.headerOpt (α := String) "if-match" r
-        let j ← Extract.rawJson r
-        let (t, b) ← both (fieldOpt (α := Title) "body" j "title") (fieldOpt (α := String) "body" j "body")
-        return (id, ifMatch, t, b)) fun (id, ifMatch, t, b) => do
-      let out ← atomically db fun s =>
-        match ownNote s who id with
-        | none => (s, Sum.inl Problem.notFound)
-        | some n =>
-          if ifMatch.isSome && ifMatch != some (etag n) then (s, .inl (Problem.make 412 (some "note changed")))
-          else
-            let n' := { n with title := t.getD n.title, body := b.getD n.body, rev := n.rev + 1 }
-            ({ s with notes := s.notes.map fun x => if x.id == id then n' else x }, .inr n')
-      match out with
-      | .inl p => return p.toRes
-      | .inr n => return (Res.ok n.toJson).setHeader "etag" (etag n))).limit (64 * 1024),
-    Route.delete "/notes/{id:nat}" (authed fun who => handle (Extract.path "id") fun id => do
-      let ok ← atomically db fun s =>
-        match ownNote s who id with
-        | none => (s, false)
-        | some _ => ({ s with notes := s.notes.filter (·.id != id) }, true)
-      return if ok then Res.empty 204 else Problem.notFound.toRes)
-  ]
+structure NoteView where
+  id : Nat
+  title : String
+  body : String
+  rev : Nat
+  deriving ToJson
+
+def Note.view (n : Note) : NoteView := ⟨n.id, n.title.raw, n.body, n.rev⟩
+
+def Note.versioned (n : Note) : Versioned NoteView := ⟨n.view, n.rev⟩
+
+inductive RegisterError | nameTaken
+
+instance : ToProblem RegisterError := ⟨fun .nameTaken => ⟨409, by decide⟩, fun .nameTaken => some "name taken"⟩
+
+inductive EditError | notFound | stale
+
+instance : ToProblem EditError where
+  status | .notFound => ⟨404, by decide⟩ | .stale => ⟨412, by decide⟩
+  detail | .notFound => none | .stale => some "note changed"
+
+/-! ## Endpoints -/
+
+/-- Register a new user (JSON or form). -/
+def register (u : Body Register) : Writes State (Except RegisterError (Created UserView)) := fun s =>
+  let name := u.val.name.raw
+  if (s.users.lookup name).isSome then (s, .error .nameTaken)
+  else ({ s with users := (name, u.val.password.raw) :: s.users }, .ok { val := ⟨name⟩ })
+
+/-- Log in with Basic credentials; the new session token is also set as the
+    `sid` cookie. -/
+def login (who : Auth ByPassword) (tok : FreshToken) : Writes State (Created (WithCookie Session)) := fun s =>
+  ({ s with tokens := (tok.val, who.val.name) :: s.tokens },
+   { val := ⟨⟨tok.val⟩, { name := "sid", value := tok.val }⟩ })
+
+/-- One page of my notes. -/
+def listNotes (me : Auth User) (p : Query Page) : Reads State (Paged NoteView) := fun s =>
+  let mine := s.notes.filter (·.owner == me.val.name)
+  ⟨((mine.toList.drop ((p.val.page - 1) * p.val.per)).take p.val.per).map Note.view, mine.size, p.val.page⟩
+
+/-- Create a note. -/
+def createNote (me : Auth User) (new : Body NewNote) : Writes State (Created (Versioned NoteView)) := fun s =>
+  let n : Note := { id := s.nextId, owner := me.val.name, title := new.val.title, body := new.val.body }
+  ({ s with notes := s.notes.push n, nextId := s.nextId + 1 },
+   { val := n.versioned, location := some s!"/api/notes/{n.id}" })
+
+/-- One of my notes. Someone else's note is indistinguishable from a missing one. -/
+def getNote (me : Auth User) (id : Path NoteId) : Reads State (Except NotFound (Versioned NoteView)) := fun s =>
+  match ownNote s me.val.name id.val.n with
+  | some n => .ok n.versioned
+  | none => .error {}
+
+/-- Edit one of my notes, if it hasn't changed since `rev`. -/
+def editNote (me : Auth User) (id : Path NoteId) (rev : IfMatch Rev) (edit : Body NoteEdit) :
+    Writes State (Except EditError (Versioned NoteView)) := fun s =>
+  match ownNote s me.val.name id.val.n with
+  | none => (s, .error .notFound)
+  | some n =>
+    if rev.val.any (·.n != n.rev) then (s, .error .stale) else
+    let n' := { n with title := edit.val.title.getD n.title, body := edit.val.body.getD n.body, rev := n.rev + 1 }
+    ({ s with notes := s.notes.map fun x => if x.id == n.id then n' else x }, .ok n'.versioned)
+
+/-- Delete one of my notes. -/
+def deleteNote (me : Auth User) (id : Path NoteId) : Writes State (Except NotFound NoContent) := fun s =>
+  match ownNote s me.val.name id.val.n with
+  | none => (s, .error {})
+  | some n => ({ s with notes := s.notes.filter (·.id != n.id) }, .ok {})
+
+/-! ## The HTTP surface -/
+
+def api : Api State := api! [
+  .post   "/users"             register,
+  .post   "/sessions"          login,
+  .get    "/notes"             listNotes,
+  .post   "/notes"             createNote,
+  .get    "/notes/{id:nat}"    getNote,
+  .patch  "/notes/{id:nat}"    editNote (limit := 64 * 1024),
+  .delete "/notes/{id:nat}"    deleteNote
+]
 
 def stack (log : String → IO Unit := IO.eprintln) : Stack := Stack.of [
   recover log, requestId, accessLog log, health, securityHeaders,
@@ -154,6 +225,6 @@ def stack (log : String → IO Unit := IO.eprintln) : Stack := Stack.of [
   trustedProxy ["127.0.0.1"], timeout 10000]
 
 def service (db : Db) (log : String → IO Unit := IO.eprintln) : Service :=
-  Service.ofRouter (Router.build! (routes db)) (stack log)
+  (api.under "/api").service (.ofMutex db) (stack log)
 
 end Notes

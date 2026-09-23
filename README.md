@@ -16,28 +16,29 @@ Tests can show a bug is present. A proof shows a whole class of bugs is absent, 
 
 ## Hello, LeanAPI
 
+An endpoint is a plain function. Its **type is its specification**: where each input comes from, whether it changes state, and every way it can answer.
+
 ```lean
 import LeanApi
 open LeanApi Lean
 
-def routes : List Route := routes! [
-  Route.get "/hello/{name}" fun req =>
-    pure (Res.text s!"hello {req.param? "name" |>.getD ""}"),
-  Route.get "/search" (handle ((·, ·) <$> Extract.query (α := Nat) "page" <*> Extract.queryD "q" "")
-    fun (page, q) => pure (Res.text s!"page {page}, q {q}"))
-]
+structure Greeting where
+  message : String
+  deriving ToJson
 
-def main : IO Unit :=
-  serve (Service.ofRouter (Router.build! routes)
-    (Stack.of [recover, requestId, accessLog, health, securityHeaders]))
-    { port := 8080 }
+/-- Greet someone by name. -/
+def hello (name : Path String) : Greeting := ⟨s!"hello {name.val}"⟩
+
+def main : IO Unit := do
+  let api : Api Unit := api! [.get "/hello/{name}" hello]
+  serve (api.service (.ofMutex (← Std.Mutex.new ()))) { port := 8080 }
 ```
 
-`routes!` rejects conflicting routes (for example `/a/{x}` and `/a/{y}` on the same method) **at compile time**. A missing or malformed `page` produces a 422 in RFC 9457 `problem+json`, naming the field.
+`api!` checks at compile time that each template has exactly as many `{…}` parameters as the handler has `Path` arguments, and rejects conflicting routes. A `GET` whose handler can change state does not compile. Design: [docs/ENDPOINTS.md](docs/ENDPOINTS.md).
 
 ## From a domain rule to a proof
 
-The core idea: write the domain in plain Lean, state its invariant, prove that every accepted decision preserves it, and expose the decision over HTTP. The HTTP layer decodes input through the same constructors the domain uses, so invalid data never reaches the decision.
+The core idea: write the domain in plain Lean, state its invariant, prove that every accepted decision preserves it, and expose the decision as a typed endpoint. Inputs decode through the same constructors the domain uses, so invalid data never reaches the decision.
 
 ```lean
 import LeanApi
@@ -71,13 +72,19 @@ def Board.add (t : Title) (b : Board) : Except String Board :=
 --    themselves, and the accepted branch is arithmetic.
 preserves Board.Valid by Board.add
 
--- 5. Expose it. `Extract.json` decodes the body through `Title.make`.
-def routes (board : IO.Ref Board) : List Route := routes! [
-  Route.post "/items" (handleJson (Extract.json (α := Title)) fun t => do
-    match (← board.get).add t with
-    | .ok b => board.set b; pure (Res.created (toJson b))
-    | .error why => pure (Problem.conflict why).toRes)
-]
+-- 5. Expose it. The signature says: a JSON body decoded as a `Title`, a
+--    change to the board, and either 201 with the board or 409 when full.
+structure BoardFull where
+  why : String
+
+instance : ToProblem BoardFull := ⟨fun _ => ⟨409, by decide⟩, fun e => some e.why⟩
+
+def addItem (t : Body Title) : Writes Board (Except BoardFull (Created Board)) := fun b =>
+  match b.add t.val with
+  | .ok b' => (b', .ok { val := b' })
+  | .error why => (b, .error ⟨why⟩)
+
+def api : Api Board := api! [.post "/items" addItem]
 ```
 
 `POST /items` with `{"title": ""}` → **422**, rejected at the boundary by `Title.make`. The 101st item → **409** `board is full`. The generated theorem guarantees that no sequence of successful requests can produce a board that breaks `Valid`. When `preserves` cannot close an obligation by itself, it fails and prints each remaining goal, tagged with the field and the branch conditions, and you add `| Board.add => tactic` for just that goal.
@@ -127,6 +134,7 @@ The theory (shapes, admissibility, how invariants compose) is in [docs/PROPERTIE
 
 | Area | What you get |
 |---|---|
+| **Typed endpoints** | Handlers are pure functions whose type is the spec: inputs (`Auth`, `Path`, `Query`, `Body`, `Header`, `IfMatch`, `FreshToken`, or your own `FromRequest`), effect (`Reads`/`Writes` over a pluggable `Store`, or `IO`), success shape (`Created`, `Versioned`, `Paged`, `NoContent`, JSON) and failures (`Except ε`, statuses typed as 4xx/5xx). `GET` handlers that write don't compile; `Api.describe` prints every signature |
 | **Routing** | `{id}`, `{id:int}`, `{id:nat}`, `{*rest}`; groups; precedence literal > constrained > param > catch-all; 404 vs 405 with `Allow`; automatic `HEAD` and `OPTIONS`; trailing-slash policy; conflicting routes rejected at compile time |
 | **Extraction** | Path, query, header, cookie, JSON and form bodies. `SmartCtor` plugs your domain constructors in. All errors are reported at once, with locations (`body.title`) |
 | **Content** | 415 on a wrong `Content-Type`, 406 on `Accept`, per-route body limits enforced while streaming (413) |
