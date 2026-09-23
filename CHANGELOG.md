@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.0 (M2): JWT and password auth
+
+- Depends on leancrypto 0.1.0 (OpenSSL 3 FFI; decision 0002).
+- `LeanApi.Jwt`: HS256 verification (`exp`, `nbf`, `iat`, `iss`, `aud`,
+  leeway, `maxAge`), rejects `alg: none`, other algorithms and `crit`,
+  constant-time signature compare, keys under 32 bytes refused; `Jwt.sign`;
+  `jwtBearer` authenticator mapping claims to an actor.
+- `LeanApi.Tokens`: opaque 256-bit tokens stored and looked up by SHA-256
+  digest only.
+- `hashPassword` / `verifyPassword` (scrypt), `basicWithPasswords` with dummy
+  verification for unknown users.
+- Decision 0004 (Q9): mechanisms in LeanAPI, accounts in the app.
+
 ## 0.1.0 (M1): HTTP toolkit
 
 - Routing: method + path templates (`{id}`, `{id:int}`, `{id:nat}`, `{*rest}`),
