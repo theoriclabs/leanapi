@@ -1,5 +1,48 @@
 # Changelog
 
+## Unreleased: typed endpoints (docs/ENDPOINTS.md)
+
+- **`LeanApi.Http.Endpoint`.** An endpoint is a function whose type is its
+  specification:
+  - inputs are parameters typed by source (`Auth`, `Path`, `Query`, `Body`,
+    `Header`, `IfMatch`, `FreshToken`; open class `FromRequest`);
+  - the effect is `Reads σ` / `Writes σ` (pure, run atomically against a
+    pluggable `Store σ`), `IO`, or none;
+  - success shapes are `ToResponse` (`Created`, `Versioned`, `Paged`,
+    `NoContent`, `WithCookie`, JSON);
+  - failures are `Except ε` with `ToProblem ε`, whose status is typed as
+    4xx/5xx.
+- **Compile-time checks.**
+  - `GET` and `HEAD` endpoints carry a proof that their effect is safe.
+  - `api!` checks path arity against templates and route conflicts, and
+    records each signature for `Api.describe`.
+- **Error handling.** Invalid fields are reported across all parameters in
+  one 422.
+- **Authentication.** `Authenticates σ α` names schemes by actor type, with
+  `sessions` and `passwords` helpers over pure state lookups.
+- **Notes rewritten** on typed endpoints. Its test suite passes unchanged.
+
+## Unreleased: review fixes (docs/reviews/2026-09-23-review-eb67460.md)
+
+- **`allValid` rests on the domain** (H1). The store of games runs the
+  domain decisions (`openGame`, `decide`), so every stored game is `Valid`
+  because of the `preserves`-generated theorems, not the commit's runtime
+  check.
+- **`NIPackage` cannot be vacuous** (H2). It requires, per observer, a
+  hiddenness witness with an acting request, an availability companion tied
+  to `acts`, and a refusal. `gamesNI` discharges them with one checked
+  assumption (`ReadPlumbing`).
+- **`#check_invariant` checks every initial world** (H3) and never reports
+  "inductive" when one violates the invariant; messages state the search
+  depth.
+- **`preserves` requires the state argument to be named when ambiguous**
+  (H4): `preserves Small by setTo[s]`.
+- **Registry coverage is derived** (H5). `register_invariant` requires an
+  `Invariant S I` theorem and takes its covered writers from
+  `HasWriters S`; `covers` is gone. Tables are declared (`declare_tables`);
+  writers touch a known table or are `readonly`; `unproved` parses and is
+  shown in the generated row.
+
 ## 0.6.0 (M8–M12): the property library
 
 `LeanApi.Props` (docs/PROPERTIES.md). All theorems below are in
