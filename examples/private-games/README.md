@@ -40,9 +40,10 @@ different request is 422.
 
 ## Docker
 
-Build context is the parent directory of `leanapi` and `leancrypto`:
+From the `leanapi` checkout (leancrypto is a private repo, so pass a token):
 
 ```bash
-docker build -f leanapi/examples/private-games/Dockerfile -t private-games .
+GH_TOKEN=$(gh auth token) docker build --secret id=gh,env=GH_TOKEN \
+  -f examples/private-games/Dockerfile -t private-games .
 docker run -p 8080:8080 -v games:/data private-games
 ```

@@ -1,5 +1,7 @@
-# private-games on LeanAPI. Build context: the parent of leanapi and leancrypto.
-#   docker build -f leanapi/examples/private-games/Dockerfile -t private-games .
+# private-games on LeanAPI. Build context: the leanapi checkout.
+#   docker build -f examples/private-games/Dockerfile -t private-games .
+# leancrypto is private: pass a token with read access, e.g.
+#   docker build --secret id=gh,env=GH_TOKEN ...
 FROM debian:bookworm-slim AS build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -12,11 +14,13 @@ RUN curl -fsSL https://elan.lean-lang.org/elan-init.sh | sh -s -- -y --default-t
     && elan toolchain install leanprover/lean4:v4.33.0 \
     && elan default leanprover/lean4:v4.33.0
 
-WORKDIR /src
-COPY leancrypto /src/leancrypto
-COPY leanapi /src/leanapi
 WORKDIR /src/leanapi
-RUN rm -rf .lake && lake build games
+COPY . /src/leanapi
+RUN --mount=type=secret,id=gh \
+    if [ -f /run/secrets/gh ]; then \
+      git config --global url."https://x-access-token:$(cat /run/secrets/gh)@github.com/".insteadOf "https://github.com/"; \
+    fi \
+    && rm -rf .lake && lake build games
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libgmp10 libstdc++6 \

@@ -7,9 +7,6 @@ on:
 
 jobs:
   build:
-    defaults:
-      run:
-        working-directory: leanapi
     strategy:
       fail-fast: false
       matrix:
@@ -17,14 +14,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          path: leanapi
-      - name: Check out leancrypto (sibling path dependency)
-        uses: actions/checkout@v4
-        with:
-          repository: theoriclabs/leancrypto
-          ref: v0.1.0
-          path: leancrypto
+      # leancrypto is private: a token with read access lets lake clone it.
+      - name: Private dependency access
+        env:
+          TOKEN: ${{ secrets.LEANCRYPTO_TOKEN }}
+        if: env.TOKEN != ''
+        run: git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
       - name: Install system packages (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libssl-dev libsqlite3-dev
@@ -37,8 +32,8 @@ jobs:
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
       - uses: actions/cache@v4
         with:
-          path: leanapi/.lake
-          key: lake-${{ runner.os }}-${{ hashFiles('leanapi/lean-toolchain', 'leanapi/lake-manifest.json', 'leanapi/lakefile.toml') }}
+          path: .lake
+          key: lake-${{ runner.os }}-${{ hashFiles('lean-toolchain', 'lake-manifest.json', 'lakefile.toml') }}
       - name: Build
         run: lake build
       - name: Tests

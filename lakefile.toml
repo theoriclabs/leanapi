@@ -2,11 +2,11 @@ name = "leanapi"
 version = "0.5.0"
 defaultTargets = ["LeanApi"]
 
-# Crypto dependency (M2). Sibling checkout; the published form is
-#   git = "https://github.com/theoriclabs/leancrypto", rev = "v0.1.0"
+# Crypto dependency (M2), pinned by tag.
 [[require]]
 name = "leancrypto"
-path = "../leancrypto"
+git = "https://github.com/theoriclabs/leancrypto"
+rev = "v0.1.0"
 
 # Toolchain pinned to leanprover/lean4:v4.33.0 (see lean-toolchain), matching
 # LeanDB 0.4.0, leanhttp and leanws. Bump in lockstep.

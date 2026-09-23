@@ -51,7 +51,7 @@ method) at compile time.
 | Auth | `Authenticator` interface; bearer, Basic, session cookie over your verifier; `orElse`, `requireAuth`, `optionalAuth`; 401 with `WWW-Authenticate` |
 | Runtime | `serve` with graceful shutdown; handlers on dedicated threads; bounded `Worker`/`Pool` for SQLite and FFI |
 | Testing | in-process client over `Std.Http.Server.serveConnection`: the real parser and writer, no socket |
-| JWT and passwords (0.2) | HS256 JWT verification (`alg: none` rejected), opaque tokens stored by SHA-256 digest, scrypt Basic auth; crypto from [leancrypto](../leancrypto) (OpenSSL 3) |
+| JWT and passwords (0.2) | HS256 JWT verification (`alg: none` rejected), opaque tokens stored by SHA-256 digest, scrypt Basic auth; crypto from [leancrypto](https://github.com/theoriclabs/leancrypto) (OpenSSL 3) |
 | HTTP extras (0.5) | conditional requests (304/412/428), rate limiting (429), SSE, `traceparent`, multipart, OpenAPI 3.1 + `/docs` |
 | Proofs (0.4, 0.5) | `ScopedApp`: prove three view obligations about your storage model, get response noninterference for every route; typed middleware stages with proved contracts; axiom audit in CI |
 
