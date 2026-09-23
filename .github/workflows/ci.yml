@@ -42,3 +42,5 @@ jobs:
         run: ./scripts/axiom_audit.sh
       - name: README snippets compile
         run: ./scripts/check_readme.sh
+      - name: EVIDENCE.md claim tables match the property registry
+        run: ./scripts/gen_evidence.sh --check

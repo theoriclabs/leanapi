@@ -7,6 +7,7 @@ import Tests.Differential
 import Tests.Tier2
 import Tests.Props
 import Tests.PropsCommands
+import Tests.Registry
 
 open LeanApi.Test
 

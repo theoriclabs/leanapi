@@ -101,8 +101,8 @@ def elabStatus (id : Ident) : CommandElabM Status :=
   | `proved => pure .proved
   | `checked => pure .checked
   | `assumed => pure .assumed
-  | `open => pure .open
-  | _ => throwErrorAt id "expected a status: proved, checked, assumed or open"
+  | `unproved => pure .open
+  | _ => throwErrorAt id "expected a status: proved, checked, assumed or unproved (listed as Open)"
 
 /-- Record a claim for the evidence record.
 
