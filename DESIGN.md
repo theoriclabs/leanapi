@@ -572,13 +572,14 @@ All questions below were open when this document was written. Provisional answer
 | Q1 | Pure decision cores in a thin framework shell over a scoped repository; plain `IO` handlers stay available outside the proved set | [0005](docs/decisions/0005-q1-execution-model.md) |
 | Q2 | Proof fields for decidable bounds, one smart constructor per value shared by HTTP and storage, round-trip laws per value | [0006](docs/decisions/0006-q2-value-representation.md) |
 | Q3 | State-based aggregate with a revision that counts transitions | [0007](docs/decisions/0007-q3-state-storage.md) |
-| Q8 | Middleware is trusted adapter code (v0.1) | [0001](docs/decisions/0001-q8-middleware-v01.md) |
+| Q8 | Middleware is trusted adapter code (v0.1); typed `guard`/`decorate` stages with proved contracts (M7) | [0001](docs/decisions/0001-q8-middleware-v01.md), [0013](docs/decisions/0013-q8-typed-stages.md) |
 | Q9 | LeanAPI provides mechanisms; accounts belong to the app | [0003](docs/decisions/0003-authenticator-contract.md), [0004](docs/decisions/0004-q9-auth-mechanisms.md) |
 | Q4 | Single-request response noninterference over the full response, per-player views; existence privacy by default | [0009](docs/decisions/0009-q4-isolation-claim.md) |
 | Q5 | Read snapshots on read-only connections; one writer; authority and revision re-checked at commit under the write lock | [0008](docs/decisions/0008-q5-snapshot-authority.md) |
 | Q6 | Keyed receipts scoped by (actor, op, key), canonical-input fingerprints, stored atomically with the change | [0010](docs/decisions/0010-q6-idempotence-contract.md) |
 | Q7 | Explicit operation → route table plus pure decode/core per operation | [0012](docs/decisions/0012-q7-bindings.md) |
 | Q10 | Separate leancrypto library over OpenSSL 3 FFI; pure-Lean encodings | [0002](docs/decisions/0002-q10-crypto.md) |
+| Q12 | Proposed 1.0 criteria | [0014](docs/decisions/0014-q12-one-point-oh.md) |
 | Q11 | Proved / checked / assumed / open, with an axiom audit in CI and specs in separate files | [0011](docs/decisions/0011-q11-evidence.md), [EVIDENCE.md](EVIDENCE.md) |
 
 | ID | Question | Choices and consequences to investigate |

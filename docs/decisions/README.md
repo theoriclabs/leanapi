@@ -18,3 +18,5 @@ may revise it; the revision gets a new record that supersedes the old one.
 | [0010](0010-q6-idempotence-contract.md) | Q6 the idempotence contract | Accepted, provisional (M6) |
 | [0011](0011-q11-evidence.md) | Q11 what qualifies as evidence | Accepted, provisional (M6) |
 | [0012](0012-q7-bindings.md) | Q7 authoring surface (first answer) | Accepted, provisional (M5) |
+| [0013](0013-q8-typed-stages.md) | Q8 typed middleware stages | Accepted, provisional (M7) |
+| [0014](0014-q12-one-point-oh.md) | Q12 what 1.0 means | Proposed (M7) |

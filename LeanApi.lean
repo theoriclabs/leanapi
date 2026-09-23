@@ -11,3 +11,8 @@ import LeanApi.Runtime.Server
 import LeanApi.Runtime.TestClient
 import LeanApi.Auth.Jwt
 import LeanApi.Auth.Tokens
+import LeanApi.Proofs.Scoped
+import LeanApi.Http.OpenApi
+import LeanApi.Http.Features
+import LeanApi.Http.Multipart
+import LeanApi.Http.Typed

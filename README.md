@@ -39,7 +39,7 @@ def main : IO Unit :=
 `routes!` rejects conflicting routes (`/a/{x}` and `/a/{y}` for the same
 method) at compile time.
 
-## Features (0.1)
+## Features
 
 | Area | What you get |
 |---|---|
@@ -51,6 +51,9 @@ method) at compile time.
 | Auth | `Authenticator` interface; bearer, Basic, session cookie over your verifier; `orElse`, `requireAuth`, `optionalAuth`; 401 with `WWW-Authenticate` |
 | Runtime | `serve` with graceful shutdown; handlers on dedicated threads; bounded `Worker`/`Pool` for SQLite and FFI |
 | Testing | in-process client over `Std.Http.Server.serveConnection`: the real parser and writer, no socket |
+| JWT and passwords (0.2) | HS256 JWT verification (`alg: none` rejected), opaque tokens stored by SHA-256 digest, scrypt Basic auth; crypto from [leancrypto](../leancrypto) (OpenSSL 3) |
+| HTTP extras (0.5) | conditional requests (304/412/428), rate limiting (429), SSE, `traceparent`, multipart, OpenAPI 3.1 + `/docs` |
+| Proofs (0.4, 0.5) | `ScopedApp`: prove three view obligations about your storage model, get response noninterference for every route; typed middleware stages with proved contracts; axiom audit in CI |
 
 Middleware is trusted code: see [decision 0001](docs/decisions/0001-q8-middleware-v01.md).
 What an accepted credential does and does not establish: [decision 0003](docs/decisions/0003-authenticator-contract.md).
@@ -72,6 +75,16 @@ lake build leanapi_tests && ./.lake/build/bin/leanapi_tests
 ```
 
 Toolchain: `leanprover/lean4:v4.33.0`.
+
+## Proved example: private-games
+
+[`examples/private-games`](examples/private-games/README.md) is a LeanDB-backed
+service of private games, with Lean proofs that **no route reveals another
+player's games** (including whether they exist) and that **retrying a keyed
+request returns the recorded outcome without applying it twice**. What is
+proved, checked and assumed is listed in [EVIDENCE.md](EVIDENCE.md).
+
+Design questions are settled by [decision records](docs/decisions/README.md).
 
 ## Example app
 

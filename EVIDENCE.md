@@ -1,6 +1,6 @@
 # Evidence record: private-games on LeanAPI
 
-Status as of LeanAPI 0.4.0, 2026-09-22. Required by DESIGN.md §8.4 and
+Status as of LeanAPI 0.5.0, 2026-09-22. Required by DESIGN.md §8.4 and
 decision Q11. The post (intent.md) should quote this file, not summarize it.
 
 Every claim below is one of:
@@ -86,6 +86,16 @@ is decision 0010.
 | Commits are serializable per game (single writer, `BEGIN IMMEDIATE`, compare-and-swap) | **Checked** above; mechanism is decision 0008 | |
 | The model is sequential; concurrency is not modelled | **Open** | |
 
+### 5. Reusable form (M7)
+
+| Claim | Status | Where |
+|---|---|---|
+| Any app built as route → authenticate → decode → scoped load → core → commit has response noninterference once it proves three obligations (authentication, load and commit respect the view). `decode` and `core` need no proof | **Proved** | `LeanApi.Proofs.ScopedApp.step_noninterference` |
+| private-games discharges the obligations; its routed steps coincide with the M6 model | **Proved** | `gamesApp_obligations`, `generic_isolation`, `gamesApp_step_route` |
+| A second app with a different policy (notes shared with other users, where sharing changes visibility) gets isolation the same way | **Proved** | `Notes.Shared.obligations`, `Notes.Shared.isolation` |
+| Typed middleware: `decorate` preserves status and body, a passing `guard` is transparent, and a `guard`'s refusal depends only on its declared observation | **Proved** | `Stage.decorate_preserves`, `guard_transparent`, `guard_observes` |
+| Exported routes outside the proved set are reported, and tests fail on any not declared here | **Checked** | `Router.coverage`, `tests/Tests/Tier2.lean` |
+
 ## Assumptions (trusted base)
 
 1. **Native ≡ model.** The native shell (`App/Service.lean`: load, commit
@@ -120,7 +130,8 @@ is decision 0010.
 - Proof (not test) that the native shell refines the model.
 - Concurrency in the model.
 - Receipt expiry.
-- Build-time report of routes outside the proved set (M7).
+- A reusable (app-generic) keyed-idempotence theorem.
+- Coverage enforced by the build itself, not only by tests.
 
 ## How to re-check
 

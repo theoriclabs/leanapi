@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.5.0 (M7): generalize
+
+- `LeanApi.Proofs.ScopedApp`: a reusable isolation theorem. An app proves
+  three view obligations and gets response noninterference. It is
+  instantiated by private-games and by a second app, `Notes.Shared` (notes
+  with sharing, where sharing changes visibility).
+- Typed middleware stages (`guard`, `decorate`) with proved contracts
+  (decision 0013).
+- OpenAPI 3.1 generation from route metadata, `/openapi.json` and `/docs`,
+  and `x-leanapi-proved` markers; `Router.coverage` reports routes outside
+  the proved set.
+- Conditional requests (`If-None-Match` → 304, `If-Match` → 412/428,
+  `If-Modified-Since`), token-bucket rate limiting (429 + `Retry-After`),
+  Server-Sent Events formatting, W3C `traceparent` tracing, buffered
+  `multipart/form-data`, `cacheControl`/`vary` helpers.
+- Decision 0014 proposes 1.0 criteria (Q12).
+
 ## 0.4.0 (M6): proofs
 
 - Reference model `PrivateGames.Model.step : Req → World → Res × World` over
