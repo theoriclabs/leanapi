@@ -9,6 +9,9 @@ list=scripts/audited_theorems.txt
 mods=$(grep -v '^#' "$list" | awk 'NF==2 {print $1}' | sort -u || true)
 names=$(grep -v '^#' "$list" | awk 'NF==2 {print $2}' || true)
 if [ -z "$names" ]; then echo "axiom audit: no theorems listed"; exit 0; fi
+# Build every audited module (some, like Notes.Shared, are not reached by
+# the default targets).
+lake build $mods >/dev/null
 tmp=$(mktemp -t audit).lean
 {
   for m in $mods; do echo "import $m"; done
