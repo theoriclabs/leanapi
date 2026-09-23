@@ -102,3 +102,33 @@ PrivateGames.Domain.Game PrivateGames.Valid.check_iff
 PrivateGames.Domain.Proofs PrivateGames.Valid.preserved_openGame
 PrivateGames.Domain.Proofs PrivateGames.Valid.preserved_playMove
 PrivateGames.Domain.Proofs PrivateGames.Valid.preserved_resign
+# M8/M9: store lift from arbitrary initial worlds
+LeanApi.Props.Store LeanApi.Props.ListStore.allOf_inductiveFrom
+LeanApi.Props.Store LeanApi.Props.ListStore.ids_invariantFrom
+# M12: other shapes
+LeanApi.Props.Shapes LeanApi.Props.Safe.preserves
+LeanApi.Props.Shapes LeanApi.Props.stepInv_iff
+LeanApi.Props.Shapes LeanApi.Props.StepProp.pullback
+LeanApi.Props.Shapes LeanApi.Props.Safe.frame
+LeanApi.Props.Shapes LeanApi.Props.Observation.not_hidden_of_injective
+LeanApi.Props.Shapes LeanApi.Props.Observation.NIUnwinding.ni
+LeanApi.Props.Shapes LeanApi.Props.Observation.runTrace_sameView
+LeanApi.Props.Shapes LeanApi.Props.Observation.trace_ni
+LeanApi.Props.Keyed LeanApi.Props.listLedger_laws
+LeanApi.Props.Keyed LeanApi.Props.Keyed.keyed_stable
+LeanApi.Props.Keyed LeanApi.Props.Keyed.keyed_stable_run
+LeanApi.Props.Keyed LeanApi.Props.Keyed.keyed_replay
+LeanApi.Props.Keyed LeanApi.Props.Keyed.keyed_first
+LeanApi.Props.Keyed LeanApi.Props.Keyed.keyed_replay_after
+LeanApi.Props.Keyed LeanApi.Props.Keyed.keyed_reuse
+LeanApi.Props.Keyed LeanApi.Props.Keyed.keyed_scoped
+PrivateGames.Model.Shapes PrivateGames.Model.movesGrow
+PrivateGames.Model.Shapes PrivateGames.Model.reads_safe
+PrivateGames.Model.Shapes PrivateGames.Model.reads_preserve
+PrivateGames.Model.Shapes PrivateGames.Model.gamesObs_hidden
+PrivateGames.Model.Shapes PrivateGames.Model.reads_own_enabled
+PrivateGames.Model.Shapes PrivateGames.Model.step_viewC
+PrivateGames.Model.Shapes PrivateGames.Model.step_view_caller
+PrivateGames.Model.Shapes PrivateGames.Model.trace_noninterference
+PrivateGames.Model.Shapes PrivateGames.Model.gamesKeyed_replay_after
+PrivateGames.Model.Shapes PrivateGames.Model.gamesKeyed_reuse

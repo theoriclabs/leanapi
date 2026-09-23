@@ -10,3 +10,5 @@ import LeanApi.Props.Authoring
 import LeanApi.Props.Stored
 import LeanApi.Props.Enumerate
 import LeanApi.Props.Check
+import LeanApi.Props.Shapes
+import LeanApi.Props.Keyed
