@@ -68,7 +68,7 @@ register_property "Idempotence" "Reusing a key with different input is refused (
 register_property "Idempotence" "Resigning twice has the same domain state effect; the model's second unkeyed resignation leaves its state unchanged"
   proved by PrivateGames.resign_idem, PrivateGames.resign_resign, PrivateGames.Model.resign_state_idem shape "two-step"
 register_property "Idempotence" "Reads (`GET /games`, `GET /games/{id}`) never change the world, on any branch, and so preserve every invariant"
-  proved by PrivateGames.Model.reads_pure, PrivateGames.Model.reads_safe, PrivateGames.Model.reads_preserve shape "step"
+  proved by PrivateGames.Model.reads_safe, LeanApi.Proofs.ScopedApp.safe_of_pure_plans, PrivateGames.Model.reads_preserve shape "step"
 register_property "Idempotence" "Unrouted requests (404, 405, OPTIONS, redirects) never change the world"
   proved by PrivateGames.Model.unrouted_pure shape "step"
 register_property "Idempotence" "The receipt is written in the same transaction as the state change"

@@ -74,7 +74,7 @@ the total number of games; this is decision 0009's known release.
 | Reusing a key with different input is refused and changes nothing (keyed model) | **Proved** | `PrivateGames.Model.gamesKeyed_reuse`, `LeanApi.Props.Keyed.keyed_reuse` |
 | Reusing a key with different input is refused (422) natively | **Checked** | `tests/Tests/Games.lean` "keyed idempotence" |
 | Resigning twice has the same domain state effect; the model's second unkeyed resignation leaves its state unchanged | **Proved** | `PrivateGames.resign_idem`, `PrivateGames.resign_resign`, `PrivateGames.Model.resign_state_idem` |
-| Reads (`GET /games`, `GET /games/{id}`) never change the world, on any branch, and so preserve every invariant | **Proved** | `PrivateGames.Model.reads_pure`, `PrivateGames.Model.reads_safe`, `PrivateGames.Model.reads_preserve` |
+| Reads (`GET /games`, `GET /games/{id}`) never change the world, on any branch, and so preserve every invariant | **Proved** | `PrivateGames.Model.reads_safe`, `LeanApi.Proofs.ScopedApp.safe_of_pure_plans`, `PrivateGames.Model.reads_preserve` |
 | Unrouted requests (404, 405, OPTIONS, redirects) never change the world | **Proved** | `PrivateGames.Model.unrouted_pure` |
 | The receipt is written in the same transaction as the state change | **Checked** | "restart after commit" test |
 | Concurrent submissions of one key produce one transition | **Checked** | "simultaneous moves" test |

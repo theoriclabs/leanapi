@@ -192,14 +192,17 @@ theorem movesGrow : Monotone gamesSys toGrow StoreGrows :=
 def IsRead (r : Req) : Prop :=
   ∃ op ps, Router.resolveIn entries .redirect r = .route op ps ∧ (op = .readGame ∨ op = .listGames)
 
-/-- **Reads are `Safe`**, stated with the library's constructor. -/
-theorem reads_safe : Safe gamesSys IsRead := by
-  rintro _ r w ⟨op, ps, hroute, hop⟩
-  show (gamesApp.step r w).2 = w
-  have h1 : gamesApp.step r w = gamesApp.operate op { r with params := ps } w := by
-    simp [ScopedApp.step, gamesApp, hroute]
-  rw [h1, ← gamesApp_step_route r w op ps hroute]
-  exact reads_pure r w op ps hroute hop
+/-- Respond plans are pure: the one fact about the plan type. -/
+def gamesPure : ScopedApp.PurePlans gamesApp where
+  pure p := ∃ res, p = .respond res
+  run_pure _ p _ := by rintro ⟨res, rfl⟩; rfl
+
+/-- **Reads are `Safe`**, discharged by the library from the plan type:
+    `core` only plans responses for reads (`read_decide_respond`), and
+    responses are pure. This replaces the hand proof of `reads_pure`. -/
+theorem reads_safe : Safe gamesSys IsRead :=
+  ScopedApp.safe_of_pure_plans gamesApp gamesInit gamesPure (fun op => op = .readGame ∨ op = .listGames)
+    fun op a i s r hop hd => read_decide_respond a i s (decode_read op r i hop hd)
 
 /-- So reads preserve every invariant with no per-invariant proof. -/
 theorem reads_preserve (I : World → Prop) : ∀ e r w, IsRead r → I w → I (gamesSys.step e r w).2 :=
