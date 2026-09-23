@@ -8,24 +8,38 @@
 
   * Inputs are parameters; each parameter's type says where it comes from
     (`FromRequest σ α`, an open class; `Path` is positional).
-  * The effect on state is `Reads σ` / `Writes σ` (pure functions run
-    atomically against a `Store σ`), `IO` (explicit escape), or none.
+  * The effect on state is `Reads σ` or `Writes σ`, or none.
   * Success shapes are `ToResponse α` (`Created`, `Versioned`, `Paged`,
     `NoContent`, JSON); failures are `Except ε` with `ToProblem ε`, whose
     status is typed as a 4xx/5xx.
 
-  `Handler σ τ` computes, by instance resolution over the arrows of `τ`,
-  the runner plus the endpoint's effect, path arity and input kinds.
-  `Endpoint.get` requires a proof, by `decide`, that the effect is safe.
-  `api!` checks path arity against templates and route conflicts at
-  compile time, and records each endpoint's elaborated signature.
+  Every typed endpoint has a pure meaning, `Env → Req → σ → Res × σ`:
+  randomness and time arrive in `Env`, authentication is a pure lookup over
+  the state, and the runtime executes the whole request atomically against
+  a `Store σ`. So a typed API is a `Props.Sys` (`Api.toSys`), and the
+  property library applies to it directly.
+
+  `Handler σ τ` computes, by instance resolution over the arrows of `τ`, the
+  meaning of `τ` together with its laws: a safe handler never changes the
+  state, and `Preserved I h` (an obligation computed from the signature:
+  nothing for `Reads`, "`f` preserves `I`" for `Writes`) makes the handler
+  preserve `I`. Hence, for every typed API:
+
+  * `Api.step_safe`: GET and HEAD requests never change the state;
+  * `Api.inductive_of`: an invariant holds in every reachable state once each
+    endpoint's `Preserved` obligation is discharged.
+
+  `api!` checks path arity against templates and route conflicts at compile
+  time, and records each endpoint's elaborated signature.
 -/
 import LeanApi.Http.Router
 import LeanApi.Http.Extract
 import LeanApi.Http.Middleware
 import LeanApi.Auth.Basic
+import LeanApi.Auth.Jwt
 import LeanApi.Util.Base64
 import LeanApi.Runtime.Server
+import LeanApi.Props.Sys
 import Std.Sync.Mutex
 
 namespace LeanApi
@@ -48,28 +62,42 @@ def Store.ofMutex (m : Std.Mutex σ) : Store σ where
     set s'
     return a
 
+/-! ## The environment: what a request may depend on besides its bytes -/
+
+/-- Randomness and time, as inputs. The runtime draws a fresh `Env` for each
+    request; the model quantifies over it. -/
+structure Env where
+  /-- Fresh random bytes for this request. -/
+  entropy : ByteArray := .empty
+  /-- Unix time in seconds. -/
+  now : Nat := 0
+
+/-- A fresh environment: 32 random bytes and the current time. -/
+def Env.fresh : IO Env := do
+  return { entropy := ← IO.getRandomBytes 32, now := ← Jwt.unixNow }
+
 /-! ## Effects -/
 
 /-- Reads the state; cannot change it. -/
 def Reads (σ α : Type) := σ → α
 
-/-- Changes the state, atomically: the new state and the answer. -/
+/-- Changes the state: the new state and the answer. -/
 def Writes (σ α : Type) := σ → σ × α
 
 /-- What an endpoint may do to state, computed from its type. -/
 inductive Effect where
-  | pure | reads | writes | io
+  | pure | reads | writes
   deriving DecidableEq, Repr, Inhabited
 
 /-- Safe methods (`GET`, `HEAD`) may only have these effects. -/
 def Effect.Safe : Effect → Prop
   | .pure | .reads => True
-  | .writes | .io => False
+  | .writes => False
 
 instance : DecidablePred Effect.Safe := fun e => by cases e <;> unfold Effect.Safe <;> infer_instance
 
 def Effect.label : Effect → String
-  | .pure => "pure" | .reads => "reads" | .writes => "writes" | .io => "io"
+  | .pure => "pure" | .reads => "reads" | .writes => "writes"
 
 /-! ## Typed statuses -/
 
@@ -94,7 +122,7 @@ structure Query (α : Type) where
 structure Body (α : Type) where
   val : α
 
-/-- A required header, decoded as `α`. -/
+/-- A header, decoded as `α`: required, or optional as `Header n (Option α)`. -/
 structure Header (name : String) (α : Type) where
   val : α
 
@@ -103,13 +131,22 @@ structure Header (name : String) (α : Type) where
 structure IfMatch (α : Type) where
   val : Option α
 
+/-- A required `If-Match` precondition: 428 when missing. -/
+structure IfMatchRequired (α : Type) where
+  val : α
+
 /-- The authenticated actor, of the type the scheme produces. -/
 structure Auth (α : Type) where
   val : α
 
-/-- A fresh random token (24 bytes, base64url): randomness as an input. -/
+/-- A fresh random token (24 bytes of the request's entropy, base64url):
+    randomness as an input. -/
 structure FreshToken where
   val : String
+
+/-- The request's time (Unix seconds). -/
+structure Now where
+  val : Nat
 
 instance : CoeHead (Path α) α := ⟨Path.val⟩
 instance : CoeHead (Query α) α := ⟨Query.val⟩
@@ -117,11 +154,6 @@ instance : CoeHead (Body α) α := ⟨Body.val⟩
 instance : CoeHead (Header n α) α := ⟨Header.val⟩
 instance : CoeHead (Auth α) α := ⟨Auth.val⟩
 instance : CoeHead FreshToken String := ⟨FreshToken.val⟩
-
-/-- The context an input is extracted from. -/
-structure Ctx (σ : Type) where
-  store : Store σ
-  req : Req
 
 /-- The outcome of extracting one input. -/
 inductive Got (α : Type) where
@@ -140,11 +172,12 @@ def Got.ofDecoded : Decoded α → Got α
   | .ok a => .ok a
   | .error es => .invalid es
 
-/-- How to obtain an input of type `α` from a request. Open: apps add their
-    own instances. `kind` names the source, for `Api.describe`. -/
+/-- How to obtain an input of type `α` from a request, given the state and
+    the environment. Pure. Open: apps add their own instances. `kind`
+    names the source, for `Api.describe`. -/
 class FromRequest (σ : Type) (α : Type) where
   kind : String
-  extract : Ctx σ → IO (Got α)
+  extract : σ → Env → Req → Got α
 
 /-- A record from the query string. -/
 class FromQuery (α : Type) where
@@ -154,35 +187,79 @@ class FromQuery (α : Type) where
 class FromForm (α : Type) where
   fromForm : List (String × String) → Decoded α
 
-/-- How to obtain an actor of type `α`: any `Authenticator`, given the store. -/
+/-- How to obtain an actor of type `α`: a pure check of the request against
+    the state and the environment (e.g. the time, for JWT expiry). -/
 class Authenticates (σ : Type) (α : Type) where
-  authenticator : Store σ → Authenticator α
+  challenge : String
+  authenticate : σ → Env → Req → Except AuthFailure α
 
 namespace Authenticates
 
 /-- Session tokens looked up in the state: `Authorization: Bearer`, and the
     cookie `cookie` when given. -/
 def sessions (lookup : σ → String → Option α) (cookie : Option String := none) (realm : String := "api") :
-    Store σ → Authenticator α := fun st =>
-  let verify (t : String) : IO (Option α) := st.read (lookup · t)
-  match cookie with
-  | some c => (bearer verify realm).orElse (sessionCookie c verify)
-  | none => bearer verify realm
+    Authenticates σ α where
+  challenge := s!"Bearer realm=\"{realm}\""
+  authenticate s _ req :=
+    let hasBearer := match req.header? "authorization" with
+      | some v => ((v.trimAscii.toString.splitOn " ").headD "").toLower == "bearer"
+      | none => false
+    if hasBearer then
+      match bearerToken? req with
+      | none => .error (.invalid "malformed bearer token")
+      | some t => match lookup s t with
+        | some a => .ok a
+        | none => .error (.invalid "token rejected")
+    else match cookie.bind req.cookie? with
+      | some t => match lookup s t with
+        | some a => .ok a
+        | none => .error (.invalid "session rejected")
+      | none => .error .missing
 
 /-- Basic credentials checked against the state. -/
-def passwords (verify : σ → String → String → Option α) (realm : String := "api") :
-    Store σ → Authenticator α := fun st =>
-  basic (fun u p => st.read (verify · u p)) realm
+def passwords (verify : σ → String → String → Option α) (realm : String := "api") : Authenticates σ α where
+  challenge := s!"Basic realm=\"{realm}\", charset=\"UTF-8\""
+  authenticate s _ req :=
+    let hasBasic := match req.header? "authorization" with
+      | some v => ((v.trimAscii.toString.splitOn " ").headD "").toLower == "basic"
+      | none => false
+    if !hasBasic then .error .missing else
+    match basicCredentials? req with
+    | none => .error (.invalid "malformed basic credentials")
+    | some (u, p) => match verify s u p with
+      | some a => .ok a
+      | none => .error (.invalid "credentials rejected")
+
+/-- HS256 JWTs, verified at the request's time; claims mapped to an actor
+    against the state. -/
+def jwt (policy : Jwt.Policy) (toActor : σ → Json → Option α) (realm : String := "api") : Authenticates σ α where
+  challenge := s!"Bearer realm=\"{realm}\""
+  authenticate s env req :=
+    match req.header? "authorization" with
+    | none => .error .missing
+    | some v =>
+      if ((v.trimAscii.toString.splitOn " ").headD "").toLower != "bearer" then .error .missing else
+      match bearerToken? req with
+      | none => .error (.invalid "malformed bearer token")
+      | some tok => match Jwt.verify policy env.now tok with
+        | .error _ => .error (.invalid "token rejected")
+        | .ok claims => match toActor s claims with
+          | some a => .ok a
+          | none => .error (.invalid "unknown subject")
 
 end Authenticates
 
 instance [FromQuery α] : FromRequest σ (Query α) where
   kind := "query"
-  extract c := pure ((Got.ofDecoded (FromQuery.fromQuery c.req)).map Query.mk)
+  extract _ _ r := (Got.ofDecoded (FromQuery.fromQuery r)).map Query.mk
 
 instance [FromParam α] : FromRequest σ (Header n α) where
   kind := s!"header {n}"
-  extract c := pure ((Got.ofDecoded (Extract.header (α := α) n c.req)).map Header.mk)
+  extract _ _ r := (Got.ofDecoded (Extract.header (α := α) n r)).map Header.mk
+
+instance (priority := high) [FromParam α] : FromRequest σ (Header n (Option α)) where
+  kind := s!"header {n}?"
+  extract _ _ r := (Got.ofDecoded (Extract.headerOpt (α := α) n r)).map Header.mk
 
 /-- Strip the quotes of an entity tag (`"3"`, `W/"3"`). -/
 def unquoteETag (s : String) : String :=
@@ -192,8 +269,8 @@ def unquoteETag (s : String) : String :=
 
 instance [FromParam α] : FromRequest σ (IfMatch α) where
   kind := "if-match"
-  extract c := pure <|
-    match c.req.header? "if-match" with
+  extract _ _ r :=
+    match r.header? "if-match" with
     | none => .ok ⟨none⟩
     | some v =>
       if v.trimAscii.toString == "*" then .ok ⟨none⟩ else
@@ -201,18 +278,31 @@ instance [FromParam α] : FromRequest σ (IfMatch α) where
       | .ok a => .ok ⟨some a⟩
       | .error m => .invalid [⟨"header.if-match", m⟩]
 
-instance [Authenticates σ α] : FromRequest σ (Auth α) where
+instance [FromParam α] : FromRequest σ (IfMatchRequired α) where
+  kind := "if-match (required)"
+  extract _ _ r :=
+    match r.header? "if-match" with
+    | none => .reject (Problem.make 428 (some "If-Match with the resource's ETag is required")).toRes
+    | some v =>
+      match FromParam.fromParam (α := α) (unquoteETag v) with
+      | .ok a => .ok ⟨a⟩
+      | .error m => .invalid [⟨"header.if-match", m⟩]
+
+instance [A : Authenticates σ α] : FromRequest σ (Auth α) where
   kind := "auth"
-  extract c := do
-    let a := Authenticates.authenticator (σ := σ) (α := α) c.store
-    match ← a.run c.req with
-    | .ok who => return .ok ⟨who⟩
-    | .error .missing => return .reject (unauthorized a.challenge)
-    | .error (.invalid _) => return .reject (unauthorized a.challenge "invalid credentials")
+  extract s env r :=
+    match A.authenticate s env r with
+    | .ok who => .ok ⟨who⟩
+    | .error .missing => .reject (unauthorized A.challenge)
+    | .error (.invalid _) => .reject (unauthorized A.challenge "invalid credentials")
 
 instance : FromRequest σ FreshToken where
   kind := "fresh token"
-  extract _ := do return .ok ⟨Base64.encodeUrl (← IO.getRandomBytes 24)⟩
+  extract _ env _ := .ok ⟨Base64.encodeUrl (env.entropy.extract 0 24)⟩
+
+instance : FromRequest σ Now where
+  kind := "now"
+  extract _ env _ := .ok ⟨env.now⟩
 
 private def bodyParseFailure (es : List FieldError) : Bool :=
   es.any fun e => e.loc == "body" &&
@@ -233,21 +323,21 @@ private def formType := "application/x-www-form-urlencoded"
 /-- A body accepted as JSON or as a form. -/
 instance (priority := high) [FromBody α] [FromForm α] : FromRequest σ (Body α) where
   kind := "body (json or form)"
-  extract c := pure <|
-    match c.req.contentType? with
+  extract _ _ r :=
+    match r.contentType? with
     | some ct =>
-      if ct == jsonType then (classify (Extract.json (α := α) c.req)).map Body.mk
+      if ct == jsonType then (classify (Extract.json (α := α) r)).map Body.mk
       else if ct == formType then
-        (classify (do FromForm.fromForm (← Extract.formPairs c.req))).map Body.mk
+        (classify (do FromForm.fromForm (← Extract.formPairs r))).map Body.mk
       else .reject (unsupported [jsonType, formType])
     | none => .reject (unsupported [jsonType, formType])
 
 /-- A JSON body. -/
 instance [FromBody α] : FromRequest σ (Body α) where
   kind := "body (json)"
-  extract c := pure <|
-    match c.req.contentType? with
-    | some ct => if ct == jsonType then (classify (Extract.json (α := α) c.req)).map Body.mk
+  extract _ _ r :=
+    match r.contentType? with
+    | some ct => if ct == jsonType then (classify (Extract.json (α := α) r)).map Body.mk
                  else .reject (unsupported [jsonType])
     | none => .reject (unsupported [jsonType])
 
@@ -332,9 +422,18 @@ instance (priority := low) [ToJson α] : ToResponse α := ⟨fun a => Res.ok a�
 class ToProblem (ε : Type) where
   status : ε → ErrorStatus
   detail : ε → Option String := fun _ => none
+  /-- Extension members of the problem object (RFC 9457 §3.2). -/
+  extensions : ε → List (String × Json) := fun _ => []
 
 def ToProblem.problem [ToProblem ε] (e : ε) : Problem :=
-  Problem.make (ToProblem.status e).1 (ToProblem.detail e)
+  (ToProblem.extensions e).foldl (fun p (k, v) => p.withExt k v)
+    (Problem.make (ToProblem.status e).1 (ToProblem.detail e))
+
+/-- Field errors as a failure: 422, as the extractors report them. -/
+instance : ToProblem (List FieldError) where
+  status _ := ⟨422, by decide⟩
+  detail _ := some "request validation failed"
+  extensions es := [("errors", Json.arr (es.map FieldError.toJson).toArray)]
 
 instance [ToResponse α] [ToProblem ε] : ToResponse (Except ε α) where
   toRes
@@ -345,7 +444,8 @@ instance [ToResponse α] [ToProblem ε] : ToResponse (Except ε α) where
 structure NotFound where
   deriving Repr, Inhabited
 
-instance : ToProblem NotFound := ⟨fun _ => ⟨404, by decide⟩, fun _ => none⟩
+instance : ToProblem NotFound where
+  status _ := ⟨404, by decide⟩
 
 /-- A newly created resource: 201, with `Location` when given. -/
 structure Created (α : Type) where
@@ -402,15 +502,22 @@ instance [ToResponse α] : ToResponse (WithCookie α) where
 private def validationRes (es : List FieldError) : Res := (FieldError.problem es).toRes
 
 /-- `τ` is a handler: an arrow of inputs ending in an effect and a response.
-    Instance resolution computes its effect, path arity and input kinds. -/
+    Instance resolution computes its meaning and metadata, and proves its
+    laws. -/
 class Handler (σ : Type) (τ : Type) where
   effect : Effect
   pathArity : Nat
   inputs : List String
-  /-- Run with the index of the next `Path` parameter. -/
-  run : τ → Ctx σ → Nat → IO Res
+  /-- The pure meaning, given the index of the next `Path` parameter. -/
+  step : τ → Env → Req → σ → Nat → Res × σ
   /-- The field errors of all inputs, without running the handler. -/
-  errors : Ctx σ → Nat → IO (List FieldError)
+  errors : Env → Req → σ → Nat → List FieldError
+  /-- A safe handler never changes the state. -/
+  step_safe : effect.Safe → ∀ h env r s i, (step h env r s i).2 = s
+  /-- What preserving `I` requires of a handler of this type: nothing for
+      `Reads`; that the state function preserves `I` for `Writes`. -/
+  Preserved : (σ → Prop) → τ → Prop
+  step_preserved : ∀ I h, Preserved I h → ∀ env r s i, I s → I (step h env r s i).2
 
 /-- The `i`th path parameter, decoded. -/
 def pathAt [FromParam α] (r : Req) (i : Nat) : Decoded α :=
@@ -425,117 +532,157 @@ instance [FromParam α] [H : Handler σ β] : Handler σ (Path α → β) where
   effect := H.effect
   pathArity := H.pathArity + 1
   inputs := "path" :: H.inputs
-  run f c i :=
-    match pathAt (α := α) c.req i with
-    | .ok a => H.run (f ⟨a⟩) c (i + 1)
-    | .error es => do return validationRes (es ++ (← H.errors c (i + 1)))
-  errors c i := do
-    let mine := match pathAt (α := α) c.req i with | .ok _ => [] | .error es => es
-    return mine ++ (← H.errors c (i + 1))
+  step f env r s i :=
+    match pathAt (α := α) r i with
+    | .ok a => H.step (f ⟨a⟩) env r s (i + 1)
+    | .error es => (validationRes (es ++ H.errors env r s (i + 1)), s)
+  errors env r s i :=
+    (match pathAt (α := α) r i with | .ok _ => [] | .error es => es) ++ H.errors env r s (i + 1)
+  step_safe hs f env r s i := by
+    split
+    · exact H.step_safe hs _ env r s _
+    · rfl
+  Preserved I f := ∀ a, H.Preserved I (f ⟨a⟩)
+  step_preserved I f hp env r s i hs := by
+    split
+    · exact H.step_preserved I _ (hp _) env r s _ hs
+    · exact hs
 
 instance (priority := low) [R : FromRequest σ α] [H : Handler σ β] : Handler σ (α → β) where
   effect := H.effect
   pathArity := H.pathArity
   inputs := R.kind :: H.inputs
-  run f c i := do
-    match ← R.extract c with
-    | .ok a => H.run (f a) c i
-    | .invalid es => return validationRes (es ++ (← H.errors c i))
-    | .reject r => return r
-  errors c i := do
-    let mine ← match ← R.extract c with
-      | .invalid es => pure es
-      | _ => pure []
-    return mine ++ (← H.errors c i)
+  step f env r s i :=
+    match R.extract s env r with
+    | .ok a => H.step (f a) env r s i
+    | .invalid es => (validationRes (es ++ H.errors env r s i), s)
+    | .reject res => (res, s)
+  errors env r s i :=
+    (match R.extract s env r with | .invalid es => es | _ => []) ++ H.errors env r s i
+  step_safe hs f env r s i := by
+    split
+    · exact H.step_safe hs _ env r s _
+    · rfl
+    · rfl
+  Preserved I f := ∀ a, H.Preserved I (f a)
+  step_preserved I f hp env r s i hs := by
+    split
+    · exact H.step_preserved I _ (hp _) env r s _ hs
+    · exact hs
+    · exact hs
 
 instance [ToResponse ρ] : Handler σ (Reads σ ρ) where
   effect := .reads
   pathArity := 0
   inputs := []
-  run f c _ := do return ToResponse.toRes (← c.store.read f)
-  errors _ _ := pure []
+  step f _ _ s _ := (ToResponse.toRes (f s), s)
+  errors _ _ _ _ := []
+  step_safe _ _ _ _ _ _ := rfl
+  Preserved _ _ := True
+  step_preserved _ _ _ _ _ _ _ hs := hs
 
 instance [ToResponse ρ] : Handler σ (Writes σ ρ) where
   effect := .writes
   pathArity := 0
   inputs := []
-  run f c _ := do return ToResponse.toRes (← c.store.modify f)
-  errors _ _ := pure []
-
-/-- The explicit escape hatch: arbitrary `IO`, visible in the signature. -/
-instance [ToResponse ρ] : Handler σ (IO ρ) where
-  effect := .io
-  pathArity := 0
-  inputs := []
-  run act _ _ := do return ToResponse.toRes (← act)
-  errors _ _ := pure []
+  step f _ _ s _ := ((ToResponse.toRes (f s).2), (f s).1)
+  errors _ _ _ _ := []
+  step_safe h := h.elim
+  Preserved I f := ∀ s, I s → I (f s).1
+  step_preserved _ _ hp _ _ s _ hs := hp s hs
 
 /-- A pure answer. -/
 instance (priority := low) [ToResponse ρ] : Handler σ ρ where
   effect := .pure
   pathArity := 0
   inputs := []
-  run a _ _ := pure (ToResponse.toRes a)
-  errors _ _ := pure []
+  step a _ _ s _ := (ToResponse.toRes a, s)
+  errors _ _ _ _ := []
+  step_safe _ _ _ _ _ _ := rfl
+  Preserved _ _ := True
+  step_preserved _ _ _ _ _ _ _ hs := hs
 
-/-! ## Endpoints and APIs -/
+/-! ## Endpoints -/
+
+def Method.Safe (m : Method) : Prop := m = .get ∨ m = .head
+
+theorem Method.eq_of_beq' {a b : Method} (h : (a == b) = true) : a = b := by
+  cases a <;> cases b <;> first | rfl | exact absurd h (by decide)
 
 structure Endpoint (σ : Type) where
   method : Method
   template : String
-  run : Ctx σ → IO Res
+  step : Env → Req → σ → Res × σ
   effect : Effect
   pathArity : Nat
   inputs : List String
   bodyLimit : Nat := 1024 * 1024
   /-- The handler's elaborated type, recorded by `api!`. -/
   signature : String := ""
+  /-- A GET or HEAD endpoint never changes the state. -/
+  step_safe : method.Safe → ∀ env r s, (step env r s).2 = s
+  /-- The obligation for preserving `I`, computed from the signature. -/
+  Preserved : (σ → Prop) → Prop
+  step_preserved : ∀ I, Preserved I → ∀ env r s, I s → I (step env r s).2
 
 namespace Endpoint
 
-def make {σ τ : Type} (m : Method) (t : String) (h : τ) [H : Handler σ τ] (limit : Nat := 1024 * 1024) :
-    Endpoint σ where
+/-- Build an endpoint. `hsafe`: a safe method's handler has a safe effect. -/
+def make {σ τ : Type} (m : Method) (t : String) (h : τ) [H : Handler σ τ]
+    (hsafe : m.Safe → H.effect.Safe) (limit : Nat := 1024 * 1024) : Endpoint σ where
   method := m
   template := t
   bodyLimit := limit
-  run c := H.run h c 0
+  step env r s := H.step h env r s 0
   effect := H.effect
   pathArity := H.pathArity
   inputs := H.inputs
+  step_safe hm env r s := H.step_safe (hsafe hm) h env r s 0
+  Preserved I := H.Preserved I h
+  step_preserved I hp env r s hs := H.step_preserved I h hp env r s 0 hs
 
 /-- Fails with a readable message when a safe method's handler can change
     state. -/
 macro "endpoint_safe" : tactic =>
   `(tactic| first
     | decide
-    | fail "a GET or HEAD endpoint must not change state, but this handler's effect is `writes` or `io`. \
+    | fail "a GET or HEAD endpoint must not change state, but this handler's effect is `writes`. \
 Return `Reads σ _` (or a pure value), or use POST, PUT, PATCH or DELETE.")
+
+theorem unsafe_post : ¬ Method.Safe .post := by intro h; rcases h with h | h <;> cases h
+theorem unsafe_put : ¬ Method.Safe .put := by intro h; rcases h with h | h <;> cases h
+theorem unsafe_patch : ¬ Method.Safe .patch := by intro h; rcases h with h | h <;> cases h
+theorem unsafe_delete : ¬ Method.Safe .delete := by intro h; rcases h with h | h <;> cases h
 
 /-- `GET`: the handler's effect must be safe (`pure` or `reads`), proved
     when the endpoint is built. -/
-def get {σ τ : Type} (t : String) (h : τ) [H : Handler σ τ] (_safe : H.effect.Safe := by endpoint_safe) :
+def get {σ τ : Type} (t : String) (h : τ) [H : Handler σ τ] (safe : H.effect.Safe := by endpoint_safe) :
     Endpoint σ :=
-  make .get t h
+  make .get t h (fun _ => safe)
 
-def head {σ τ : Type} (t : String) (h : τ) [H : Handler σ τ] (_safe : H.effect.Safe := by endpoint_safe) : Endpoint σ :=
-  make .head t h
+def head {σ τ : Type} (t : String) (h : τ) [H : Handler σ τ] (safe : H.effect.Safe := by endpoint_safe) :
+    Endpoint σ :=
+  make .head t h (fun _ => safe)
 
 def post {σ τ : Type} (t : String) (h : τ) [Handler σ τ] (limit : Nat := 1024 * 1024) : Endpoint σ :=
-  make .post t h limit
+  make .post t h (fun hm => absurd hm unsafe_post) limit
 def put {σ τ : Type} (t : String) (h : τ) [Handler σ τ] (limit : Nat := 1024 * 1024) : Endpoint σ :=
-  make .put t h limit
+  make .put t h (fun hm => absurd hm unsafe_put) limit
 def patch {σ τ : Type} (t : String) (h : τ) [Handler σ τ] (limit : Nat := 1024 * 1024) : Endpoint σ :=
-  make .patch t h limit
+  make .patch t h (fun hm => absurd hm unsafe_patch) limit
 def delete {σ τ : Type} (t : String) (h : τ) [Handler σ τ] (limit : Nat := 1024 * 1024) : Endpoint σ :=
-  make .delete t h limit
-
+  make .delete t h (fun hm => absurd hm unsafe_delete) limit
 
 def withSignature (e : Endpoint σ) (s : String) : Endpoint σ := { e with signature := s }
 
+/-- Run against a store: a fresh environment, and the whole request
+    (authentication, decoding, the handler) in one atomic step. -/
 def toRoute (e : Endpoint σ) (store : Store σ) : Route where
   method := e.method
   template := e.template
-  handler req := e.run ⟨store, req⟩
+  handler req := do
+    let env ← Env.fresh
+    store.modify fun s => let (res, s') := e.step env req s; (s', res)
   bodyLimit := e.bodyLimit
   name := if e.signature.isEmpty then none else some e.signature
 
@@ -545,6 +692,8 @@ def describe (e : Endpoint σ) : String :=
     (if e.signature.isEmpty then "" else s!"\n    : {e.signature}")
 
 end Endpoint
+
+/-! ## APIs, and their meaning as a system -/
 
 abbrev Api (σ : Type) := List (Endpoint σ)
 
@@ -561,6 +710,92 @@ def service (api : Api σ) (store : Store σ) (stack : Stack := {}) : Service :=
   Service.ofRouter (Router.build! (api.routes store)) stack
 
 def describe (api : Api σ) : String := "\n".intercalate (api.map Endpoint.describe)
+
+/-- The routing table, as the router resolves it. -/
+def entries (api : Api σ) : List (Endpoint σ × Method × List Seg) :=
+  api.filterMap fun e => (parseTemplate e.template).toOption.map fun segs => (e, e.method, segs)
+
+/-- The API's meaning: route with the same `resolveIn` the router uses, then
+    run the endpoint. (Middleware is outside it.) -/
+def step (api : Api σ) (env : Env) (r : Req) (s : σ) : Res × σ :=
+  match Router.resolveIn api.entries .redirect r with
+  | .respond res => (res, s)
+  | .route e ps => e.step env { r with params := ps } s
+
+/-- The API as a transition system, for the property library. -/
+def toSys (api : Api σ) (init : σ → Prop) : Props.Sys where
+  World := σ
+  Req := Req
+  Res := Res
+  Env := Env
+  step env r s := api.step env r s
+  init := init
+
+theorem mem_entries {api : Api σ} {x : Endpoint σ × Method × List Seg} (h : x ∈ api.entries) :
+    x.1 ∈ api ∧ x.2.1 = x.1.method := by
+  simp only [entries, List.mem_filterMap, Option.map_eq_some_iff] at h
+  obtain ⟨e, he, segs, _, rfl⟩ := h
+  exact ⟨he, rfl⟩
+
+/-- What the router resolves to is an endpoint of the API whose method is
+    the request's, or `GET` for a `HEAD` request. -/
+theorem resolveIn_route {api : Api σ} {r : Req} {e : Endpoint σ} {ps}
+    (h : Router.resolveIn api.entries .redirect r = .route e ps) :
+    e ∈ api ∧ (e.method = r.method ∨ (r.method = .head ∧ e.method = .get)) := by
+  unfold Router.resolveIn at h
+  split at h
+  · cases h
+  split at h
+  · split at h <;> cases h
+  dsimp only at h
+  split at h
+  · cases h
+  have hmem : ∀ x ∈ Router.candidatesIn api.entries r.path, x.1 ∈ api.entries := by
+    intro x hx
+    simp only [Router.candidatesIn, List.mem_mergeSort, List.mem_filterMap, Option.map_eq_some_iff] at hx
+    obtain ⟨y, hy, _, _, rfl⟩ := hx
+    exact hy
+  split at h
+  · rename_i x hfind
+    cases h
+    have hm := mem_entries (hmem _ (List.mem_of_find?_eq_some hfind))
+    have hp := List.find?_some hfind
+    exact ⟨hm.1, .inl (by rw [← hm.2]; exact Method.eq_of_beq' hp)⟩
+  · split at h
+    · rename_i _ _ _ _ _ hhead hfind'
+      cases h
+      have hm := mem_entries (hmem _ (List.mem_of_find?_eq_some hfind'))
+      have hp := List.find?_some hfind'
+      exact ⟨hm.1, .inr ⟨hhead, by rw [← hm.2]; exact Method.eq_of_beq' hp⟩⟩
+    · cases h
+    · cases h
+
+/-- **GET and HEAD never change the state**, for every typed API: each such
+    endpoint carries the proof, and unrouted requests change nothing. -/
+theorem step_safe (api : Api σ) (env : Env) (r : Req) (s : σ) (hm : r.method.Safe) :
+    (api.step env r s).2 = s := by
+  unfold step
+  split
+  · rfl
+  · rename_i e ps hr
+    obtain ⟨_, hmeth⟩ := resolveIn_route hr
+    apply e.step_safe
+    rcases hmeth with h | ⟨_, h⟩
+    · rw [h]; exact hm
+    · rw [h]; exact .inl rfl
+
+/-- **Invariants of a typed API.** If `I` holds initially and every
+    endpoint's `Preserved I` obligation (computed from its signature) is
+    discharged, `I` holds in every reachable state. -/
+theorem inductive_of (api : Api σ) {init : σ → Prop} {I : σ → Prop} (hinit : ∀ s, init s → I s)
+    (hp : ∀ e ∈ api, e.Preserved I) : Props.Inductive (api.toSys init) I := by
+  refine ⟨hinit, fun env r s hs => ?_⟩
+  show I (api.step env r s).2
+  unfold step
+  split
+  · exact hs
+  · rename_i e ps hr
+    exact e.step_preserved I (hp _ (resolveIn_route hr).1) env _ s hs
 
 end Api
 

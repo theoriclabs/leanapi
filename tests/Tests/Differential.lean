@@ -6,6 +6,7 @@
   Evidence for "native ≡ model" in EVIDENCE.md (checked, not proved).
 -/
 import PrivateGames.Model.Step
+import PrivateGames.Api
 import PrivateGames.App.Service
 import Tests.Games
 
@@ -32,8 +33,11 @@ def run : TestM Unit := do
       games := [], receipts := [], nextGame := 1
       players := users.toList.map fun (id, _) => ⟨id⟩
       sessions := users.toList.map fun (id, t) => (Tokens.digest t, ⟨id⟩) }
+    let mut typedWorld := world
     let mut mismatches := 0
+    let mut typedMismatches := 0
     let mut total := 0
+    let mut seen : List Nat := []
     for step_ in [0:400] do
       let u ← IO.rand 0 (users.size - 1)
       let (_, tok) := users[u]!
@@ -56,17 +60,38 @@ def run : TestM Unit := do
         | 7 => ("POST", s!"/games/{gid}/resignation", keyH, "")
         | 8 => ("PUT", s!"/games/{gid}", [], "")
         | _ => ("GET", s!"/games/{gid}", [], "")
-      let native ← request env.svc m target (tokH :: hs) body
+      -- one malformation at a time, on some requests: each error path
+      let mutation ← IO.rand 0 11
+      let (tokHs, hs, target) := match mutation with
+        | 0 => ([], hs, target)                                                     -- no credentials: 401
+        | 1 => ([tokH], hs.filter (·.1 != "If-Match"), target)                      -- no If-Match: 428 on moves
+        | 2 => ([tokH], hs.map (fun (k, v) => if k == "Content-Type" then (k, "text/plain") else (k, v)), target)  -- 415
+        | 3 => ([tokH], hs ++ [("Idempotency-Key", "bad key")], target)             -- invalid key: 422
+        | 4 => ([tokH], hs, if target.startsWith "/games?" then "/games?page=0" else target)  -- 422 on lists
+        | _ => ([tokH], hs, target)
+      let hs := tokHs ++ hs
+      let native ← request env.svc m target hs body
       let some meth := Method.ofString? m | continue
-      let req := Req.mk' meth target ((tokH :: hs).map fun (k, v) => (k.toLower, v)) body.toUTF8
+      let req := Req.mk' meth target (hs.map fun (k, v) => (k.toLower, v)) body.toUTF8
       let (res, w') := Model.step req world
       world := w'
+      let (tres, tw') := PrivateGames.Api.gamesApi.step {} req typedWorld
+      typedWorld := tw'
       total := total + 1
+      unless seen.contains res.status do seen := res.status :: seen
+      if comparable tres != comparable res then
+        typedMismatches := typedMismatches + 1
+        if typedMismatches ≤ 3 then
+          IO.eprintln s!"  step {step_}: {m} {target}\n    typed  {repr (comparable tres)}\n    model  {repr (comparable res)}"
+
       if replyComparable native != comparable res then
         mismatches := mismatches + 1
         if mismatches ≤ 3 then
           IO.eprintln s!"  step {step_}: {m} {target}\n    native {repr (replyComparable native)}\n    model  {repr (comparable res)}"
     checkEq s!"{total} requests: native ≡ model" mismatches 0
+    checkEq s!"{total} requests: typed API ≡ model" typedMismatches 0
+    for code in [200, 201, 401, 404, 405, 409, 412, 415, 422, 428] do
+      check s!"status {code} exercised" (seen.contains code)
     env.rt.close
 
 end Tests.Differential

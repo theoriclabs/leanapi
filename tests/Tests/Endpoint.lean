@@ -15,9 +15,9 @@ def peek : Reads Nat Nat := fun n => n
 def peekAt (_i : Path Nat) : Reads Nat Nat := fun n => n
 
 -- A GET whose handler writes does not build.
-/-- error: could not synthesize default value for parameter '_safe' using tactics
+/-- error: could not synthesize default value for parameter 'safe' using tactics
 ---
-error: a GET or HEAD endpoint must not change state, but this handler's effect is `writes` or `io`. Return `Reads σ _` (or a pure value), or use POST, PUT, PATCH or DELETE.
+error: a GET or HEAD endpoint must not change state, but this handler's effect is `writes`. Return `Reads σ _` (or a pure value), or use POST, PUT, PATCH or DELETE.
 ⊢ (Handler.effect Nat (Writes Nat Nat)).Safe -/
 #guard_msgs (error) in
 example : Endpoint Nat := .get "/counter" bump

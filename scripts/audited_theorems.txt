@@ -146,3 +146,12 @@ LeanApi.Props.Shapes LeanApi.Props.NIPackage.ok_nontrivial
 PrivateGames.Model.Shapes PrivateGames.Model.step_read
 PrivateGames.Model.Shapes PrivateGames.Model.read_missing
 PrivateGames.Model.Shapes PrivateGames.Model.gamesNI
+# Typed endpoints: framework laws and private-games on typed endpoints
+LeanApi.Http.Endpoint LeanApi.Api.step_safe
+LeanApi.Http.Endpoint LeanApi.Api.inductive_of
+LeanApi.Http.Endpoint LeanApi.Api.resolveIn_route
+PrivateGames.ApiProofs PrivateGames.Api.api_reads_safe
+PrivateGames.ApiProofs PrivateGames.Api.api_allValid
+PrivateGames.ApiProofs PrivateGames.Api.api_uniqueIds
+PrivateGames.ApiProofs PrivateGames.Api.api_freshIds
+PrivateGames.ApiProofs PrivateGames.Api.api_preserved

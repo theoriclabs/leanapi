@@ -92,10 +92,10 @@ structure ByPassword where
   name : String
 
 instance : Authenticates State User :=
-  ⟨Authenticates.sessions (fun s t => (s.tokens.lookup t).map (⟨·⟩)) (cookie := some "sid")⟩
+  .sessions (fun s t => (s.tokens.lookup t).map (⟨·⟩)) (cookie := some "sid")
 
 instance : Authenticates State ByPassword :=
-  ⟨Authenticates.passwords fun s u p => if s.users.lookup u == some p then some ⟨u⟩ else none⟩
+  .passwords fun s u p => if s.users.lookup u == some p then some ⟨u⟩ else none
 
 /-! ## Requests -/
 
@@ -152,7 +152,9 @@ def Note.versioned (n : Note) : Versioned NoteView := ⟨n.view, n.rev⟩
 
 inductive RegisterError | nameTaken
 
-instance : ToProblem RegisterError := ⟨fun .nameTaken => ⟨409, by decide⟩, fun .nameTaken => some "name taken"⟩
+instance : ToProblem RegisterError where
+  status | .nameTaken => ⟨409, by decide⟩
+  detail | .nameTaken => some "name taken"
 
 inductive EditError | notFound | stale
 

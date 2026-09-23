@@ -102,6 +102,9 @@ is decision 0010.
 | Availability: a participant's read of their visible game succeeds with 200 and the game, through the full HTTP step | **Proved** | `PrivateGames.Model.read_available`, `PrivateGames.Model.gameRes_status`, `PrivateGames.Model.reads_own_enabled` |
 | Stored values round-trip (`Cell`, `TimeControl`, `Nat` below 2^63) | **Proved** | `PrivateGames.Storage.cell_roundtrip`, `PrivateGames.Storage.timeControl_roundtrip`, `PrivateGames.Storage.nat_roundtrip` |
 | A stored game that is not `Valid` is a typed error (500 without detail), never a crash | **Checked** | "stored row that fails validation" |
+| Typed API (`PrivateGames/Api.lean`): GET and HEAD requests never change the state. Free for every typed API: each GET endpoint carries the proof, checked when it is built | **Proved** | `LeanApi.Api.step_safe`, `PrivateGames.Api.api_reads_safe` |
+| Typed API: every stored game is `Valid`, ids are unique, and every id is below `nextGame`, in every reachable state. Per-endpoint obligations computed from the signatures; the writes are steps of the game store, whose writers are the domain decisions | **Proved** | `LeanApi.Api.inductive_of`, `PrivateGames.Api.api_allValid`, `PrivateGames.Api.api_uniqueIds`, `PrivateGames.Api.api_freshIds` |
+| The typed API answers exactly as the reference model (status, ETag, Location, replay marker, Allow, WWW-Authenticate, body) on random request sequences, including every error status (401, 404, 405, 409, 412, 415, 422, 428) | **Checked** | `tests/Tests/Differential.lean` "typed API ≡ model" |
 <!-- END GENERATED: Domain -->
 
 ### 4. Concurrency and consistency

@@ -123,7 +123,7 @@ def idemKey : Extract (Option String) := fun r =>
 /-- `If-Match: "<rev>"`: required on moves (428 when missing). -/
 def ifMatchRev (r : Req) : Except Res Revision :=
   match r.header? "if-match" with
-  | none => .error (Problem.make 428 (some "If-Match with the game's ETag is required")).toRes
+  | none => .error (Problem.make 428 (some "If-Match with the resource's ETag is required")).toRes
   | some v =>
     let v := v.trimAscii.toString
     let inner := if v.startsWith "\"" && v.endsWith "\"" && v.length ≥ 2 then ((v.drop 1).dropEnd 1).toString else v

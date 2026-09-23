@@ -77,7 +77,9 @@ preserves Board.Valid by Board.add
 structure BoardFull where
   why : String
 
-instance : ToProblem BoardFull := ⟨fun _ => ⟨409, by decide⟩, fun e => some e.why⟩
+instance : ToProblem BoardFull where
+  status _ := ⟨409, by decide⟩
+  detail e := some e.why
 
 def addItem (t : Body Title) : Writes Board (Except BoardFull (Created Board)) := fun b =>
   match b.add t.val with
@@ -102,9 +104,11 @@ This example proves a property of *one decision*. The next section shows propert
 | **Keyed idempotence.** Replaying a committed keyed request returns the recorded response and changes nothing, even after any number of other requests. Reusing a key with a different body is refused | `keyed_replay`, `keyed_replay_after`, `gamesKeyed_reuse` |
 | **System invariants.** Every stored game is valid; game ids are unique; a game's move log only grows | `allValid`, `uniqueIds`, `movesGrow` |
 | **Across requests.** After any sequence of requests by a group of players, what each of them sees depends only on what the group can see | `trace_noninterference` |
-| **Safe reads.** `GET` routes, and unrouted requests (404, 405, OPTIONS), never change state | `reads_pure`, `unrouted_pure` |
+| **Safe reads.** `GET` routes, and unrouted requests (404, 405, OPTIONS), never change state. For the typed API this is free: every typed API has it | `reads_pure`, `unrouted_pure`, `Api.step_safe` |
 | **Domain.** Accepted moves are allowed, follow the transition rules and keep every game valid | `decide_allowed`, `decide_transition`, `decide_valid` |
 | **Availability.** A player can always read their own game (so "reject everyone" doesn't count as secure) | `read_available` |
+
+The game routes are also written as typed endpoints ([`PrivateGames/Api.lean`](examples/private-games/PrivateGames/Api.lean)). There, "GET never changes state" comes from the framework, and validity and unique ids are proved on the typed API itself (`api_allValid`, `api_uniqueIds`). A differential test checks that the typed API, the reference model and the native LeanDB service answer byte for byte alike, across every error status. Isolation and idempotence are still proved on the reference model; moving them to the typed API is the next step.
 
 The precise scopes (what "view" includes, what is only checked by tests, and the trusted base: `Std.Http`, SQLite, crypto, middleware, and model ≡ native) are in [EVIDENCE.md](EVIDENCE.md). Every listed theorem is checked by `./scripts/axiom_audit.sh`: no `sorry`, no `native_decide`, no extra axioms.
 

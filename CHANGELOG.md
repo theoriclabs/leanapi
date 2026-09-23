@@ -21,6 +21,14 @@
 - **Authentication.** `Authenticates σ α` names schemes by actor type, with
   `sessions` and `passwords` helpers over pure state lookups.
 - **Notes rewritten** on typed endpoints. Its test suite passes unchanged.
+- **Pure meaning, and laws as proofs.**
+  - Every typed endpoint means `Env → Req → σ → Res × σ`. Randomness and time are in `Env`; authentication is pure (`sessions`, `passwords`, `jwt`). The runtime runs each request atomically.
+  - `Api.toSys` makes a typed API a `Props.Sys`.
+  - `Handler` proves its own laws (safe handlers never write; `Preserved I` makes a handler preserve `I`).
+  - For every typed API: `Api.step_safe` (GET/HEAD never change state) and `Api.inductive_of` (per-endpoint obligations give an invariant).
+- **Inputs.** Optional headers (`Header n (Option α)`), `IfMatchRequired` (428), `Now`.
+- **Problems.** `ToProblem.extensions` for problem members.
+- **private-games on typed endpoints.** `PrivateGames/Api.lean` has typed signatures, responses and errors. `api_allValid`, `api_uniqueIds` and `api_freshIds` are proved on it through `Api.inductive_of`, and GET safety is free. The differential test is now three-way (native, reference model, typed API), with mutations exercising every error status.
 
 ## Unreleased: review fixes (docs/reviews/2026-09-23-review-eb67460.md)
 

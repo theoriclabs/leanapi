@@ -14,6 +14,7 @@
   about but is neither covered by its proof nor listed as unproved.
 -/
 import PrivateGames.Model.Shapes
+import PrivateGames.ApiProofs
 import PrivateGames.Model.Existence
 import PrivateGames.Storage.Schema
 import Notes.Shared
@@ -110,6 +111,13 @@ register_property "Domain" "Stored values round-trip (`Cell`, `TimeControl`, `Na
   proved by PrivateGames.Storage.cell_roundtrip, PrivateGames.Storage.timeControl_roundtrip, PrivateGames.Storage.nat_roundtrip
 register_property "Domain" "A stored game that is not `Valid` is a typed error (500 without detail), never a crash"
   checked at "\"stored row that fails validation\""
+
+register_property "Domain" "Typed API (`PrivateGames/Api.lean`): GET and HEAD requests never change the state. Free for every typed API: each GET endpoint carries the proof, checked when it is built"
+  proved by LeanApi.Api.step_safe, PrivateGames.Api.api_reads_safe shape "step"
+register_property "Domain" "Typed API: every stored game is `Valid`, ids are unique, and every id is below `nextGame`, in every reachable state. Per-endpoint obligations computed from the signatures; the writes are steps of the game store, whose writers are the domain decisions"
+  proved by LeanApi.Api.inductive_of, PrivateGames.Api.api_allValid, PrivateGames.Api.api_uniqueIds, PrivateGames.Api.api_freshIds shape "system invariant"
+register_property "Domain" "The typed API answers exactly as the reference model (status, ETag, Location, replay marker, Allow, WWW-Authenticate, body) on random request sequences, including every error status (401, 404, 405, 409, 412, 415, 422, 428)"
+  checked at "`tests/Tests/Differential.lean` \"typed API ≡ model\""
 
 /-! ## 4. Concurrency -/
 
