@@ -72,6 +72,7 @@ def editNote (me : Auth User) (id : Path NoteId) (rev : IfMatch Rev) (edit : Bod
 - private-games is written this way (`PrivateGames/Api.lean`). On the typed API itself:
   - validity and unique ids (`ApiProofs.lean`) rest on the domain's `preserves` theorems;
   - isolation and existence privacy (`ApiIsolation.lean`) come from `Api.noninterference`, with about a hundred lines of per-endpoint obligations.
+- Today the typed API runs over an in-memory state, and the LeanDB service is a separate implementation checked against it. The vision (DESIGN §7.4) is one definition over LeanDB query *values*: read-only by construction, with a pure meaning (`selectSpec`) for the proofs and SQL for production.
 
 ## Error semantics
 

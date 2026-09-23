@@ -56,9 +56,15 @@ def visible (p : PlayerId) (g : Game) : Bool := g.isParticipant p
 And here is one of the endpoints, with the table of all five:
 
 ```lean
+/-- The games `p` may see: the rule above, applied to the store. -/
+def visibleGames (p : PlayerId) (w : World) : List Game := w.games.filter (visible p)
+
 /-- One of my games. Someone else's game is indistinguishable from a missing one. -/
 def readGame (me : Auth PlayerId) (id : Path GameId) :
-    Reads World (Except GameError (Versioned GameView))
+    Reads World (Except GameError (Versioned GameView)) :=
+  fun w => match (visibleGames me.val w).find? (·.id = id.val) with
+    | some g => .ok (Game.versioned g)
+    | none => .error .hidden
 
 def gamesApi : Api World := api! [
   .post "/games"                       openGame,
@@ -67,6 +73,12 @@ def gamesApi : Api World := api! [
   .post "/games/{id:nat}/moves"        playMove,
   .post "/games/{id:nat}/resignation"  resign ]
 ```
+
+Reading `readGame`:
+- `me` is the authenticated player; without valid credentials the request never reaches the function (401).
+- `id` is the `{id}` segment of the path, already decoded and validated as a `GameId`.
+- `Reads World` means the function receives the current state (`w`) and can't change it.
+- It looks only at `visibleGames me.val w`, the caller's own games. A game that doesn't exist and a game that isn't theirs both end in the same `.hidden`, a 404.
 
 There are many ways to get this wrong:
 

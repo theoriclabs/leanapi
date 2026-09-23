@@ -406,6 +406,59 @@ An HTTP call to another service cannot generally be committed atomically with a 
 
 A durable outbox, worker, and receiver-side deduplication are candidate mechanisms. They do not automatically establish exactly-once delivery. Pending, delivered, failed, and retried effects must remain visible in the idempotence contract (Q6).
 
+### 7.4 Vision: queries as values, one API over LeanDB
+
+**The goal:** one API definition that is both what is proved and what runs against the database. Today there are two:
+- The typed API (`PrivateGames/Api.lean`) is written over an in-memory `World` (`Reads World α := World → α`). The proofs are about it.
+- The production service (`App/Service.lean`, `Storage/Repo.lean`) is a separate implementation over LeanDB. A differential test checks that the two answer alike.
+
+That split comes from how `Reads` is defined, not from LeanDB. What the proofs need is:
+1. a read handler provably cannot write;
+2. a pure meaning for what each read returns.
+
+LeanDB already provides both, as long as queries are treated as **values** rather than as `IO` code:
+
+- **Reads are distinguishable by value, not by monad.** `DbM` is `ReaderT Conn (ExceptT DbError IO)` (`LeanDb/Db.lean:142`), and `untrackedSqlite` hands out the raw handle, so a function of type `DbM α` may write. A query value is different: `select ts where' sortBy`, with its plan reified as a `Pred ts` and a `Footprint` of the tables and columns it touches (`Pred.lean:270`). A handler built only from query values is read-only by construction.
+- **What a query returns has a pure meaning.**
+  - `selectSpec` (`Select.lean:153`) defines the result: gather rows from any `Source m`, then filter with the Lean predicate and sort.
+  - `select` pushes `plan.approx` into SQL and re-applies the Lean predicate to what comes back. `approx_sound` proves the pushdown never excludes a row the plan accepts.
+  - The result is therefore `selectSpec` over the database's rows, provided SQLite and the column decoders do their job.
+- **The meaning works over any source.** `selectSpec` is generic over the monad and the source, so the same query can be run against in-memory tables (`m := Id`). That is the pure meaning the proofs need.
+
+**The vision.** Handlers are written against query and write *values*, and are interpreted two ways:
+
+```lean
+def readGame (me : Auth PlayerId) (id : Path GameId) :
+    Reads Games (Except GameError (Versioned GameView)) := do
+  match ← select [Game] (fun g => visible me.val g && g.id == id.val) with
+  | #[g] => return .ok (Game.versioned g)
+  | _ => return .error .hidden
+```
+
+| Interpretation | Reads | Writes | Used for |
+|---|---|---|---|
+| Pure | `selectSpec` over in-memory tables | the write plan's meaning, applied to the tables | proofs: `Api.toSys`, invariants, isolation, idempotence |
+| LeanDB | SQL with pushdown, predicate re-applied | insert, compare-and-swap update, append, delete, in one transaction | production |
+
+What this keeps, and what it adds:
+- **GET never writes** still holds by type: a `Reads` program contains no write constructors.
+- **Invariants** (`Api.inductive_of`) are stated over the database state, with each write plan's meaning as its step.
+- **Isolation** gets a stronger form. Besides the response depending only on `p`'s view, we can prove *restricted logical reads*: every query issued on behalf of `p` has a predicate that implies `visible p`. This is a statement about the `Pred` values, so other players' rows are never even fetched (DESIGN §6.3).
+- **Idempotence** receipts become an ordinary table, written in the same transaction as the change.
+- **One trusted step, owned by the engine.** It replaces per-app native services and per-app differential tests: *executing a query value returns what `selectSpec` says over the current database; executing a write plan does what its meaning says; transactions are serializable.* LeanDB can check this once, with differential tests of `select` against `selectSpec` and of writes against their meaning, rather than every app checking it again.
+
+What has to be true for the two interpretations to answer alike:
+- **Order is part of the value.** `sortBy` belongs to the query. An unordered query must not affect the answer; for example, a lookup by id is order-independent because ids are unique (`api_uniqueIds`). Pagination needs an explicit order.
+- **One snapshot per request.** All of a request's reads and its writes run in one transaction, as a typed endpoint already assumes (the whole request is one atomic step).
+- **Decoding failures are either impossible or modeled.** LeanDB re-validates rows on read (an invalid row is a 500). Proved invariants (`api_allValid`) make that branch unreachable, or the pure interpretation must model it.
+- **The pure meaning is a specification, not a plan.** `selectSpec` over whole tables defines results; LeanDB's planner decides how to compute them.
+
+What it needs:
+- **In LeanAPI:** `Reads`/`Writes` over a query and write-plan signature (a small free structure, so a later query can depend on an earlier result), with the two interpreters above, and the `Handler` laws restated over the pure interpretation.
+- **In LeanDB:** a pure meaning for writes (insert, update, append, delete as functions on table contents; today only reads have one); query values usable outside `DbM`; and an in-memory `Source` for `selectSpec`.
+
+The open choices are in Q13.
+
 ## 8. Proof surface
 
 ### 8.1 Levels of claims
@@ -596,5 +649,6 @@ All questions below were open when this document was written. Provisional answer
 | Q10 | What provides cryptography? | Existing or separate library; native provider versus Lean implementation; algorithms and key handling. Record trust and deployment requirements. |
 | Q11 | What evidence qualifies a guarantee? | Required theorems, proof audits, integration checks, native refinement, mixed coverage, deployment correspondence. Decide how changes to routes, writers, middleware, or specifications invalidate prior evidence. |
 | Q12 | What constitutes a useful v0.1? | Exact HTTP/auth feature matrix (candidate tiers in §5.3), proof requirements, streaming/jobs/realtime scope, compatibility promises, and operational expectations. Do not treat eventual breadth as a chosen first release. |
+| Q13 | How are queries and writes represented so one API definition is both proved and run against LeanDB (§7.4)? | A free monad over LeanDB query values versus an applicative plan (dependent queries need the former); whether "every query for `p` implies `visible p`" is checked on `Pred` values automatically or proved per endpoint; the pure meaning of LeanDB writes; how failures such as decoding errors appear in the pure interpretation; and how the engine-level trusted step (execution ≡ meaning) is evidenced. |
 
 The first implementation should make these choices easier to evaluate. It should not hide them behind defaults that later become accidental semantics.
