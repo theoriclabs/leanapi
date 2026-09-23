@@ -53,6 +53,21 @@ Here is the rule, exactly as it appears in the code:
 def visible (p : PlayerId) (g : Game) : Bool := g.isParticipant p
 ```
 
+And here is one of the endpoints, with the table of all five:
+
+```lean
+/-- One of my games. Someone else's game is indistinguishable from a missing one. -/
+def readGame (me : Auth PlayerId) (id : Path GameId) :
+    Reads World (Except GameError (Versioned GameView))
+
+def gamesApi : Api World := api! [
+  .post "/games"                       openGame,
+  .get  "/games"                       listGames,
+  .get  "/games/{id:nat}"              readGame,
+  .post "/games/{id:nat}/moves"        playMove,
+  .post "/games/{id:nat}/resignation"  resign ]
+```
+
 There are many ways to get this wrong:
 
 - Forget the auth check on one route.
@@ -64,12 +79,12 @@ Tests catch the cases you thought of. In Lean we can prove that **no code path**
 
 ### Property 1: you only ever see your own games
 
-This is the theorem, as it appears in the repository:
+This is the theorem, about the `gamesApi` above:
 
 ```lean
-theorem step_noninterference_caller (r : Req) (p : PlayerId) {w₁ w₂ : World}
-    (h : SameView p w₁ w₂) (hp : authenticate r w₁ = .ok p) :
-    (step r w₁).1 = (step r w₂).1
+theorem api_noninterference (p : PlayerId) (env : Env) (r : Req) {w₁ w₂ : World}
+    (hv : SameView p w₁ w₂) (ha : gamesAuth.authenticate w₁ env r = .ok p) :
+    (gamesApi.step env r w₁).1 = (gamesApi.step env r w₂).1
 ```
 
 In words:
@@ -78,11 +93,19 @@ In words:
 3. They may differ in anything else. Other people's games can be completely different.
 4. Then the **entire HTTP response is identical**: status code, every header, every byte of the body.
 
-So nothing `p` receives can depend on data `p` isn't allowed to see. `step` is the whole request pipeline: routing, authentication, decoding, the domain decision, the database read and the commit. So this covers every route and every branch, including 401, 404, 405, 409 and 412, not just the happy path.
+So nothing `p` receives can depend on data `p` isn't allowed to see. `gamesApi.step` is the whole API: routing, authentication, decoding, the handler and its read or write. So this covers every route and every branch, including 401, 404, 405, 409 and 412, not just the happy path.
 
-Two things follow directly:
-- **A guessed game id is indistinguishable from a missing one.** Both return the same 404 (`existence_private`).
+Most of the proof is the framework's. LeanAPI proves once, for every API written this way, that the response depends only on the caller's view, provided each endpoint meets an obligation it computes from the endpoint's *signature*:
+- inputs that don't read the database (the path, the body, headers) are handled automatically;
+- `Auth` switches the obligation to "what this player can see";
+- what's left for the app is to show each handler body answers alike in two states that look the same to the player.
+
+For the five game endpoints, that's about a hundred lines.
+
+Three things follow directly:
+- **A guessed game id is indistinguishable from a missing one.** Both return the same 404 (`api_existence_private`).
 - **"Deny everyone" isn't a loophole.** A separate theorem proves a player can always read their own games (`read_available`).
+- **GET never changes anything**, and this one is free: every API written this way gets it (`Api.step_safe`). A `GET` endpoint whose handler writes doesn't even compile.
 
 ### Property 2: retrying a request is safe
 
@@ -100,6 +123,8 @@ In words:
 3. Then send `r` again. You get back the recorded response, marked as a replay, and the state doesn't change.
 
 The move is applied exactly once. Reusing the same key with a *different* body is refused (checked by the test suite).
+
+One caveat: this theorem is still proved on the reference model the API grew out of. A test checks that the typed API answers byte for byte like that model on random request sequences. Moving this proof onto the API itself, as Property 1 already is, is next.
 
 ## Writing your own properties
 
@@ -132,13 +157,13 @@ Now introduce an off-by-one: change `<` to `≤`. The **build fails**, and Lean 
 
 No test had to think of the 101st item.
 
-The same tools scale up. In the games example, **every stored game is valid** and **game ids are unique**, in every state the system can reach. Both are proved from the domain's own rules; before, they were only checked at runtime.
+The same tools scale up. For `gamesApi`, **every stored game is valid** and **game ids are unique**, in every state the API can reach. The framework reduces this to one obligation per endpoint, again computed from its signature: nothing for the two `Reads` endpoints, and "this write keeps the invariant" for the three `Writes`. Those are discharged by the domain's own `preserves` theorems. Before, both invariants were only checked at runtime.
 
 ## What exactly is proved
 
 I want to be precise here, because a proof is only as good as its statement.
 
-- **The theorems are about a reference model** of the service. It runs the *same* decision code as the real server, but reads from an in-memory world instead of SQLite. That the real server matches the model is checked by a differential test, not proved.
+- **The theorems are about the API as written**, `gamesApi`: pure functions over an in-memory world. The production server keeps games in SQLite (through LeanDB). That it answers exactly like `gamesApi` is checked by a differential test, which also injects malformed requests to exercise every error status. It is not proved.
 - **Some things are trusted, not proved:** SQLite, the HTTP parser, the crypto library, and the middleware.
 - **The "view" is spelled out.** It includes the next game id, so a new game's id reveals how many games exist. That release is written into the theorem rather than hidden. Timing isn't covered.
 

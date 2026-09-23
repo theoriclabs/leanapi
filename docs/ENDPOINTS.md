@@ -64,10 +64,14 @@ def editNote (me : Auth User) (id : Path NoteId) (rev : IfMatch Rev) (edit : Bod
 - `Handler` carries its laws as proofs, computed by instance resolution:
   - a safe handler never changes the state;
   - `Preserved I h` states what preserving `I` requires of `h`: nothing for `Reads`, "the state function preserves `I`" for `Writes`.
-- Two theorems hold for every typed API:
+  - `Isolated R h` states what isolation requires: every input extracted alike in related states (automatic for inputs that don't read the state), `Auth` narrowing the relation to the actor's view (`ViewOf σ α`), and `Reads`/`Writes` answering alike.
+- Three theorems hold for every typed API:
   - `Api.step_safe`: GET and HEAD never change the state.
   - `Api.inductive_of`: an invariant holds in every reachable state once each endpoint's `Preserved` obligation is discharged.
-- private-games is written this way (`PrivateGames/Api.lean`). Its validity and unique-id invariants are proved on the typed API (`PrivateGames/ApiProofs.lean`), resting on the domain's `preserves` theorems.
+  - `Api.noninterference`: for a request authenticated as `p`, the whole response depends only on `p`'s view, once each endpoint's `Isolated` obligation is discharged.
+- private-games is written this way (`PrivateGames/Api.lean`). On the typed API itself:
+  - validity and unique ids (`ApiProofs.lean`) rest on the domain's `preserves` theorems;
+  - isolation and existence privacy (`ApiIsolation.lean`) come from `Api.noninterference`, with about a hundred lines of per-endpoint obligations.
 
 ## Error semantics
 

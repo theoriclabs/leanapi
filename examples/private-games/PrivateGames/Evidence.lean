@@ -15,6 +15,7 @@
 -/
 import PrivateGames.Model.Shapes
 import PrivateGames.ApiProofs
+import PrivateGames.ApiIsolation
 import PrivateGames.Model.Existence
 import PrivateGames.Storage.Schema
 import Notes.Shared
@@ -60,6 +61,10 @@ register_property "Isolation" "The per-caller claim as a library `NIPackage`, wi
   proved by PrivateGames.Model.gamesNI, LeanApi.Props.NIPackage.acts_nonempty, LeanApi.Props.NIPackage.ok_nontrivial shape "relational"
 register_property "Isolation" "`ReadPlumbing` holds for a concrete request (`GET /games/1` with a bearer token)"
   checked at "`tests/Tests/Props.lean` \"read plumbing\""
+register_property "Isolation" "Typed API: for a request that authenticates as `p`, the complete response depends only on `p`'s view, even if another player's view differs. By the framework's `Api.noninterference` for typed APIs; private-games discharges the per-endpoint obligations computed from its signatures"
+  proved by LeanApi.Api.noninterference, PrivateGames.Api.api_isolated, PrivateGames.Api.api_noninterference shape "relational"
+register_property "Isolation" "Typed API: a game you do not participate in is indistinguishable from a game that does not exist"
+  proved by PrivateGames.Api.api_existence_private shape "relational"
 register_property "Isolation" "Existence privacy: a game you do not participate in is indistinguishable from a game that does not exist"
   proved by PrivateGames.Model.existence_private shape "relational"
 register_property "Isolation" "The native repository puts the policy into the SQL predicate and re-checks it on the decoded row; other user's game ≡ missing id, byte for byte, for read, move and resign"

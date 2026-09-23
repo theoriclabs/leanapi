@@ -172,12 +172,21 @@ def Got.ofDecoded : Decoded α → Got α
   | .ok a => .ok a
   | .error es => .invalid es
 
+/-- A relation between two runs of one request, on the request and the two
+    states: what isolation is stated against. -/
+abbrev Rel (σ : Type) := Env → Req → σ → σ → Prop
+
 /-- How to obtain an input of type `α` from a request, given the state and
     the environment. Pure. Open: apps add their own instances. `kind`
     names the source, for `Api.describe`. -/
 class FromRequest (σ : Type) (α : Type) where
   kind : String
   extract : σ → Env → Req → Got α
+
+/-- Extraction gives the same result in `R`-related states. Holds by `rfl`
+    for every input that does not read the state. -/
+def FromRequest.Stable (R : Rel σ) [F : FromRequest σ α] : Prop :=
+  ∀ env r s₁ s₂, R env r s₁ s₂ → F.extract s₁ env r = F.extract s₂ env r
 
 /-- A record from the query string. -/
 class FromQuery (α : Type) where
@@ -192,6 +201,18 @@ class FromForm (α : Type) where
 class Authenticates (σ : Type) (α : Type) where
   challenge : String
   authenticate : σ → Env → Req → Except AuthFailure α
+  /-- Authentication reads credentials, not the router's path parameters. -/
+  authenticate_params : ∀ s env r ps, authenticate s env { r with params := ps } = authenticate s env r := by
+    intros; rfl
+
+/-- What actor `a` may observe: two states look the same to `a`. Used by
+    `Api.noninterference`. Without an instance, the default makes every
+    difference observable (and so claims nothing). -/
+class ViewOf (σ : Type) (α : Type) where
+  same : α → σ → σ → Prop
+
+instance (priority := low) : ViewOf σ α := ⟨fun _ s₁ s₂ => s₁ = s₂⟩
+
 
 namespace Authenticates
 
@@ -518,6 +539,15 @@ class Handler (σ : Type) (τ : Type) where
       `Reads`; that the state function preserves `I` for `Writes`. -/
   Preserved : (σ → Prop) → τ → Prop
   step_preserved : ∀ I h, Preserved I h → ∀ env r s i, I s → I (step h env r s i).2
+  /-- Every input's extraction is stable under `R`. -/
+  ErrStable : Rel σ → Prop
+  errors_stable : ∀ R, ErrStable R → ∀ env r s₁ s₂ i, R env r s₁ s₂ → errors env r s₁ i = errors env r s₂ i
+  /-- What isolation under `R` requires of a handler of this type. `Auth`
+      narrows `R` to the authenticated actor's view (`ViewOf`); `Reads` and
+      `Writes` require the response to be equal in related states. -/
+  Isolated : Rel σ → τ → Prop
+  step_isolated : ∀ R h, Isolated R h → ∀ env r s₁ s₂ i, R env r s₁ s₂ →
+    (step h env r s₁ i).1 = (step h env r s₂ i).1
 
 /-- The `i`th path parameter, decoded. -/
 def pathAt [FromParam α] (r : Req) (i : Nat) : Decoded α :=
@@ -547,18 +577,26 @@ instance [FromParam α] [H : Handler σ β] : Handler σ (Path α → β) where
     split
     · exact H.step_preserved I _ (hp _) env r s _ hs
     · exact hs
+  ErrStable R := H.ErrStable R
+  errors_stable R hR env r s₁ s₂ i h := by
+    rw [H.errors_stable R hR env r s₁ s₂ (i + 1) h]
+  Isolated R f := H.ErrStable R ∧ ∀ a, H.Isolated R (f ⟨a⟩)
+  step_isolated R f hI env r s₁ s₂ i h := by
+    cases pathAt (α := α) r i with
+    | ok a => exact H.step_isolated R _ (hI.2 a) env r s₁ s₂ _ h
+    | error es => simp only [H.errors_stable R hI.1 env r s₁ s₂ (i + 1) h]
 
-instance (priority := low) [R : FromRequest σ α] [H : Handler σ β] : Handler σ (α → β) where
+instance (priority := low) [R' : FromRequest σ α] [H : Handler σ β] : Handler σ (α → β) where
   effect := H.effect
   pathArity := H.pathArity
-  inputs := R.kind :: H.inputs
+  inputs := R'.kind :: H.inputs
   step f env r s i :=
-    match R.extract s env r with
+    match R'.extract s env r with
     | .ok a => H.step (f a) env r s i
     | .invalid es => (validationRes (es ++ H.errors env r s i), s)
     | .reject res => (res, s)
   errors env r s i :=
-    (match R.extract s env r with | .invalid es => es | _ => []) ++ H.errors env r s i
+    (match R'.extract s env r with | .invalid es => es | _ => []) ++ H.errors env r s i
   step_safe hs f env r s i := by
     split
     · exact H.step_safe hs _ env r s _
@@ -570,6 +608,51 @@ instance (priority := low) [R : FromRequest σ α] [H : Handler σ β] : Handler
     · exact H.step_preserved I _ (hp _) env r s _ hs
     · exact hs
     · exact hs
+  ErrStable R := FromRequest.Stable (α := α) R ∧ H.ErrStable R
+  errors_stable R hR env r s₁ s₂ i h := by
+    rw [hR.1 env r s₁ s₂ h, H.errors_stable R hR.2 env r s₁ s₂ i h]
+  Isolated R f := FromRequest.Stable (α := α) R ∧ H.ErrStable R ∧ ∀ a, H.Isolated R (f a)
+  step_isolated R f hI env r s₁ s₂ i h := by
+    rw [← hI.1 env r s₁ s₂ h]
+    cases R'.extract s₁ env r with
+    | ok a => exact H.step_isolated R _ (hI.2.2 a) env r s₁ s₂ _ h
+    | invalid es => simp only [H.errors_stable R hI.2.1 env r s₁ s₂ i h]
+    | reject res => rfl
+
+/-- `Auth α → β`: authenticate, then run `β` with the actor. For isolation,
+    the relation narrows to what the authenticated actor may see. -/
+instance [A : Authenticates σ α] [V : ViewOf σ α] [H : Handler σ β] : Handler σ (Auth α → β) where
+  effect := H.effect
+  pathArity := H.pathArity
+  inputs := "auth" :: H.inputs
+  step f env r s i :=
+    match A.authenticate s env r with
+    | .ok who => H.step (f ⟨who⟩) env r s i
+    | .error .missing => (unauthorized A.challenge, s)
+    | .error (.invalid _) => (unauthorized A.challenge "invalid credentials", s)
+  errors env r s i := H.errors env r s i
+  step_safe hs f env r s i := by
+    split
+    · exact H.step_safe hs _ env r s _
+    · rfl
+    · rfl
+  Preserved I f := ∀ a, H.Preserved I (f ⟨a⟩)
+  step_preserved I f hp env r s i hs := by
+    split
+    · exact H.step_preserved I _ (hp _) env r s _ hs
+    · exact hs
+    · exact hs
+  ErrStable R := H.ErrStable R
+  errors_stable R hR env r s₁ s₂ i h := H.errors_stable R hR env r s₁ s₂ i h
+  Isolated R f :=
+    (∀ env r s₁ s₂, R env r s₁ s₂ → A.authenticate s₁ env r = A.authenticate s₂ env r) ∧
+    (∀ env r s₁ s₂ a, R env r s₁ s₂ → A.authenticate s₁ env r = .ok a → V.same a s₁ s₂) ∧
+    ∀ a, H.Isolated (fun env r s₁ s₂ => R env r s₁ s₂ ∧ V.same a s₁ s₂) (f ⟨a⟩)
+  step_isolated R f hI env r s₁ s₂ i h := by
+    rw [← hI.1 env r s₁ s₂ h]
+    cases ha : A.authenticate s₁ env r with
+    | ok a => exact H.step_isolated _ _ (hI.2.2 a) env r s₁ s₂ _ ⟨h, hI.2.1 env r s₁ s₂ a h ha⟩
+    | error e => cases e <;> rfl
 
 instance [ToResponse ρ] : Handler σ (Reads σ ρ) where
   effect := .reads
@@ -580,6 +663,10 @@ instance [ToResponse ρ] : Handler σ (Reads σ ρ) where
   step_safe _ _ _ _ _ _ := rfl
   Preserved _ _ := True
   step_preserved _ _ _ _ _ _ _ hs := hs
+  ErrStable _ := True
+  errors_stable _ _ _ _ _ _ _ _ := rfl
+  Isolated R f := ∀ env r s₁ s₂, R env r s₁ s₂ → ToResponse.toRes (f s₁) = ToResponse.toRes (f s₂)
+  step_isolated _ _ hI env r s₁ s₂ _ h := hI env r s₁ s₂ h
 
 instance [ToResponse ρ] : Handler σ (Writes σ ρ) where
   effect := .writes
@@ -590,6 +677,10 @@ instance [ToResponse ρ] : Handler σ (Writes σ ρ) where
   step_safe h := h.elim
   Preserved I f := ∀ s, I s → I (f s).1
   step_preserved _ _ hp _ _ s _ hs := hp s hs
+  ErrStable _ := True
+  errors_stable _ _ _ _ _ _ _ _ := rfl
+  Isolated R f := ∀ env r s₁ s₂, R env r s₁ s₂ → ToResponse.toRes (f s₁).2 = ToResponse.toRes (f s₂).2
+  step_isolated _ _ hI env r s₁ s₂ _ h := hI env r s₁ s₂ h
 
 /-- A pure answer. -/
 instance (priority := low) [ToResponse ρ] : Handler σ ρ where
@@ -601,6 +692,10 @@ instance (priority := low) [ToResponse ρ] : Handler σ ρ where
   step_safe _ _ _ _ _ _ := rfl
   Preserved _ _ := True
   step_preserved _ _ _ _ _ _ _ hs := hs
+  ErrStable _ := True
+  errors_stable _ _ _ _ _ _ _ _ := rfl
+  Isolated _ _ := True
+  step_isolated _ _ _ _ _ _ _ _ _ := rfl
 
 /-! ## Endpoints -/
 
@@ -624,6 +719,9 @@ structure Endpoint (σ : Type) where
   /-- The obligation for preserving `I`, computed from the signature. -/
   Preserved : (σ → Prop) → Prop
   step_preserved : ∀ I, Preserved I → ∀ env r s, I s → I (step env r s).2
+  /-- The isolation obligation under `R`, computed from the signature. -/
+  Isolated : Rel σ → Prop
+  step_isolated : ∀ R, Isolated R → ∀ env r s₁ s₂, R env r s₁ s₂ → (step env r s₁).1 = (step env r s₂).1
 
 namespace Endpoint
 
@@ -640,6 +738,8 @@ def make {σ τ : Type} (m : Method) (t : String) (h : τ) [H : Handler σ τ]
   step_safe hm env r s := H.step_safe (hsafe hm) h env r s 0
   Preserved I := H.Preserved I h
   step_preserved I hp env r s hs := H.step_preserved I h hp env r s 0 hs
+  Isolated R := H.Isolated R h
+  step_isolated R hI env r s₁ s₂ hR := H.step_isolated R h hI env r s₁ s₂ 0 hR
 
 /-- Fails with a readable message when a safe method's handler can change
     state. -/
@@ -796,6 +896,23 @@ theorem inductive_of (api : Api σ) {init : σ → Prop} {I : σ → Prop} (hini
   · exact hs
   · rename_i e ps hr
     exact e.step_preserved I (hp _ (resolveIn_route hr).1) env _ s hs
+
+/-- **Isolation for typed APIs.** For a request authenticated as `p`, the
+    whole response depends only on what `p` may see (`ViewOf`), provided
+    each endpoint discharges its `Isolated` obligation, computed from its
+    signature. Routing does not read the state; every input is extracted
+    the same way in both states; after `Auth`, the handler body only has to
+    answer alike in states that look the same to the actor. -/
+theorem noninterference [A : Authenticates σ α] [V : ViewOf σ α] (api : Api σ) (p : α)
+    (hiso : ∀ e ∈ api, e.Isolated fun env r s₁ s₂ => V.same p s₁ s₂ ∧ A.authenticate s₁ env r = .ok p)
+    (env : Env) (r : Req) {s₁ s₂ : σ} (hv : V.same p s₁ s₂) (ha : A.authenticate s₁ env r = .ok p) :
+    (api.step env r s₁).1 = (api.step env r s₂).1 := by
+  unfold step
+  split
+  · rfl
+  · rename_i e ps hr
+    exact e.step_isolated _ (hiso e (resolveIn_route hr).1) env _ s₁ s₂
+      ⟨hv, by rw [A.authenticate_params]; exact ha⟩
 
 end Api
 

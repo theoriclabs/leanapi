@@ -28,6 +28,7 @@
   - For every typed API: `Api.step_safe` (GET/HEAD never change state) and `Api.inductive_of` (per-endpoint obligations give an invariant).
 - **Inputs.** Optional headers (`Header n (Option α)`), `IfMatchRequired` (428), `Now`.
 - **Problems.** `ToProblem.extensions` for problem members.
+- **Isolation for typed APIs.** `Handler` computes an `Isolated` obligation from the signature, where `Auth` narrows the relation to the actor's view (`ViewOf σ α`). `Api.noninterference` proves, for every typed API, that a request authenticated as `p` gets a response depending only on `p`'s view. private-games: `api_noninterference` and `api_existence_private` on the typed API.
 - **private-games on typed endpoints.** `PrivateGames/Api.lean` has typed signatures, responses and errors. `api_allValid`, `api_uniqueIds` and `api_freshIds` are proved on it through `Api.inductive_of`, and GET safety is free. The differential test is now three-way (native, reference model, typed API), with mutations exercising every error status.
 
 ## Unreleased: review fixes (docs/reviews/2026-09-23-review-eb67460.md)

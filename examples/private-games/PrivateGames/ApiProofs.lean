@@ -126,11 +126,11 @@ theorem api_preserved : ∀ e ∈ gamesApi, e.Preserved (fun w => StoreInv (toSt
   intro e he
   simp only [gamesApi, List.mem_cons, List.not_mem_nil, or_false] at he
   rcases he with rfl | rfl | rfl | rfl | rfl
-  · exact fun me body key w hi => (openGame_storeStep me body key w).preserves hi
+  · exact fun me body key w hi => (openGame_storeStep ⟨me⟩ body key w).preserves hi
   · exact fun _ _ => trivial
   · exact fun _ _ => trivial
-  · exact fun me rev body id key w hi => (playMove_storeStep me rev body ⟨id⟩ key w).preserves hi
-  · exact fun me id key w hi => (resign_storeStep me ⟨id⟩ key w).preserves hi
+  · exact fun me rev body id key w hi => (playMove_storeStep ⟨me⟩ rev body ⟨id⟩ key w).preserves hi
+  · exact fun me id key w hi => (resign_storeStep ⟨me⟩ ⟨id⟩ key w).preserves hi
 
 theorem api_inductive : Inductive apiSys (fun w => StoreInv (toStore w)) :=
   Api.inductive_of gamesApi (fun w hw => storeInv_inductive.init _ hw) api_preserved

@@ -12,7 +12,7 @@
   `recordReceipt`, `keyedFor`). The differential test checks that this API,
   the reference model and the native LeanDB service answer alike.
 -/
-import PrivateGames.Model.Step
+import PrivateGames.Model.Isolation
 
 namespace PrivateGames.Api
 
@@ -20,8 +20,12 @@ open LeanApi Lean PrivateGames PrivateGames.App PrivateGames.Model
 
 /-! ## Actors -/
 
-instance : Authenticates World PlayerId :=
+instance gamesAuth : Authenticates World PlayerId :=
   .sessions (fun w t => w.sessions.lookup (Tokens.digest t)) (realm := "games")
+
+/-- What a player may see: `Model.SameView` (sessions, their visible games in
+    order, their own receipts, player ids, the next id). -/
+instance gamesView : ViewOf World PlayerId := ⟨SameView⟩
 
 /-! ## Inputs -/
 
@@ -141,6 +145,12 @@ inductive Decided (α : Type) where
   | refuse (e : GameError)
   | answer (a : α)
   | write (w : World) (a : α)
+
+/-- The answer of a decision, without the new store. -/
+def Decided.result : Decided α → Except GameError α
+  | .refuse e => .error e
+  | .answer a => .ok a
+  | .write _ a => .ok a
 
 /-- A keyed write: replay the recorded answer, refuse a reused key, or
     decide. A write is recorded with its answer, in the same step. -/

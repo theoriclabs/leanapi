@@ -155,3 +155,9 @@ PrivateGames.ApiProofs PrivateGames.Api.api_allValid
 PrivateGames.ApiProofs PrivateGames.Api.api_uniqueIds
 PrivateGames.ApiProofs PrivateGames.Api.api_freshIds
 PrivateGames.ApiProofs PrivateGames.Api.api_preserved
+# Isolation for typed APIs: framework theorem and private-games on typed endpoints
+LeanApi.Http.Endpoint LeanApi.Api.noninterference
+PrivateGames.ApiIsolation PrivateGames.Api.api_isolated
+PrivateGames.ApiIsolation PrivateGames.Api.api_noninterference
+PrivateGames.ApiIsolation PrivateGames.Api.api_existence_private
+PrivateGames.ApiIsolation PrivateGames.Api.keyed_answer
