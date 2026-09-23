@@ -200,51 +200,64 @@ def build! (rs : List Route) (trailingSlash : TrailingSlash := .redirect) : Rout
   | .ok r => r
   | .error e => panic! e
 
-/-- Routes whose pattern matches the path, most precise first. -/
-def candidates (r : Router) (path : List String) : List (CompiledRoute × List (String × String)) :=
-  let ms := r.routes.toList.filterMap fun c => (matchSegs c.segs path).map (c, ·)
-  ms.mergeSort fun a b => morePrecise a.1.segs b.1.segs || a.1.segs == b.1.segs
+/-- What resolution decided for a request head: a table entry and its
+    path parameters, or a response (400, 404, 405, 308, OPTIONS 204). -/
+inductive Resolution (ρ : Type) where
+  | route (r : ρ) (params : List (String × String))
+  | respond (res : Res)
 
-def methodsFor (r : Router) (path : List String) : List Method :=
-  let ms := (r.candidates path).map (·.1.route.method)
+instance : Inhabited (Resolution ρ) := ⟨.respond {}⟩
+
+/-- Entries whose pattern matches the path, most precise first. -/
+def candidatesIn (entries : List (ρ × Method × List Seg)) (path : List String) :
+    List ((ρ × Method × List Seg) × List (String × String)) :=
+  let ms := entries.filterMap fun e => (matchSegs e.2.2 path).map (e, ·)
+  ms.mergeSort fun a b => morePrecise a.1.2.2 b.1.2.2 || a.1.2.2 == b.1.2.2
+
+def methodsIn (entries : List (ρ × Method × List Seg)) (path : List String) : List Method :=
+  let ms := (candidatesIn entries path).map (·.1.2.1)
   let ms := if ms.contains .get && !ms.contains .head then ms ++ [.head] else ms
   let ms := if ms.contains .options then ms else ms ++ [.options]
   Method.all.filter ms.contains
 
-/-- What the router decided for a request head. -/
-inductive Resolution where
-  | route (c : CompiledRoute) (params : List (String × String))
-  | respond (res : Res)
-
-instance : Inhabited Resolution := ⟨.respond {}⟩
-
 private def allowHeader (ms : List Method) : String := ", ".intercalate (ms.map toString)
 
-/-- Pick the route for a request; independent of the body. -/
-def resolve (r : Router) (req : Req) : Resolution :=
+/-- Route resolution over any table of `(entry, method, pattern)`. Pure and
+    independent of the body. The native `Router` and the reference model of
+    proved routes (`LeanApi.Operation`) both resolve through this function. -/
+def resolveIn (entries : List (ρ × Method × List Seg)) (ts : TrailingSlash) (req : Req) : Resolution ρ :=
   if req.path.any (fun s => s == "." || s == "..") then
     .respond (Problem.badRequest "dot segments are not allowed in paths").toRes
   else
-  let useSlash := req.trailingSlash && r.trailingSlash != .ignore
-  if useSlash then
-    if r.trailingSlash == .redirect && (req.method == .get || req.method == .head)
-        && !(r.candidates req.path).isEmpty then
+  if req.trailingSlash && ts != .ignore then
+    if ts == .redirect && (req.method == .get || req.method == .head)
+        && !(candidatesIn entries req.path).isEmpty then
       let q := if req.query.isEmpty then "" else
         "?" ++ "&".intercalate (req.query.map fun (k, v) => Url.percentEncode k ++ "=" ++ Url.percentEncode v)
       .respond (Res.redirect ({ req with trailingSlash := false }.pathString ++ q) 308)
     else .respond Problem.notFound.toRes
   else
-  let cs := r.candidates req.path
+  let cs := candidatesIn entries req.path
   if cs.isEmpty then .respond Problem.notFound.toRes else
-  match cs.find? (·.1.route.method == req.method) with
-  | some (c, ps) => .route c ps
+  match cs.find? (·.1.2.1 == req.method) with
+  | some (e, ps) => .route e.1 ps
   | none =>
-    match req.method, cs.find? (·.1.route.method == .get) with
-    | .head, some (c, ps) => .route c ps
+    match req.method, cs.find? (·.1.2.1 == .get) with
+    | .head, some (e, ps) => .route e.1 ps
     | .options, _ =>
-        .respond ((Res.empty 204).setHeader "allow" (allowHeader (r.methodsFor req.path)))
+        .respond ((Res.empty 204).setHeader "allow" (allowHeader (methodsIn entries req.path)))
     | _, _ =>
-        .respond ((Problem.make 405).withHeader "allow" (allowHeader (r.methodsFor req.path))).toRes
+        .respond ((Problem.make 405).withHeader "allow" (allowHeader (methodsIn entries req.path))).toRes
+
+def entries (r : Router) : List (CompiledRoute × Method × List Seg) :=
+  r.routes.toList.map fun c => (c, c.route.method, c.segs)
+
+def candidates (r : Router) (path : List String) : List (CompiledRoute × List (String × String)) :=
+  (candidatesIn r.entries path).map fun (e, ps) => (e.1, ps)
+
+def methodsFor (r : Router) (path : List String) : List Method := methodsIn r.entries path
+
+def resolve (r : Router) (req : Req) : Resolution CompiledRoute := resolveIn r.entries r.trailingSlash req
 
 /-- Body limit for the request's route (the edge reads at most this much).
     `none` for unrouted requests: their body is never read, and the router

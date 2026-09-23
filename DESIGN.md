@@ -565,7 +565,16 @@ A useful milestone is a small application whose behavior, guarantees, and limits
 
 ## 12. Open questions
 
-All questions below are unresolved. An answer should include the resulting changes to semantics and proof scope.
+All questions below were open when this document was written. Provisional answers are recorded as decision records in [docs/decisions/](docs/decisions/README.md); the table below links them. An answer should include the resulting changes to semantics and proof scope.
+
+| ID | Provisional answer | Record |
+|---|---|---|
+| Q1 | Pure decision cores in a thin framework shell over a scoped repository; plain `IO` handlers stay available outside the proved set | [0005](docs/decisions/0005-q1-execution-model.md) |
+| Q2 | Proof fields for decidable bounds, one smart constructor per value shared by HTTP and storage, round-trip laws per value | [0006](docs/decisions/0006-q2-value-representation.md) |
+| Q3 | State-based aggregate with a revision that counts transitions | [0007](docs/decisions/0007-q3-state-storage.md) |
+| Q8 | Middleware is trusted adapter code (v0.1) | [0001](docs/decisions/0001-q8-middleware-v01.md) |
+| Q9 | LeanAPI provides mechanisms; accounts belong to the app | [0003](docs/decisions/0003-authenticator-contract.md), [0004](docs/decisions/0004-q9-auth-mechanisms.md) |
+| Q10 | Separate leancrypto library over OpenSSL 3 FFI; pure-Lean encodings | [0002](docs/decisions/0002-q10-crypto.md) |
 
 | ID | Question | Choices and consequences to investigate |
 |---|---|---|

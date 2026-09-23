@@ -11,6 +11,12 @@ path = "../leancrypto"
 # Toolchain pinned to leanprover/lean4:v4.33.0 (see lean-toolchain), matching
 # LeanDB 0.4.0, leanhttp and leanws. Bump in lockstep.
 
+# Persistence (M4). Pinned by tag, matching the toolchain.
+[[require]]
+name = "leandb"
+git = "https://github.com/theoriclabs/LeanDB"
+rev = "v0.4.0"
+
 [[lean_lib]]
 name = "LeanApi"
 
@@ -23,6 +29,11 @@ globs = ["Notes.+"]
 name = "notes"
 srcDir = "examples/notes"
 root = "NotesMain"
+
+[[lean_lib]]
+name = "PrivateGames"
+srcDir = "examples/private-games"
+globs = ["PrivateGames.+"]
 
 [[lean_lib]]
 name = "Tests"

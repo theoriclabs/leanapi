@@ -1,1 +1,20 @@
-# module theorem   (one per line; populated from M3 on)
+# module theorem   (one per line)
+# M3: domain
+PrivateGames.Domain.Proofs PrivateGames.playMove_valid
+PrivateGames.Domain.Proofs PrivateGames.playMove_allowed
+PrivateGames.Domain.Proofs PrivateGames.playMove_transition
+PrivateGames.Domain.Proofs PrivateGames.resign_valid
+PrivateGames.Domain.Proofs PrivateGames.resign_allowed
+PrivateGames.Domain.Proofs PrivateGames.resign_transition
+PrivateGames.Domain.Proofs PrivateGames.resign_idem
+PrivateGames.Domain.Proofs PrivateGames.resign_resign
+PrivateGames.Domain.Proofs PrivateGames.openGame_valid
+PrivateGames.Domain.Proofs PrivateGames.decide_valid
+PrivateGames.Domain.Proofs PrivateGames.decide_nonparticipant
+PrivateGames.Domain.Game PrivateGames.validB_iff
+PrivateGames.Domain.Values PrivateGames.Cell.make_i
+PrivateGames.Domain.Values PrivateGames.TimeControl.make_minutes
+# M3: execution spike
+PrivateGames.Spike.Shell PrivateGames.Spike.Shell.playMoveCore_participant
+PrivateGames.Spike.Shell PrivateGames.Spike.Shell.listMine_visible
+PrivateGames.Spike.Effects PrivateGames.Spike.Effects.reads_visible

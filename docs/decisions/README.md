@@ -10,3 +10,6 @@ may revise it; the revision gets a new record that supersedes the old one.
 | [0002](0002-q10-crypto.md) | Q10 cryptography provider | Accepted (M2) |
 | [0003](0003-authenticator-contract.md) | Authenticator contract (part of Q9) | Accepted (M1) |
 | [0004](0004-q9-auth-mechanisms.md) | Q9 mechanisms vs accounts | Accepted (M2) |
+| [0005](0005-q1-execution-model.md) | Q1 execution model | Accepted, provisional (M3) |
+| [0006](0006-q2-value-representation.md) | Q2 valid values | Accepted, provisional (M3) |
+| [0007](0007-q3-state-storage.md) | Q3 unit of state | Accepted, provisional (M3) |
