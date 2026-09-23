@@ -373,14 +373,55 @@ theorem commit_viewC {C : List PlayerId} {q : PlayerId} (hq : q ∈ C) (wr : Wri
       rw [filter_map_replace _ old new _ hf, filter_map_replace _ old new _ hf, h.games]
     · exact h
 
-/-- Requests that authenticate as a member of `C`, or as no one. -/
-def ByCoalition (C : List PlayerId) (r : Req) : Prop :=
-  ∀ w op ps q, Router.resolveIn entries .redirect r = .route op ps →
+/-- Under session table `sess`, the request authenticates as a member of
+    `C` or as no one. Scoped to the session table (which no proved route
+    changes, `step_sessions`), not to every conceivable world: otherwise
+    some world would map the token to an outsider and the premise would be
+    unsatisfiable for every authenticated request. -/
+def ByCoalition (C : List PlayerId) (sess : List (String × PlayerId)) (r : Req) : Prop :=
+  ∀ w op ps q, w.sessions = sess → Router.resolveIn entries .redirect r = .route op ps →
     authenticate { r with params := ps } w = .ok q → q ∈ C
+
+theorem authenticate_params (r : Req) (ps : List (String × String)) (w : World) :
+    authenticate { r with params := ps } w = authenticate r w := by
+  simp [authenticate, authDigest, Req.header?, bearerToken?]
+
+/-- `ByCoalition` is satisfiable: a request that authenticates as a member
+    is by the coalition. -/
+theorem byCoalition_of_auth {C : List PlayerId} {r : Req} {w : World} {p : PlayerId}
+    (ha : authenticate r w = .ok p) (hp : p ∈ C) : ByCoalition C w.sessions r := by
+  intro w' op ps q hs _ hq
+  rw [authenticate_params, authenticate_view hs, ha] at hq
+  cases hq; exact hp
+
+/-- No proved route changes the session table. -/
+theorem step_sessions (r : Req) (w : World) : (step r w).2.sessions = w.sessions := by
+  unfold step
+  cases Router.resolveIn entries .redirect r with
+  | respond _ => rfl
+  | route op ps =>
+    simp only [operate]
+    cases authenticate { r with params := ps } w with
+    | error _ => rfl
+    | ok q =>
+      simp only
+      cases decode op { r with params := ps } with
+      | error _ => rfl
+      | ok i =>
+        simp only
+        cases core q i (load q w i.need) with
+        | respond _ => rfl
+        | write wr k b =>
+          cases wr with
+          | insertGame g => simp only [runPlan, commit]; exact (record_fields _ _ _ _).1
+          | updateGame old new =>
+            simp only [runPlan, commit]; split
+            · exact (record_fields _ _ _ _).1
+            · rfl
 
 /-- **Unwinding for a coalition.** Any request by a member of `C` (or by
     no one) preserves the coalition's view relation. -/
-theorem step_viewC {C : List PlayerId} {r : Req} (hr : ByCoalition C r) {w₁ w₂ : World}
+theorem step_viewC {C : List PlayerId} {r : Req} {w₁ w₂ : World} (hr : ByCoalition C w₁.sessions r)
     (h : SameViewC C w₁ w₂) : SameViewC C (step r w₁).2 (step r w₂).2 := by
   unfold step
   cases hroute : Router.resolveIn entries .redirect r with
@@ -391,7 +432,7 @@ theorem step_viewC {C : List PlayerId} {r : Req} (hr : ByCoalition C r) {w₁ w�
     cases hauth : authenticate { r with params := ps } w₂ with
     | error _ => exact h
     | ok q =>
-      have hq := hr w₂ op ps q hroute hauth
+      have hq := hr w₂ op ps q h.sessions.symm hroute hauth
       simp only
       cases decode op { r with params := ps } with
       | error _ => exact h
@@ -402,35 +443,41 @@ theorem step_viewC {C : List PlayerId} {r : Req} (hr : ByCoalition C r) {w₁ w�
         | respond _ => exact h
         | write wr k b => exact commit_viewC hq wr k b h
 
-/-- **Successor view for one caller** (the EVIDENCE open item): a request
-    by `p` alone preserves `SameView p`, even when other players' views
-    differ. -/
-theorem step_view_caller {p : PlayerId} {r : Req} (hr : ByCoalition [p] r) {w₁ w₂ : World}
-    (h : SameView p w₁ w₂) : SameViewC [p] (step r w₁).2 (step r w₂).2 :=
-  step_viewC hr h.coalition
+/-- **Successor view for one caller** (an EVIDENCE open item): a request
+    that authenticates as `p` preserves `p`'s view, even when other
+    players' views differ. -/
+theorem step_view_caller {p : PlayerId} {r : Req} {w₁ w₂ : World} (ha : authenticate r w₁ = .ok p)
+    (h : SameView p w₁ w₂) : SameView p (step r w₁).2 (step r w₂).2 :=
+  (step_viewC (byCoalition_of_auth ha (List.mem_singleton_self p)) h.coalition).member
+    (List.mem_singleton_self p)
 
 def runReqs : List Req → World → World
   | [], w => w
   | r :: rs, w => runReqs rs (step r w).2
 
-theorem runReqs_viewC {C : List PlayerId} (rs : List Req) (hrs : ∀ r ∈ rs, ByCoalition C r)
-    {w₁ w₂ : World} (h : SameViewC C w₁ w₂) : SameViewC C (runReqs rs w₁) (runReqs rs w₂) := by
+theorem runReqs_viewC {C : List PlayerId} (sess : List (String × PlayerId)) (rs : List Req)
+    (hrs : ∀ r ∈ rs, ByCoalition C sess r) {w₁ w₂ : World} (hs : w₁.sessions = sess)
+    (h : SameViewC C w₁ w₂) : SameViewC C (runReqs rs w₁) (runReqs rs w₂) := by
   induction rs generalizing w₁ w₂ with
   | nil => exact h
   | cons r rs ih =>
-    exact ih (fun r' h' => hrs r' (List.mem_cons_of_mem _ h')) (step_viewC (hrs r List.mem_cons_self) h)
+    exact ih (fun r' h' => hrs r' (List.mem_cons_of_mem _ h')) (by rw [step_sessions]; exact hs)
+      (step_viewC (hs ▸ hrs r List.mem_cons_self) h)
 
 /-- **Trace noninterference for several actors.** Two worlds that agree on
     everything a coalition `C` can see, run through the same sequence of
     requests from members of `C` (interleaved in any order): every member's
     response at the end is the same in both. Games no member participates
     in, and other players' receipts, may differ arbitrarily and are never
-    revealed, however many requests the coalition sends. -/
-theorem trace_noninterference {C : List PlayerId} (rs : List Req) (hrs : ∀ r ∈ rs, ByCoalition C r)
-    {p : PlayerId} (hp : p ∈ C) (r : Req) {w₁ w₂ : World} (h : SameViewC C w₁ w₂)
+    revealed, however many requests the coalition sends. Requests by
+    players outside `C` are excluded: they can legitimately change what `C`
+    sees (an outsider opens a game with a member). -/
+theorem trace_noninterference {C : List PlayerId} (rs : List Req) {w₁ w₂ : World}
+    (hrs : ∀ r ∈ rs, ByCoalition C w₁.sessions r)
+    {p : PlayerId} (hp : p ∈ C) (r : Req) (h : SameViewC C w₁ w₂)
     (ha : gamesApp.AuthenticatesAs r (runReqs rs w₁) p) :
     (step r (runReqs rs w₁)).1 = (step r (runReqs rs w₂)).1 := by
-  have hv := (runReqs_viewC rs hrs h).member hp
+  have hv := (runReqs_viewC w₁.sessions rs hrs rfl h).member hp
   have := generic_isolation_caller r p hv ha
   have e : ∀ w : World, (gamesApp.step r w).1 = (Model.step r w).1 := by
     intro w

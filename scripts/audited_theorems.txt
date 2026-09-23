@@ -132,3 +132,5 @@ PrivateGames.Model.Shapes PrivateGames.Model.step_view_caller
 PrivateGames.Model.Shapes PrivateGames.Model.trace_noninterference
 PrivateGames.Model.Shapes PrivateGames.Model.gamesKeyed_replay_after
 PrivateGames.Model.Shapes PrivateGames.Model.gamesKeyed_reuse
+PrivateGames.Model.Shapes PrivateGames.Model.step_sessions
+PrivateGames.Model.Shapes PrivateGames.Model.byCoalition_of_auth
