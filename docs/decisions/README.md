@@ -24,3 +24,4 @@ may revise it; the revision gets a new record that supersedes the old one.
 | [0016](0016-p1-one-signature.md) | P1 one signature or several | Accepted, provisional (M8) |
 | [0017](0017-p2-p7-authoring.md) | P2 automation, P6 app properties, P7 runtime checks | Accepted, provisional (M9) |
 | [0018](0018-p3-vacuity-search.md) | P3 vacuity checks: search vs proof | Accepted, provisional (M10) |
+| [0019](0019-p4-p5-traces-declassification.md) | P4 traces and time, P5 declassification | Accepted, provisional (M12) |

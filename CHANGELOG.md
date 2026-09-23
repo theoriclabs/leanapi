@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.6.0 (M8–M12): the property library
+
+`LeanApi.Props` (docs/PROPERTIES.md). All theorems below are in
+`scripts/audited_theorems.txt` (125 theorems, no `sorry`, no extra axioms).
+
+- **Kernel (M8).** `Sys`, `Reachable`, `Invariant`, `Inductive`,
+  `Invariant.of_inductive`; the operator algebra with proved rules
+  (conjunction and its relative form, disjunction, indexed forms with the
+  frame-based local rule, pullback along a `Simulation`, union of writers);
+  `Inductive.restrict`; `pre`, `WeakestInductive`, `invariant_iff`, `CTI`.
+  `ListStore` lifts entity invariants to a store and proves unique ids with
+  the `Fresh` strengthening. `ScopedApp.toSys` bridges existing apps
+  (decision 0016).
+- **private-games system invariants**, previously only runtime checks:
+  every stored game is `Valid` (`allValid`) and game ids are unique
+  (`uniqueIds`, with `freshIds`), in every reachable model world.
+- **Authoring (M9).** `invariant` generates the `Prop`, the runtime check
+  naming failing fields, `check_iff` and a `Decidable` instance;
+  `proof_only` fields; `preserves` generates one theorem per decision and
+  proves the routine cases with `invariant_cases`, printing the rest by
+  field. `StoredInvariant` makes the storage check the generated one
+  (decision 0017). private-games `Valid` migrated; `validB`, `resignedOk`,
+  `validB_iff` removed. README examples are compiled in CI.
+- **Check before proving (M10).** `Enumerate` with a deriving handler that
+  supports proof fields; `#check_invariant` (vacuity, counterexamples to
+  induction with reachability, `I ∧ pre I`, a `List` representation
+  warning); hiddenness witnesses (`checkHidden`). Plausible was evaluated
+  and not adopted (decision 0018).
+- **Registry and evidence (M11).** `register_property`,
+  `register_invariant`, `declare_writer`, `#properties`,
+  `#evidence_tables`, `#check_writer_coverage`. A proved claim is refused
+  unless its theorems pass the axiom rule. EVIDENCE.md's claim tables are
+  generated (`scripts/gen_evidence.sh`, `--check` in CI).
+- **Other shapes (M12).** `Safe` (discharged from the plan type by
+  `ScopedApp.safe_of_pure_plans`), `StepProp`/`Monotone`/`Frame` with the
+  transition-augmented system, `Enabled`, `Observation`/`NI`/`Hidden`/
+  `NIPackage`, trace NI by unwinding, and the `Keyed` transformer with
+  `LedgerLaws`. private-games: move logs only grow (`movesGrow`); one
+  caller's successor view is preserved (`step_view_caller`); trace
+  noninterference for a coalition (`trace_noninterference`); keyed replay
+  after any interleaving and key-reuse refusal for the keyed model
+  (`gamesKeyed_replay_after`, `gamesKeyed_reuse`). Decision 0019.
+
 ## 0.5.0 (M7): generalize
 
 - `LeanApi.Proofs.ScopedApp`: reusable response noninterference for one

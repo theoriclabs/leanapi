@@ -10,7 +10,7 @@ LeanAPI gives you what you expect from Express or FastAPI: routing, typed reques
 
 Tests can show a bug is present. A proof shows a whole class of bugs is absent, for every request and every state. LeanAPI is a framework for writing services where that is practical.
 
-> **Status: 0.5.0, experimental.** The toolkit is usable, and the proved example is real. APIs will change. [EVIDENCE.md](EVIDENCE.md) lists exactly what is proved, what is only tested, and what is assumed.
+> **Status: 0.6.0, experimental.** The toolkit is usable, and the proved example is real. APIs will change. [EVIDENCE.md](EVIDENCE.md) lists exactly what is proved, what is only tested, and what is assumed.
 
 ---
 
@@ -92,7 +92,9 @@ This example proves a property of *one decision*. The next section shows propert
 |---|---|
 | **Isolation.** For a request authenticated as player `p`, the complete response (status, every header, body bytes) depends only on `p`'s view. Other players' games may differ arbitrarily | `step_noninterference_caller` |
 | **Existence privacy.** A game you're not in is indistinguishable from a game that doesn't exist | `existence_private` |
-| **Keyed idempotence.** Replaying a committed keyed request returns the recorded response and changes nothing | `keyed_replay` |
+| **Keyed idempotence.** Replaying a committed keyed request returns the recorded response and changes nothing, even after any number of other requests. Reusing a key with a different body is refused | `keyed_replay`, `gamesKeyed_replay_after`, `gamesKeyed_reuse` |
+| **System invariants.** Every stored game is valid; game ids are unique; a game's move log only grows | `allValid`, `uniqueIds`, `movesGrow` |
+| **Across requests.** After any sequence of requests by a group of players, what each of them sees depends only on what the group can see | `trace_noninterference` |
 | **Safe reads.** `GET` routes, and unrouted requests (404, 405, OPTIONS), never change state | `reads_pure`, `unrouted_pure` |
 | **Domain.** Accepted moves are allowed, follow the transition rules and keep every game valid | `decide_allowed`, `decide_transition`, `decide_valid` |
 | **Availability.** A player can always read their own game (so "reject everyone" doesn't count as secure) | `read_available` |
@@ -111,14 +113,15 @@ Then prove three small facts about your storage model: authentication, the scope
 
 ## Invariants and properties
 
-Today you state invariants as ordinary Lean propositions and prove them preserved, as in the `Board` example above and in private-games' [`Domain/Game.lean`](examples/private-games/PrivateGames/Domain/Game.lean). This works, but it is manual:
+`LeanApi.Props` is a property library. Declare an invariant once:
 
-- you write the `Prop` and a matching `Bool` check for runtime validation;
-- you prove they agree;
-- you prove preservation per command;
-- you lift the result to "every stored game is valid" yourself.
+- `invariant` generates the `Prop`, a runtime check that names the failing fields, a proof that the check matches the `Prop`, and a `Decidable` instance. Storage runs the generated check, so the runtime check and the proved property cannot drift.
+- `preserves` generates one theorem per decision function and proves the routine cases itself. What is left is printed goal by goal, tagged with the field.
+- `ListStore` and `Invariant.pullback` lift an entity invariant to "every stored entity", with no further proof. private-games proves that every stored game is valid and that game ids are unique, in every reachable state. Both were runtime checks before.
+- `#check_invariant` searches small worlds before you write a proof. It reports vacuous invariants, counterexamples to induction (and whether they are reachable), and the next strengthening to try.
+- `register_property` puts every claim in a registry. [EVIDENCE.md](EVIDENCE.md)'s claim tables are generated from it, and a "proved" claim is refused unless its theorem passes the axiom audit.
 
-The next milestones turn this into a library: define an invariant once and get the runtime check, the per-command obligations, the lift to the whole system, and counterexample search before you try to prove anything. The design is in [docs/PROPERTIES.md](docs/PROPERTIES.md), including how invariants compose and how to tell whether one is admissible. The implementation plan is [PLAN.md §M8–M12](PLAN.md#next-the-property-library-m8m12).
+The theory (shapes, admissibility, how invariants compose) is in [docs/PROPERTIES.md](docs/PROPERTIES.md).
 
 ## Features
 
@@ -134,7 +137,7 @@ The next milestones turn this into a library: define an invariant once and get t
 | **HTTP extras** | Conditional requests (304/412/428), rate limiting (429), Server-Sent Events, `traceparent`, multipart, OpenAPI 3.1 with a `/docs` page |
 | **Persistence** | LeanDB integration in the example: scoped queries, compare-and-swap commits, idempotency receipts in the same transaction, single writer with read-only reader pool |
 | **Testing** | In-process test client over `Std.Http.Server.serveConnection`: the real parser and writer, no sockets |
-| **Proofs** | `ScopedApp` isolation theorem; axiom audit script; route coverage report listing routes outside the proved set |
+| **Proofs** | `ScopedApp` isolation theorem; the `LeanApi.Props` property library (invariants, step and trace properties, noninterference with hiddenness witnesses, keyed idempotence); axiom audit script; generated evidence tables; route and writer coverage checks |
 
 ## Using it in your project
 
@@ -144,7 +147,7 @@ In `lakefile.toml`:
 [[require]]
 name = "leanapi"
 git = "https://github.com/theoriclabs/leanapi"
-rev = "v0.5.0"
+rev = "v0.6.0"
 ```
 
 Requirements:
@@ -160,6 +163,8 @@ Requirements:
 lake build                                                # the library
 lake build leanapi_tests && ./.lake/build/bin/leanapi_tests
 ./scripts/axiom_audit.sh                                  # every theorem in EVIDENCE.md
+./scripts/gen_evidence.sh --check                         # EVIDENCE.md tables match the registry
+./scripts/check_readme.sh                                 # README examples compile
 lake build notes games                                    # the example servers
 ```
 
@@ -183,7 +188,7 @@ Run the examples:
 |---|---|
 | [DESIGN.md](DESIGN.md) | The architecture: domain first, HTTP and persistence as adapters, proof surface, open questions |
 | [docs/PROPERTIES.md](docs/PROPERTIES.md) | The property library: shapes, admissibility, composing invariants |
-| [PLAN.md](PLAN.md) | Milestones M0–M7 (shipped) and M8–M12 (property library) |
+| [PLAN.md](PLAN.md) | Milestones M0–M12 (shipped) |
 | [EVIDENCE.md](EVIDENCE.md) | Proved / checked / assumed / open, claim by claim |
 | [docs/decisions/](docs/decisions/README.md) | Decision records for each settled design question |
 | [docs/reviews/](docs/reviews/) | External reviews and follow-ups |

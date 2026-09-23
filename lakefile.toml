@@ -1,5 +1,5 @@
 name = "leanapi"
-version = "0.5.0"
+version = "0.6.0"
 defaultTargets = ["LeanApi"]
 
 # Crypto dependency (M2), pinned by tag.

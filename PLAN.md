@@ -1,6 +1,6 @@
 # LeanAPI: implementation plan
 
-Status: M0–M7 shipped (0.1.0–0.5.0); M8–M12 planned, 2026-09-23. Implements [DESIGN.md](DESIGN.md), which is based on [intent.md](intent.md).
+Status: M0–M7 shipped (0.1.0–0.5.0); M8–M12 shipped as 0.6.0, 2026-09-23. Implements [DESIGN.md](DESIGN.md), which is based on [intent.md](intent.md).
 
 The plan ships in small releases. Each milestone ends in something usable, a tag, and ideally a short post. Open questions from DESIGN.md §12 are settled by building, not in advance. When a milestone has to pick an answer, it records the choice as a decision record in `docs/decisions/` and updates the Q table in DESIGN.md. Choices are provisional until a later milestone confirms them.
 
@@ -239,9 +239,17 @@ For each, try writing one custom theorem, one query with pagination, and one ext
 
 ---
 
-## Next: the property library (M8–M12)
+## The property library (M8–M12), shipped as 0.6.0
 
-M0–M7 shipped as 0.1.0–0.5.0. The next milestones implement [docs/PROPERTIES.md](docs/PROPERTIES.md).
+M0–M7 shipped as 0.1.0–0.5.0. M8–M12 implement [docs/PROPERTIES.md](docs/PROPERTIES.md) and shipped together as 0.6.0. Decisions: 0016 (P1), 0017 (P2, P6, P7), 0018 (P3), 0019 (P4, P5).
+
+**As built, compared with this plan:**
+
+- M8: as planned. `ListStore` (the entity → system lift) landed in M8 because the `uniqueIds` demonstrator needed it.
+- M9: `EntityStore` is `ListStore` (list-shaped stores only). LeanDB 0.4.0 has no `@[leandb_invariant]` hook, so the P7 adapter is `StoredInvariant`, called by the repository inside its transaction (decision 0017). The README snippet check is `scripts/check_readme.sh` in CI.
+- M10: Plausible builds on 4.33 but cannot derive generators for proof-carrying fields, so the library has its own `Enumerate` (decision 0018). The C1 regression is a hiddenness-witness check (`checkHidden`), run on data views.
+- M11: as planned. The registry lives in `LeanApi/Props/Registry.lean`, the app's claims in `PrivateGames/Evidence.lean`.
+- M12: trace noninterference is proved for a **coalition** of players sending requests in any order. Requests from outside the coalition stay open (decision 0019, P5). The keyed theorems are proved for the `Keyed` transformer over the model with a list ledger. That the LeanDB receipt table satisfies `LedgerLaws` is checked, not proved.
 
 **Goal:** make invariants easy to define. Today an author writes four things by hand, and private-games shows the cost (`Domain/Game.lean`, `Domain/Proofs.lean`):
 - a `Prop` (`Valid`) and a matching `Bool` check (`validB`);

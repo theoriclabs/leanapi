@@ -1,6 +1,6 @@
 # Property library: plug-in properties, their shapes, and admissibility
 
-Status: design draft, 2026-09-23. Companion to [DESIGN.md](../DESIGN.md) §8. Code blocks are sketches of shape, not compiled APIs.
+Status: design, 2026-09-23; implemented as `LeanApi.Props` in 0.6.0 (PLAN.md M8–M12). Code blocks are sketches of shape; the compiled APIs are in `LeanApi/Props/`. Where the implementation differs: `@[leandb_invariant]` became `StoredInvariant` (decision 0017), `#check_admissible` is `#check_invariant` plus the registry, and `Keyed` scopes keys by a function of the request. The open questions in §8 are settled by decisions 0016–0019.
 
 The goal: an application author should be able to pick a property from a library ("this route is idempotent", "games' move logs only grow", "no player observes another player's games"), attach it to their system, and get back one of three things:
 
