@@ -144,6 +144,8 @@ def commitDb (p : PlayerId) (w : Write) (keyed : Option Keyed) (build : Game →
         | .ok none => pure (.error .notFound)
         | .ok (some (stored, cur)) =>
           if cur != old then pure (.error .conflict) else
+          if new.x != old.x || new.o != old.o then
+            pure (.error (.corrupt "a write may not change participants")) else
           let _ ← update stored (GameRow.ofGame new)
           pure (.ok new)
     match written with

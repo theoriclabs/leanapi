@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.4.0 (M6): proofs
+
+- Reference model `PrivateGames.Model.step : Req → World → Res × World` over
+  the exported proved routes, sharing `decode` and `core` with the native
+  service; route resolution shared through `Router.resolveIn`.
+- Theorems: `step_noninterference` (single-request response noninterference
+  over the full response), `existence_private`, `keyed_replay`, `reads_pure`,
+  `unrouted_pure`, `resign_state_idem`, `read_available`. All 31 audited
+  theorems in CI.
+- Differential test: native service ≡ model on random request sequences
+  (mutation-checked).
+- `EVIDENCE.md`; decisions 0009 (Q4), 0010 (Q6), 0011 (Q11).
+
+## 0.3.0 (M4, M5): domain-first endpoints
+
+- `examples/private-games`: domain, LeanDB persistence (codecs from smart
+  constructors with round-trip proofs, re-validating reconstruction, scoped
+  reads with the policy in the SQL predicate, compare-and-swap commits with
+  authority re-checked under the write lock, retry receipts in the same
+  transaction, single writer plus reader pool), operations bound to routes
+  (`If-Match` → expected revision, `ETag` from the revision,
+  `Idempotency-Key`), runnable server, seed script and Dockerfile.
+- HTTP tests for every DESIGN §9.3 case.
+- Decisions 0008 (Q5) and 0012 (Q7).
+- LeanDB `v0.4.0` pinned by git tag.
+
 ## 0.2.0 (M2): JWT and password auth
 
 - Depends on leancrypto 0.1.0 (OpenSSL 3 FFI; decision 0002).

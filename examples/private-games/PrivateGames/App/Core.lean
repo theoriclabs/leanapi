@@ -169,6 +169,21 @@ def decode (op : Op) (r : Req) : Except Res Input :=
       let (gid, k) ← both (Extract.path (α := GameId) "id" r) (idemKey r)
       return Input.resign gid k) r
 
+/-! ## Retry identity -/
+
+def keyedFor (op : Op) (k : Option String) (canonical : String) : Option Keyed :=
+  k.map fun key => { op := op.name, key, fingerprint := LeanCrypto.Hex.encode (LeanCrypto.sha256 canonical.toUTF8) }
+
+/-- The retry identity of a request: operation, key, and a fingerprint of
+    the canonical input (not the raw bytes, so JSON key order or whitespace
+    does not matter). Reads have none. -/
+def Input.keyed : Input → Option Keyed
+  | .openGame opp tc k => keyedFor .openGame k s!"openGame|{opp.n}|{tc.minutes}"
+  | .playMove gid rev cell k => keyedFor .playMove k s!"playMove|{gid.n}|{rev}|{cell.i}"
+  | .resign gid k => keyedFor .resign k s!"resign|{gid.n}"
+  | .listGames .. => none
+  | .readGame _ => none
+
 /-! ## Loads -/
 
 structure Need where
@@ -183,16 +198,14 @@ structure Slice where
   receipt : Option Receipt := none
   playerExists : Bool := false
 
-def keyedNeed (op : Op) : Option String → Option (String × String)
-  | some k => some (op.name, k)
-  | none => none
-
-def Input.need : Input → Need
-  | .openGame opp _ k => { receipt := keyedNeed .openGame k, player := some opp }
-  | .listGames page per => { page := some ((page - 1) * per, per) }
-  | .readGame gid => { game := some gid }
-  | .playMove gid _ _ k => { game := some gid, receipt := keyedNeed .playMove k }
-  | .resign gid k => { game := some gid, receipt := keyedNeed .resign k }
+def Input.need (i : Input) : Need :=
+  let base : Need := match i with
+    | .openGame opp _ _ => { player := some opp }
+    | .listGames page per => { page := some ((page - 1) * per, per) }
+    | .readGame gid => { game := some gid }
+    | .playMove gid _ _ _ => { game := some gid }
+    | .resign gid _ => { game := some gid }
+  { base with receipt := i.keyed.map fun k => (k.op, k.key) }
 
 /-! ## Responses (the public projection) -/
 
@@ -230,16 +243,12 @@ def keyReused : Res :=
 
 /-! ## The decision -/
 
-def keyedFor (op : Op) (k : Option String) (canonical : String) : Option Keyed :=
-  k.map fun key => { op := op.name, key, fingerprint := LeanCrypto.Hex.encode (LeanCrypto.sha256 canonical.toUTF8) }
+/-- What an operation decides, before retry handling. -/
+inductive Decision where
+  | respond (res : Res)
+  | write (w : Write) (build : Game → Res)
 
-/-- Replay a recorded outcome, or refuse a reused key, before deciding. -/
-def withReceipt (k : Option Keyed) (s : Slice) (decideIt : Unit → Plan) : Plan :=
-  match k, s.receipt with
-  | some k, some rc => if rc.fingerprint == k.fingerprint then .respond rc.toRes else .respond keyReused
-  | _, _ => decideIt ()
-
-def core (p : PlayerId) (i : Input) (s : Slice) : Plan :=
+def decideCore (p : PlayerId) (i : Input) (s : Slice) : Decision :=
   match i with
   | .readGame _ =>
     match s.game with
@@ -249,30 +258,38 @@ def core (p : PlayerId) (i : Input) (s : Slice) : Plan :=
     let (items, total) := s.page
     .respond (Res.json (Json.mkObj [("items", Json.arr (items.map gameJson).toArray),
       ("total", Json.num total), ("page", Json.num page), ("per", Json.num per)]))
-  | .openGame opp tc k =>
-    let kd := keyedFor .openGame k s!"openGame|{opp.n}|{tc.minutes}"
-    withReceipt kd s fun _ =>
-      if !s.playerExists then .respond (FieldError.problem [⟨"body.opponent", "unknown player"⟩]).toRes else
-      match openGame ⟨0⟩ p opp tc with
+  | .openGame opp tc _ =>
+    if !s.playerExists then .respond (FieldError.problem [⟨"body.opponent", "unknown player"⟩]).toRes else
+    match openGame ⟨0⟩ p opp tc with
+    | .error e => .respond (domainRes e)
+    | .ok g => .write (.insertGame g) fun g => (gameRes g 201).setHeader "location" s!"/games/{g.id.n}"
+  | .playMove _ rev cell _ =>
+    match s.game with
+    | none => .respond hidden
+    | some g =>
+      match PrivateGames.playMove p rev cell g with
       | .error e => .respond (domainRes e)
-      | .ok g => .write (.insertGame g) kd fun g => (gameRes g 201).setHeader "location" s!"/games/{g.id.n}"
-  | .playMove gid rev cell k =>
-    let kd := keyedFor .playMove k s!"playMove|{gid.n}|{rev}|{cell.i}"
-    withReceipt kd s fun _ =>
-      match s.game with
-      | none => .respond hidden
-      | some g =>
-        match PrivateGames.playMove p rev cell g with
-        | .error e => .respond (domainRes e)
-        | .ok g' => .write (.updateGame g g') kd gameRes
-  | .resign gid k =>
-    let kd := keyedFor .resign k s!"resign|{gid.n}"
-    withReceipt kd s fun _ =>
-      match s.game with
-      | none => .respond hidden
-      | some g =>
-        match PrivateGames.resign p g with
-        | .error e => .respond (domainRes e)
-        | .ok g' => if g' == g then .respond (gameRes g) else .write (.updateGame g g') kd gameRes
+      | .ok g' => .write (.updateGame g g') gameRes
+  | .resign _ _ =>
+    match s.game with
+    | none => .respond hidden
+    | some g =>
+      match PrivateGames.resign p g with
+      | .error e => .respond (domainRes e)
+      | .ok g' => if g' == g then .respond (gameRes g) else .write (.updateGame g g') gameRes
+
+/-- Replay a recorded outcome, or refuse a reused key, before deciding. -/
+def withReceipt (k : Option Keyed) (s : Slice) (decideIt : Unit → Plan) : Plan :=
+  match k, s.receipt with
+  | some k, some rc => if rc.fingerprint == k.fingerprint then .respond rc.toRes else .respond keyReused
+  | _, _ => decideIt ()
+
+/-- The whole pure core: retry handling, then the decision. Every write is
+    keyed by the request's own retry identity. -/
+def core (p : PlayerId) (i : Input) (s : Slice) : Plan :=
+  withReceipt i.keyed s fun _ =>
+    match decideCore p i s with
+    | .respond r => .respond r
+    | .write w build => .write w i.keyed build
 
 end PrivateGames.App

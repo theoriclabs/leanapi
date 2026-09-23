@@ -18,3 +18,19 @@ PrivateGames.Domain.Values PrivateGames.TimeControl.make_minutes
 PrivateGames.Spike.Shell PrivateGames.Spike.Shell.playMoveCore_participant
 PrivateGames.Spike.Shell PrivateGames.Spike.Shell.listMine_visible
 PrivateGames.Spike.Effects PrivateGames.Spike.Effects.reads_visible
+# M4: codecs
+PrivateGames.Storage.Schema PrivateGames.Storage.nat_roundtrip
+PrivateGames.Storage.Schema PrivateGames.Storage.cell_roundtrip
+PrivateGames.Storage.Schema PrivateGames.Storage.timeControl_roundtrip
+# M6: private-games service (the model of the exported proved routes)
+PrivateGames.Model.Isolation PrivateGames.Model.step_noninterference
+PrivateGames.Model.Isolation PrivateGames.Model.step_noninterference_caller
+PrivateGames.Model.Existence PrivateGames.Model.existence_private
+PrivateGames.Model.Idempotence PrivateGames.Model.keyed_replay
+PrivateGames.Model.Idempotence PrivateGames.Model.reads_pure
+PrivateGames.Model.Idempotence PrivateGames.Model.unrouted_pure
+PrivateGames.Model.Idempotence PrivateGames.Model.resign_state_idem
+PrivateGames.Model.Idempotence PrivateGames.Model.read_available
+PrivateGames.Domain.Proofs PrivateGames.decide_allowed
+PrivateGames.Domain.Proofs PrivateGames.decide_transition
+PrivateGames.Model.Idempotence PrivateGames.Model.gameRes_status

@@ -3,6 +3,7 @@ import Tests.Middleware
 import Tests.Notes
 import Tests.Auth
 import Tests.Games
+import Tests.Differential
 
 open LeanApi.Test
 
@@ -13,6 +14,7 @@ def main : IO UInt32 := do
     Tests.Notes.run
     Tests.Auth.run
     Tests.Games.run
+    Tests.Differential.run
     : TestM Unit).run {}
   IO.println s!"\n{r.passed} passed, {r.failed.length} failed"
   return if r.failed.isEmpty then 0 else 1

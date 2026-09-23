@@ -1,5 +1,5 @@
 name = "leanapi"
-version = "0.2.0"
+version = "0.4.0"
 defaultTargets = ["LeanApi"]
 
 # Crypto dependency (M2). Sibling checkout; the published form is
@@ -34,6 +34,11 @@ root = "NotesMain"
 name = "PrivateGames"
 srcDir = "examples/private-games"
 globs = ["PrivateGames.+"]
+
+[[lean_exe]]
+name = "games"
+srcDir = "examples/private-games"
+root = "GamesMain"
 
 [[lean_lib]]
 name = "Tests"
