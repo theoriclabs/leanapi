@@ -3,7 +3,7 @@
 ## 0.6.0 (M8–M12): the property library
 
 `LeanApi.Props` (docs/PROPERTIES.md). All theorems below are in
-`scripts/audited_theorems.txt` (125 theorems, no `sorry`, no extra axioms).
+`scripts/audited_theorems.txt` (127 theorems, no `sorry`, no extra axioms).
 
 - **Kernel (M8).** `Sys`, `Reachable`, `Invariant`, `Inductive`,
   `Invariant.of_inductive`; the operator algebra with proved rules
@@ -40,8 +40,10 @@
   `LedgerLaws`. private-games: move logs only grow (`movesGrow`); one
   caller's successor view is preserved (`step_view_caller`); trace
   noninterference for a coalition (`trace_noninterference`); keyed replay
-  after any interleaving and key-reuse refusal for the keyed model
-  (`gamesKeyed_replay_after`, `gamesKeyed_reuse`). Decision 0019.
+  after any interleaving, for the model's own receipts
+  (`keyed_replay_after`) and for the generic `Keyed` wrapper
+  (`gamesKeyed_replay_after`); key-reuse refusal for the wrapper
+  (`gamesKeyed_reuse`). Decision 0019.
 
 ## 0.5.0 (M7): generalize
 
