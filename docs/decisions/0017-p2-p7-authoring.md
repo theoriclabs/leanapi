@@ -50,3 +50,20 @@ A field marked `proof_only` is proved but not checked at runtime. Then only
 the sound direction (`check_of`: the property implies the check passes)
 is generated, and there is no `StoredInvariant` from `check_iff`, so the
 weaker runtime check cannot be mistaken for the property.
+
+## Verification (2026-09-23)
+
+Measured and mutation-checked, not just inspected:
+
+- Effort: the hand-written `validB`, `validB_iff` and three preservation
+  proofs were 57 lines; the `preserves` block is 13 (plus 9 lines of
+  compatibility wrappers). A new invariant with routine preservation is one
+  `invariant` declaration and one `preserves` line (`Counter.Ok` in
+  `tests/Tests/PropsCommands.lean`).
+- Removing the free-cell check from `playMove` breaks the build at the
+  `preserves` block: the proof of `nodup` no longer goes through.
+- Bypassing the generated check in `reconstruct` makes two runtime tests
+  fail ("invalid stored game → 500").
+- Hand-editing an EVIDENCE.md row from Assumed to Proved fails
+  `gen_evidence.sh --check`. Naming a missing theorem in the registry fails
+  the build. Replacing a kernel proof with `sorry` fails the axiom audit.
