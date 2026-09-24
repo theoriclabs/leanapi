@@ -11,7 +11,7 @@ These are the LeanAPI side of the LeanDB work in [docs/QUERIES.md](../docs/QUERI
 
 | ID | Title | Pri | Size | Depends on | Status |
 | --- | --- | --- | --- | --- | --- |
-| [LAPI-01](LAPI-01-adopt-fixed-leandb.md) | Adopt the fixed LeanDB (M13): pin, proof update, public read snapshot | P0 | S | LeanDB M13 release (LDB-17…24 and the review fixes) | open |
+| [LAPI-01](LAPI-01-adopt-fixed-leandb.md) | Adopt the fixed LeanDB (M13): pin, proof update, public read snapshot | P0 | S | LeanDB M13 release (LDB-17…24 and the review fixes) | in progress: done on `bdd0e4c` by commit; retag when released |
 | [LAPI-02](LAPI-02-endpoint-effects-over-leandb-programs.md) | Endpoint effects over LeanDB programs: `Read s` and `Txn s ε` | P0 | L | LeanDB M14 | open |
 | [LAPI-03](LAPI-03-problem-defaults-for-database-failures.md) | `ToProblem` defaults for LeanDB's typed failures, safe for isolation | P1 | M | LeanDB M14, LAPI-02 | open |
 | [LAPI-04](LAPI-04-private-games-schema-on-typed-symbols.md) | private-games schema on typed symbols: `unique`, `schema`, `Checked` from proofs | P0 | S | LeanDB M14 | open |

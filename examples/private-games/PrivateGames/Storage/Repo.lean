@@ -175,38 +175,6 @@ private def runDb (conn : Conn) (act : DbM α) : IO (Except RepoError α) := do
   | .ok a => return .ok a
   | .error e => return .error (dbErr e)
 
-/-- Keep a multi-statement read on one WAL snapshot. LeanDB's public
-    transaction uses `BEGIN IMMEDIATE` for writes; its deferred read
-    transaction is private. Match its nesting and poison-on-rollback-failure
-    behavior so `fetchFiltered` joins this snapshot. -/
-def readSnapshot (act : DbM α) : DbM α := fun conn => ExceptT.mk do
-  let exec (sql : String) : IO (Except DbError Unit) :=
-    try conn.raw.exec sql; pure (.ok ()) catch e => pure (.error (.sqlite (toString e)))
-  match ← conn.poisoned.get with
-  | some why => return .error (.poisoned why)
-  | none => pure ()
-  let depth ← conn.txDepth.get
-  if depth > 0 then return ← (act conn).run
-  match ← exec "BEGIN DEFERRED" with
-  | .error e => return .error e
-  | .ok () => pure ()
-  conn.txDepth.set 1
-  let result ← try (act conn).run catch e => pure (.error (.sqlite (toString e)))
-  conn.txDepth.set 0
-  let rollback (e : DbError) : IO (Except DbError α) := do
-    match ← exec "ROLLBACK" with
-    | .ok () => return .error e
-    | .error re =>
-      let why := s!"read snapshot rollback failed after {e.code}: {re.message}"
-      conn.poison why
-      return .error (.poisoned why)
-  match result with
-  | .error e => rollback e
-  | .ok a =>
-    match ← exec "COMMIT" with
-    | .ok () => return .ok a
-    | .error e => rollback e
-
 private def onWorker (w : LeanApi.Worker) (act : IO (Except RepoError α)) : IO (Except RepoError α) := do
   match ← w.run act with
   | .ok r => return r
@@ -247,7 +215,7 @@ def Runtime.repo (rt : Runtime) : Repo where
   loadVisible p gid := do
     return flatten (← readOn rt do return (← loadVisibleDb p gid).map (·.map (·.2)))
   listVisible p off lim := do
-    flatten <$> readOn rt (readSnapshot do
+    flatten <$> readOn rt (LeanDb.readSnapshot do
       let total ← countP (visiblePred p)
       let rows ← fetchFiltered GameRow (visiblePred p) (window := { limit := some lim, offset := off })
       let games := rows.toList.map reconstruct

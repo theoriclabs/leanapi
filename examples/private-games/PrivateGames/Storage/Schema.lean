@@ -31,7 +31,10 @@ theorem nat_roundtrip (n : Nat) (h : n < 2^63) :
     (ColCodec.fromCol (ColCodec.toCol n) : Except String Nat) = .ok n := by
   have h1 : ¬ (Int64.ofNat n < 0) := by
     rw [Int64.lt_iff_toInt_lt]; simp [Int64.toInt_ofNat_of_lt h]
-  simp [ColCodec.fromCol, ColCodec.toCol, h1, Int64.toNatClampNeg_ofNat_of_lt h]
+  have hmax : LeanDb.natSqlMax = 2^63 - 1 := by decide
+  have hs : LeanDb.natToSql n = some (Int64.ofNat n) := by
+    simp only [LeanDb.natToSql, hmax]; split <;> first | rfl | omega
+  simp [ColCodec.fromCol, ColCodec.toCol, hs, h1, Int64.toNatClampNeg_ofNat_of_lt h]
 
 /-- Round-trip law for the cell codec: decode (encode c) = c. -/
 theorem cell_roundtrip (c : Cell) : (ColCodec.fromCol (ColCodec.toCol c) : Except String Cell) = .ok c := by

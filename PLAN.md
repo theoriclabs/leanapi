@@ -4,7 +4,7 @@ Status: M0–M7 shipped (0.1.0–0.5.0); M8–M12 shipped as 0.6.0, 2026-09-23. 
 
 The plan ships in small releases. Each milestone ends in something usable, a tag, and ideally a short post. Open questions from DESIGN.md §12 are settled by building, not in advance. When a milestone has to pick an answer, it records the choice as a decision record in `docs/decisions/` and updates the Q table in DESIGN.md. Choices are provisional until a later milestone confirms them.
 
-Baseline: toolchain `leanprover/lean4:v4.33.0` (matching LeanDB 0.4.0, leanhttp and leanws), transport `Std.Http.Server`, persistence LeanDB `v0.4.0` pinned by git tag.
+Baseline: toolchain `leanprover/lean4:v4.33.0` (matching LeanDB 0.4.0, leanhttp and leanws), transport `Std.Http.Server`, persistence LeanDB pinned at the M13 fixes (`bdd0e4c`, by commit until tagged; LAPI-01).
 
 ## Overview
 

@@ -80,7 +80,7 @@ def run : TestM Unit := do
     let (peerId, _) ← signup snapshotEnv.svc "snapshot-peer"
     let _ ← openGame snapshotEnv.svc owner peerId
     if let some reader := snapshotEnv.rt.readConns[0]? then
-      let observed ← LeanDb.DbM.run reader (readSnapshot do
+      let observed ← LeanDb.DbM.run reader (LeanDb.readSnapshot do
         let before ← LeanDb.countP (visiblePred ⟨ownerId⟩)
         -- A different connection commits after the count and before the page.
         let inserted ← liftM <| LeanDb.DbM.run snapshotEnv.rt.writeConn

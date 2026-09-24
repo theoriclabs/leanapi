@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased: LeanDB M13 (LAPI-01)
+
+- LeanDB pinned at the M13 fixes (`bdd0e4c`, LDB-17…24) by commit, until LeanDB tags the release.
+- `nat_roundtrip` restated over LeanDB's bounded `Nat` encoder (`natToSql`). `cell_roundtrip` and `timeControl_roundtrip` unchanged.
+- The hand-copied `Repo.readSnapshot` is gone. private-games uses LeanDB's public `readSnapshot`.
+- No HTTP behaviour change: the full suite, including the native-vs-model differential test, passes unchanged.
+
 ## Unreleased: typed endpoints (docs/ENDPOINTS.md)
 
 - **`LeanApi.Http.Endpoint`.** An endpoint is a function whose type is its

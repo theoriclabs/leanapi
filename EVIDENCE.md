@@ -162,7 +162,8 @@ is decision 0010.
    address, never bodies, headers or cookies.
 6. **LeanDB and SQLite**: query translation, transactions, and WAL snapshot
    semantics. LeanDB's own query-model theorem does not cover generated SQL
-   execution.
+   execution. Pinned: LeanDB at the M13 fixes (`bdd0e4c`, LDB-17…24: bounded
+   `Nat` columns, windows after residual filters, the public `readSnapshot`).
 7. **The Lean compiler and runtime.**
 8. **Deployment**: the running binary is built from this commit and exposes
    only this route table. Not checked.
