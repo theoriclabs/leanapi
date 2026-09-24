@@ -12,7 +12,7 @@ These are the LeanAPI side of the LeanDB work in [docs/QUERIES.md](../docs/QUERI
 | ID | Title | Pri | Size | Depends on | Status |
 | --- | --- | --- | --- | --- | --- |
 | [LAPI-01](LAPI-01-adopt-fixed-leandb.md) | Adopt the fixed LeanDB (M13): pin, proof update, public read snapshot | P0 | S | LeanDB M13 release (LDB-17…24 and the review fixes) | in progress: done on `bdd0e4c` by commit; retag when released |
-| [LAPI-02](LAPI-02-endpoint-effects-over-leandb-programs.md) | Endpoint effects over LeanDB programs: `Read s` and `Txn s ε` | P0 | L | LeanDB M14 | open |
+| [LAPI-02](LAPI-02-endpoint-effects-over-leandb-programs.md) | Endpoint effects over LeanDB programs: `Read s` and `Txn s ε` | P0 | L | LeanDB M14 | read half done on M14a; `Txn` waits for M14b |
 | [LAPI-03](LAPI-03-problem-defaults-for-database-failures.md) | `ToProblem` defaults for LeanDB's typed failures, safe for isolation | P1 | M | LeanDB M14, LAPI-02 | open |
 | [LAPI-04](LAPI-04-private-games-schema-on-typed-symbols.md) | private-games schema on typed symbols: `unique`, `schema`, `Checked` from proofs | P0 | S | LeanDB M14 | done on M14a `64c768e` (by commit); `Checked` writes wait for M14b |
 | [LAPI-05](LAPI-05-games-api-on-leandb-programs.md) | `gamesApi` over LeanDB programs, answering byte for byte as today | P0 | L | LAPI-02, LAPI-04 | open |
@@ -36,5 +36,7 @@ flowchart LR
     L7 --> L8["LAPI-08"]
     L8 --> L9["LAPI-09"]
 ```
+
+**Finding (2026-09-23):** at LeanDB `64c768e`, `DbState` has no logical content (`DbState.get` is `implemented_by` with an empty-table body), so every theorem over `DbState` is trivially true. See LAPI-02's status. LeanDB M15 must fix this before LAPI-06/07.
 
 LAPI-01 can start as soon as LeanDB tags its M13 release. LAPI-02 and LAPI-04 can start against LeanDB's M14 branch before it is released, pinned by commit.

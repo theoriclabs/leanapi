@@ -170,3 +170,7 @@ PrivateGames.ApiIsolation PrivateGames.Api.api_isolated
 PrivateGames.ApiIsolation PrivateGames.Api.api_noninterference
 PrivateGames.ApiIsolation PrivateGames.Api.api_existence_private
 PrivateGames.ApiIsolation PrivateGames.Api.keyed_answer
+LeanApi.Http.DbEndpoint LeanApi.DbApi.prog_denote
+Tests.DbEndpoint Tests.DbEndpoint.api_step_safe
+Tests.DbEndpoint Tests.DbEndpoint.api_inductive
+Tests.DbEndpoint Tests.DbEndpoint.getMember_isolated

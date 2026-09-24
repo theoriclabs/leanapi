@@ -525,7 +525,7 @@ private def validationRes (es : List FieldError) : Res := (FieldError.problem es
 /-- `τ` is a handler: an arrow of inputs ending in an effect and a response.
     Instance resolution computes its meaning and metadata, and proves its
     laws. -/
-class Handler (σ : Type) (τ : Type) where
+class Handler (σ : Type) (τ : Type u) where
   effect : Effect
   pathArity : Nat
   inputs : List String
@@ -558,7 +558,7 @@ def pathAt [FromParam α] (r : Req) (i : Nat) : Decoded α :=
     | .error m => .error [⟨s!"path.{n}", m⟩]
   | none => .error [⟨s!"path[{i}]", "missing path parameter"⟩]
 
-instance [FromParam α] [H : Handler σ β] : Handler σ (Path α → β) where
+instance {β : Type u} [FromParam α] [H : Handler σ β] : Handler σ (Path α → β) where
   effect := H.effect
   pathArity := H.pathArity + 1
   inputs := "path" :: H.inputs
@@ -586,7 +586,7 @@ instance [FromParam α] [H : Handler σ β] : Handler σ (Path α → β) where
     | ok a => exact H.step_isolated R _ (hI.2 a) env r s₁ s₂ _ h
     | error es => simp only [H.errors_stable R hI.1 env r s₁ s₂ (i + 1) h]
 
-instance (priority := low) [R' : FromRequest σ α] [H : Handler σ β] : Handler σ (α → β) where
+instance (priority := low) {β : Type u} [R' : FromRequest σ α] [H : Handler σ β] : Handler σ (α → β) where
   effect := H.effect
   pathArity := H.pathArity
   inputs := R'.kind :: H.inputs
@@ -621,7 +621,7 @@ instance (priority := low) [R' : FromRequest σ α] [H : Handler σ β] : Handle
 
 /-- `Auth α → β`: authenticate, then run `β` with the actor. For isolation,
     the relation narrows to what the authenticated actor may see. -/
-instance [A : Authenticates σ α] [V : ViewOf σ α] [H : Handler σ β] : Handler σ (Auth α → β) where
+instance {β : Type u} [A : Authenticates σ α] [V : ViewOf σ α] [H : Handler σ β] : Handler σ (Auth α → β) where
   effect := H.effect
   pathArity := H.pathArity
   inputs := "auth" :: H.inputs
@@ -726,7 +726,7 @@ structure Endpoint (σ : Type) where
 namespace Endpoint
 
 /-- Build an endpoint. `hsafe`: a safe method's handler has a safe effect. -/
-def make {σ τ : Type} (m : Method) (t : String) (h : τ) [H : Handler σ τ]
+def make {σ : Type} {τ : Type u} (m : Method) (t : String) (h : τ) [H : Handler σ τ]
     (hsafe : m.Safe → H.effect.Safe) (limit : Nat := 1024 * 1024) : Endpoint σ where
   method := m
   template := t
@@ -756,21 +756,21 @@ theorem unsafe_delete : ¬ Method.Safe .delete := by intro h; rcases h with h | 
 
 /-- `GET`: the handler's effect must be safe (`pure` or `reads`), proved
     when the endpoint is built. -/
-def get {σ τ : Type} (t : String) (h : τ) [H : Handler σ τ] (safe : H.effect.Safe := by endpoint_safe) :
+def get {σ : Type} {τ : Type u} (t : String) (h : τ) [H : Handler σ τ] (safe : H.effect.Safe := by endpoint_safe) :
     Endpoint σ :=
   make .get t h (fun _ => safe)
 
-def head {σ τ : Type} (t : String) (h : τ) [H : Handler σ τ] (safe : H.effect.Safe := by endpoint_safe) :
+def head {σ : Type} {τ : Type u} (t : String) (h : τ) [H : Handler σ τ] (safe : H.effect.Safe := by endpoint_safe) :
     Endpoint σ :=
   make .head t h (fun _ => safe)
 
-def post {σ τ : Type} (t : String) (h : τ) [Handler σ τ] (limit : Nat := 1024 * 1024) : Endpoint σ :=
+def post {σ : Type} {τ : Type u} (t : String) (h : τ) [Handler σ τ] (limit : Nat := 1024 * 1024) : Endpoint σ :=
   make .post t h (fun hm => absurd hm unsafe_post) limit
-def put {σ τ : Type} (t : String) (h : τ) [Handler σ τ] (limit : Nat := 1024 * 1024) : Endpoint σ :=
+def put {σ : Type} {τ : Type u} (t : String) (h : τ) [Handler σ τ] (limit : Nat := 1024 * 1024) : Endpoint σ :=
   make .put t h (fun hm => absurd hm unsafe_put) limit
-def patch {σ τ : Type} (t : String) (h : τ) [Handler σ τ] (limit : Nat := 1024 * 1024) : Endpoint σ :=
+def patch {σ : Type} {τ : Type u} (t : String) (h : τ) [Handler σ τ] (limit : Nat := 1024 * 1024) : Endpoint σ :=
   make .patch t h (fun hm => absurd hm unsafe_patch) limit
-def delete {σ τ : Type} (t : String) (h : τ) [Handler σ τ] (limit : Nat := 1024 * 1024) : Endpoint σ :=
+def delete {σ : Type} {τ : Type u} (t : String) (h : τ) [Handler σ τ] (limit : Nat := 1024 * 1024) : Endpoint σ :=
   make .delete t h (fun hm => absurd hm unsafe_delete) limit
 
 def withSignature (e : Endpoint σ) (s : String) : Endpoint σ := { e with signature := s }

@@ -55,3 +55,19 @@ The in-memory `Store σ` effects stay supported. Notes keeps using them.
 ## Compatibility
 
 Additive: the `Store`-based `Reads`/`Writes` are unchanged. Existing typed APIs keep working.
+
+## Status (2026-09-23): read half done, write half blocked on M14b
+
+Branch `lapi-02-read-effects`, stacked on LAPI-04 and pinned to LeanDB `64c768e` (M14 part A: `Read`, no `Txn`).
+
+**Done** (`LeanApi/Http/DbEndpoint.lean`, `tests/Tests/DbEndpoint.lean`):
+- `Handler (DbState s) (Read s ρ)`: effect `.reads`, meaning `Read.denote`.
+- `DbHandler`: the program a handler runs, with `prog_denote` (the program denotes the meaning's response), derived over `Path`, pure inputs (`FromRequest.Pure`) and `Auth`.
+- `AuthenticatesDb` with `sessions`/`passwords` as read programs. Its `Authenticates (DbState s)` instance *is* the denotation, so authentication runs in the request's snapshot.
+- `DbEndpoint`/`DbApi`, `dbapi!` (arity, conflicts, signature), `DbApi.service` over `DbReaders` (one worker per read-only connection, `Read.run` = one snapshot). Faults: 503 + `retry-after` for locking and queue-full, 500 otherwise, logged as `db_fault` with the request id.
+- Laws instantiated on a test schema (two entities, a unique index, a reference): `api_step_safe`, `api_inductive`, `getMember_isolated` (via `Api.noninterference`), no `sorry`, axiom-audited.
+- Tests: HTTP answers (200/404/401/422), `run = denote (load)` per endpoint, one snapshot for count+page, revocation seen by the next request, faults answer 503/500 with nothing written.
+
+**Blocked on LeanDB M14b**: `Txn s ε` handlers, `.writes` on the writer under `BEGIN IMMEDIATE`, "abort discards writes", "a GET returning a `Txn` does not compile" (today the `GET` guard already rejects any `.writes` effect).
+
+**Finding for LeanDB (blocks LAPI-06/07, not this ticket).** At `64c768e`, `DbState.get`, `set` and `source` are `@[implemented_by]` with logical bodies that ignore the state (`get` is always the empty table). So in the logic every `DbState` is empty and `Read.denote p st` does not depend on `st`: `getMember_isolated` holds, but so would any isolation claim (checked by `rfl` with no view hypothesis). The laws above are correct in form and will mean something once `DbState` has a real logical model. M15 must replace the `unsafeCast` slots with a dependent map (e.g. `(t : Table) → Table (pack t).ty`), or LAPI-06/07 prove nothing.
