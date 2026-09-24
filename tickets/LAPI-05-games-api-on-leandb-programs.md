@@ -53,3 +53,20 @@ This replaces `keyed`'s hand-written receipt lookup, and keeps the receipt in th
 ## Compatibility
 
 HTTP behaviour identical, checked by the differential test. The database schema is unchanged apart from LAPI-04's declarations. Existing databases keep working.
+
+## Status (2026-09-23): done on LeanDB M14b (`d33d067`), with two recorded deviations
+
+Branch `lapi-02-read-effects` (stacked). `examples/private-games/PrivateGames/DbApi.lean`:
+- The five routes as LeanDB programs over `DbState Games`. `listGames` and `readGame` are `Read`s, scoped by `GameRow.visibleTo`. `openGame`, `playMove` and `resign` are `Tx`s.
+- `Checked GameRow` comes from `GameRow.checkedOpen`/`checkedStep` (the domain proofs), with no runtime check. The `duplicate` arms are `nomatch` (`Unique GameRow` is empty).
+- Authentication is `lookup TokenRow.byDigest`, a read program, inside the request's snapshot or transaction.
+- `GamesMain` serves the game routes from `gamesApi` over `DbConns`. The unproved account routes stay on the repository. `describe` prints the `Read`/`Tx` signatures, and I checked it by running the binary and exercising open, replay and move over curl.
+
+Acceptance:
+- **Byte for byte:** the differential test now compares four systems (model, in-memory `gamesApi`, native service, LeanDB-program `gamesApi`) on the same 400 random probes with faults. It found 0 mismatches on status, the compared headers and body, in 6 consecutive runs, and statuses 200/201/401/404/405/409/412/415/422/428 were all exercised.
+- **All private-games HTTP tests** run against both services (`Tests.Games.runWith .native` / `.dbapi`): simultaneous moves (exactly one wins, 7 × 412), concurrent same key (one transition), restart-after-commit replay, invalid stored row (500 without detail). 407 tests pass.
+- Revocation-between-admission-and-commit is a repository-level test and runs for the native service only. For programs, admission and commit are one transaction.
+
+**Deviation 1 (location):** the new API is `PrivateGames.DbApi.gamesApi` (type `DbApi Games`, whose `toApi : Api (DbState Games)`), next to the reference `PrivateGames.Api.gamesApi`, which this ticket keeps until LAPI-08. So the blog's `excerpt examples/private-games/PrivateGames/Api.lean` blocks still fail (`check_blog.sh`: 3/12, unchanged, not in CI). They pass once LAPI-08 moves `DbApi.lean` to `Api.lean`.
+
+**Deviation 2 (receipts):** receipts are looked up by `ReceiptRow.byKey`, then inserted with the change, inside one `BEGIN IMMEDIATE` transaction. They are not claimed first. Claim-first cannot meet the byte-for-byte criterion: it records a receipt for requests that answer *without* writing (a repeated resignation), so a later request with that key and a different body would answer 422 where the reference decides afresh. Under the single writer the two designs are equally race-free. To adopt claim-first, first change the reference and model semantics (record answers for non-writing keyed requests), then this code and the blog's `keyed`.

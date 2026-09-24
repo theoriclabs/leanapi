@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased: private-games over LeanDB programs (LAPI-05)
+
+- `PrivateGames.DbApi.gamesApi`: the five game routes as LeanDB `Read`/`Tx` programs over `DbState Games`. New and changed games are `Checked` from the domain proofs.
+- `GamesMain` serves the game routes from it. The account routes are unchanged.
+- The differential test compares four systems (model, in-memory API, native service, LeanDB programs). All private-games HTTP tests run against both the native and the LeanDB-program service.
+
 ## Unreleased: problem defaults for LeanDB failures (LAPI-03)
 
 - `LeanApi.Http.DbProblem`: `ToProblem` for LeanDB's five write failure types, with typed statuses (409/412/404/422) and no payload by default.

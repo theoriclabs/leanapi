@@ -8,6 +8,7 @@
 import PrivateGames.Model.Step
 import PrivateGames.Api
 import PrivateGames.App.Service
+import PrivateGames.DbApi
 import Tests.Games
 
 namespace Tests.Differential
@@ -112,9 +113,19 @@ def randomProbe (opponents : Array Nat) : IO Probe := do
 def run : TestM Unit := do
   section_ "differential: native vs model" do
     let env ← freshEnv "differential"
+    -- The LeanDB-program API (LAPI-05), on its own database file.
+    let envDb ← freshEnv "differential-dbapi"
+    let dc ← LeanApi.DbConns.open envDb.path PrivateGames.Storage.schema 2
+    let dummy ← LeanCrypto.Password.hash "dummy" fast
+    let dbSvc := PrivateGames.DbApi.service dc envDb.rt.repo dummy (fun _ => pure ()) fast
     let names := ["n1", "n2", "n3", "n4"]
     let mut users : Array (Nat × String) := #[]
-    for n in names do users := users.push (← signup env.svc n)
+    let mut dbTokens : Array String := #[]
+    for n in names do
+      users := users.push (← signup env.svc n)
+      let (dbId, dbTok) ← signup dbSvc n
+      unless dbId == users.back!.1 do IO.throwServerError "player ids differ between systems"
+      dbTokens := dbTokens.push dbTok
     let mut world : World := {
       games := [], receipts := [], nextGame := 1
       players := users.toList.map fun (id, _) => ⟨id⟩
@@ -122,13 +133,17 @@ def run : TestM Unit := do
     let mut typedWorld := world
     let mut mismatches := 0
     let mut typedMismatches := 0
+    let mut dbMismatches := 0
     let mut total := 0
     let mut seen : List Nat := []
     for step_ in [0:400] do
-      let (_, tok) := users[← IO.rand 0 (users.size - 1)]!
+      let who ← IO.rand 0 (users.size - 1)
+      let (_, tok) := users[who]!
       let probe ← randomProbe (users.map (·.1))
       let wire := probe.render tok
       let native ← request env.svc (toString wire.method) wire.target wire.headers wire.body
+      let dbWire := probe.render dbTokens[who]!
+      let dbRes ← request dbSvc (toString dbWire.method) dbWire.target dbWire.headers dbWire.body
       let req := wire.toReq
       let (res, w') := Model.step req world
       world := w'
@@ -140,14 +155,21 @@ def run : TestM Unit := do
         typedMismatches := typedMismatches + 1
         if typedMismatches ≤ 3 then
           IO.eprintln s!"  step {step_}: {wire.method} {wire.target} {repr probe.fault}\n    typed  {repr (comparable tres)}\n    model  {repr (comparable res)}"
+      if replyComparable dbRes != comparable res then
+        dbMismatches := dbMismatches + 1
+        if dbMismatches ≤ 3 then
+          IO.eprintln s!"  step {step_}: {wire.method} {wire.target} {repr probe.fault}\n    dbapi  {repr (replyComparable dbRes)}\n    model  {repr (comparable res)}"
       if replyComparable native != comparable res then
         mismatches := mismatches + 1
         if mismatches ≤ 3 then
           IO.eprintln s!"  step {step_}: {wire.method} {wire.target} {repr probe.fault}\n    native {repr (replyComparable native)}\n    model  {repr (comparable res)}"
     checkEq s!"{total} requests: native ≡ model" mismatches 0
     checkEq s!"{total} requests: typed API ≡ model" typedMismatches 0
+    checkEq s!"{total} requests: LeanDB-program API ≡ model" dbMismatches 0
     for code in [200, 201, 401, 404, 405, 409, 412, 415, 422, 428] do
       check s!"status {code} exercised" (seen.contains code)
     env.rt.close
+    dc.close
+    envDb.rt.close
 
 end Tests.Differential

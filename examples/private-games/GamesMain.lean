@@ -1,4 +1,4 @@
-import PrivateGames.App.Service
+import PrivateGames.DbApi
 
 open PrivateGames.App PrivateGames.Storage
 
@@ -19,12 +19,17 @@ def main (args : List String) : IO UInt32 := do
   match parse args "127.0.0.1" ((env.bind String.toNat?).getD 8080) "games.sqlite" with
   | .error u => IO.eprintln u; return 3
   | .ok (host, port, db) =>
-    let rt ← Runtime.open db
+    let rt ← Runtime.open db  -- migrates a v1 instance; account routes use its repository
+    let dc ← LeanApi.DbConns.open db PrivateGames.Storage.schema
     let dummy ← LeanCrypto.Password.hash "leanapi-dummy-password"
     let draining ← IO.mkRef false
-    let svc := LeanApi.Service.ofRouter (LeanApi.Router.build! (routes rt.repo dummy))
+    -- The game routes are LeanDB programs (`PrivateGames.DbApi.gamesApi`, LAPI-05).
+    let svc := LeanApi.Service.ofRouter
+      (LeanApi.Router.build! (PrivateGames.DbApi.gamesApi.routes dc IO.eprintln ++ accountRoutes rt.repo dummy {}))
       (stack IO.eprintln (do return !(← draining.get)))
     IO.eprintln (stack).describe
+    IO.eprintln PrivateGames.DbApi.gamesApi.describe
     LeanApi.serve svc { host, port := port.toUInt16 } (draining := some draining)
+    dc.close
     rt.close
     return 0
