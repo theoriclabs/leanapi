@@ -1,6 +1,6 @@
 name = "leanapi"
 version = "0.6.0"
-defaultTargets = ["LeanApi", "PolicyView"]
+defaultTargets = ["LeanApi", "PolicyView", "Billing"]
 
 # Crypto dependency (M2), pinned by tag.
 [[require]]
@@ -61,3 +61,8 @@ globs = ["PolicyView.+"]
 name = "policyview"
 srcDir = "examples/policy-view"
 root = "PolicyViewMain"
+
+[[lean_lib]]
+name = "Billing"
+srcDir = "examples/billing"
+globs = ["Billing.+"]
