@@ -186,7 +186,7 @@ theorem unrouted_pure (r : Req) (w : World) (res : Res)
 theorem resign_state_idem (p : PlayerId) (g : Game) (s : Slice)
     (hs : s.game = some g) (hr : g.resigned = some p) (hp : g.isParticipant p = true) (gid : GameId) :
     core p (.resign gid none) s = .respond (gameRes g) := by
-  simp [core, withReceipt, Input.keyed, keyedFor, decideCore, hs, PrivateGames.resign, hp, hr]
+  simp [core, withReceipt, Input.keyed, decideCore, hs, PrivateGames.resign, hp, hr]
 
 /-! ## Availability -/
 

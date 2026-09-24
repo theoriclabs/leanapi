@@ -9,7 +9,7 @@
 
   The bodies call the domain (`openGame`, `playMove`, `resign`) and the same
   helpers as the reference model (`visibleGames`, `ownReceipts`,
-  `recordReceipt`, `keyedFor`). The differential test checks that this API,
+  `recordReceipt`). The differential test checks that this API,
   the reference model and the native LeanDB service answer alike.
 -/
 import PrivateGames.Model.Isolation
@@ -29,12 +29,6 @@ instance gamesView : ViewOf World PlayerId := ⟨SameView⟩
 
 /-! ## Inputs -/
 
-/-- An `Idempotency-Key`: 1–255 visible ASCII characters. -/
-structure IdemKey where
-  val : String
-
-instance : FromParam IdemKey :=
-  ⟨fun k => if validKey k then .ok ⟨k⟩ else .error "1–255 visible ASCII characters"⟩
 
 /-- The revision a move was decided against, sent as `If-Match: "<rev>"`. -/
 structure ETagRev where
@@ -45,7 +39,11 @@ instance : FromParam ETagRev :=
     | some n => .ok ⟨n⟩
     | none => .error "expected an ETag \"<revision>\""⟩
 
-abbrev KeyHeader := Header "idempotency-key" (Option IdemKey)
+/-- The `Idempotency-Key` and the retry identity the framework computes. -/
+abbrev KeyHeader := Idempotency
+
+/-- The framework's retry identity, in the core's shape. -/
+def KeyHeader.keyed (k : KeyHeader) : Option Keyed := k.retry.map Keyed.ofRetry
 
 structure OpenBody where
   opponent : PlayerId
@@ -169,7 +167,7 @@ def keyed [ToResponse α] (me : PlayerId) (k? : Option Keyed)
 /-- Open a game against `opponent`. -/
 def openGame (me : Auth PlayerId) (body : Body OpenBody) (key : KeyHeader) :
     Writes World (Except GameError (Replayed (Created (Versioned GameView)))) :=
-  keyed me.val (keyedFor .openGame (key.val.map (·.val)) s!"openGame|{body.val.opponent.n}|{body.val.tc.minutes}")
+  keyed me.val key.keyed
     fun w =>
       if !w.players.contains body.val.opponent then .refuse .unknownOpponent else
       match PrivateGames.openGame ⟨w.nextGame⟩ me.val body.val.opponent body.val.tc with
@@ -195,7 +193,7 @@ def replaceGame (w : World) (old new : Game) : World :=
 /-- Play a move in one of my games, decided against revision `rev`. -/
 def playMove (me : Auth PlayerId) (rev : IfMatchRequired ETagRev) (body : Body MoveBody) (id : Path GameId)
     (key : KeyHeader) : Writes World (Except GameError (Replayed (Versioned GameView))) :=
-  keyed me.val (keyedFor .playMove (key.val.map (·.val)) s!"playMove|{id.val.n}|{rev.val.rev}|{body.val.cell.i}")
+  keyed me.val key.keyed
     fun w =>
       match (visibleGames me.val w).find? (·.id = id.val) with
       | none => .refuse .hidden
@@ -208,7 +206,7 @@ def playMove (me : Auth PlayerId) (rev : IfMatchRequired ETagRev) (body : Body M
 /-- Resign one of my games. Resigning twice answers the same game. -/
 def resign (me : Auth PlayerId) (id : Path GameId) (key : KeyHeader) :
     Writes World (Except GameError (Replayed (Versioned GameView))) :=
-  keyed me.val (keyedFor .resign (key.val.map (·.val)) s!"resign|{id.val.n}")
+  keyed me.val key.keyed
     fun w =>
       match (visibleGames me.val w).find? (·.id = id.val) with
       | none => .refuse .hidden

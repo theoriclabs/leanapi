@@ -57,3 +57,23 @@ private-games:
 
 - **Receipts written before the change** match only if the app registers its old fingerprint as `v0`. Otherwise a retry of a request made before the upgrade answers 422 instead of replaying. private-games registers `v0` (its current strings) until receipts from before the change no longer matter.
 - **Stricter than today, by design:** two requests whose bodies differ in a field the decoder ignores now have different fingerprints, so the second answers 422.
+
+## Status (2026-09-23): done on LeanDB M14c (`afe4544`)
+
+- `LeanApi/Http/Idempotency.lean`: `Retry` (key, endpoint, `v1:` fingerprint, optional `v0`), `Retry.fingerprintOf`, and `LegacyFingerprint σ`, the app's pre-`v1` identity, defaulting to none. The canonical form is a JSON array: `"<METHOD> <template>"`, path params, sorted query params, the body (canonical JSON, or base64 bytes), then `If-Match` and the declared headers, excluding the key.
+- `Idempotency` is a framework input (`FromRequest`). The router, `Api.step` and `DbEndpoint.toRoute` pass the endpoint identity and declared headers as two reserved parameters appended after the template's own, so positional `Path` decoding and `authenticate_params` are unchanged.
+- private-games:
+  - `keyedFor` and the three hand-built strings are gone. `Api`, `DbApi` and the core's `decode` (used by the model and the native service) all take the fingerprint from `Retry.ofReq`.
+  - `legacyV0` rebuilds the old strings from the decoded input and is registered for `DbState Games`.
+  - `grep fingerprint examples/` finds only the receipt field, comments, and the `v0` function.
+- Tests (`tests/Tests/Idempotency.lean`):
+  - canonical form: JSON key order and whitespace, query order, the key excluded, undeclared headers excluded;
+  - every private-games input (path, body field, `If-Match`, opponent, minutes) changes the fingerprint;
+  - a test endpoint whose declared `Header "x-tenant"` changes the fingerprint with no change to its code;
+  - a receipt rewritten in the pre-LAPI-10 format replays, and a different request with that key answers 422. Removing `legacyV0` makes these fail (checked).
+- The existing replay tests (concurrent same key, restart) and the 4-way differential test pass unchanged: 428 tests, 3 runs.
+
+Notes:
+- The receipt's `op` is now the endpoint identity (`POST /games/{id:nat}/moves`), not the short name, so it changes for receipts written from now on. Old rows are found through `v0`.
+- The model and the native service compute the identity from `routeTable` (`Op.endpoint`), and the typed APIs get it from the router. The differential test holds them equal.
+- As the ticket says, the check is now stricter: `minutes` sent explicitly with its default value (10) and `minutes` omitted are different requests.

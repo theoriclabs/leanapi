@@ -41,11 +41,16 @@ def markReplay (r : Res) : Res := r.setHeader replayHeader.1 replayHeader.2
 def Receipt.ofRes (fp : String) (r : Res) : Receipt := ⟨fp, r.status, r.headers, r.body⟩
 def Receipt.toRes (rc : Receipt) : Res := markReplay { status := rc.status, headers := rc.headers, body := rc.body }
 
+/-- A keyed request's retry identity, as the framework computes it
+    (`LeanApi.Retry`): the endpoint, the key, and the fingerprint of the
+    request as the endpoint reads it. The app never builds one. -/
 structure Keyed where
   op : String
   key : String
   fingerprint : String
   deriving Repr, BEq
+
+def Keyed.ofRetry (r : Retry) : Keyed := ⟨r.op, r.key, r.fingerprint⟩
 
 inductive Write where
   | insertGame (g : Game)
@@ -98,11 +103,11 @@ def unknownToken : Res := unauthorized challenge "invalid credentials"
 /-! ## Inputs -/
 
 inductive Input where
-  | openGame (opponent : PlayerId) (tc : TimeControl) (key : Option String)
+  | openGame (opponent : PlayerId) (tc : TimeControl) (key : Option Keyed)
   | listGames (page per : Nat)
   | readGame (gid : GameId)
-  | playMove (gid : GameId) (rev : Revision) (cell : Cell) (key : Option String)
-  | resign (gid : GameId) (key : Option String)
+  | playMove (gid : GameId) (rev : Revision) (cell : Cell) (key : Option Keyed)
+  | resign (gid : GameId) (key : Option Keyed)
 
 instance : FromParam GameId := ⟨fun s => match s.toNat? with
   | some n => GameId.make n
@@ -112,13 +117,21 @@ instance : SmartCtor PlayerId Nat := ⟨PlayerId.make, (·.n)⟩
 instance : SmartCtor Cell Nat := ⟨Cell.make, (·.i)⟩
 instance : SmartCtor TimeControl Nat := ⟨TimeControl.make, (·.minutes)⟩
 
-def validKey (k : String) : Bool :=
-  !k.isEmpty && k.length ≤ 255 && k.all fun c => c.toNat > 32 && c.toNat < 127
+def validKey (k : String) : Bool := Retry.validKey k
 
-def idemKey : Extract (Option String) := fun r =>
+/-- The endpoint identity, as the framework renders it (`"<METHOD> <template>"`). -/
+def Op.endpoint (op : Op) : String :=
+  match routeTable.find? (·.1 == op) with
+  | some (_, m, t) => s!"{m} {t}"
+  | none => op.name
+
+/-- The key, with the framework's retry identity for this request. -/
+def idemKey (op : Op) : Extract (Option Keyed) := fun r =>
   match r.header? "idempotency-key" with
   | none => .ok none
-  | some k => if validKey k then .ok (some k) else .error [⟨"header.idempotency-key", "1–255 visible ASCII characters"⟩]
+  | some k =>
+    if validKey k then .ok (some (Keyed.ofRetry (Retry.ofReq op.endpoint [] k r)))
+    else .error [⟨"header.idempotency-key", "1–255 visible ASCII characters"⟩]
 
 /-- `If-Match: "<rev>"`: required on moves (428 when missing). -/
 def ifMatchRev (r : Req) : Except Res Revision :=
@@ -150,7 +163,7 @@ def decode (op : Op) (r : Req) : Except Res Input :=
     runExtract (fun r => do
       let j ← Extract.rawJson r
       let (opp, tc) ← both (field (α := PlayerId) "body" j "opponent") (fieldD "body" j "minutes" TimeControl.default)
-      let k ← idemKey r
+      let k ← idemKey .openGame r
       return Input.openGame opp tc k) r
   | .listGames => runExtract (fun r => do
       let (page, per) ← both (Extract.queryD (α := Nat) "page" 1 r) (Extract.queryD (α := Nat) "per" 20 r)
@@ -163,26 +176,38 @@ def decode (op : Op) (r : Req) : Except Res Input :=
     jsonOnly r
     runExtract (fun r => do
       let (gid, cell) ← both (Extract.path (α := GameId) "id" r) (do field (α := Cell) "body" (← Extract.rawJson r) "cell")
-      let k ← idemKey r
+      let k ← idemKey .playMove r
       return Input.playMove gid rev cell k) r
   | .resign => runExtract (fun r => do
-      let (gid, k) ← both (Extract.path (α := GameId) "id" r) (idemKey r)
+      let (gid, k) ← both (Extract.path (α := GameId) "id" r) (idemKey .resign r)
       return Input.resign gid k) r
 
 /-! ## Retry identity -/
 
-def keyedFor (op : Op) (k : Option String) (canonical : String) : Option Keyed :=
-  k.map fun key => { op := op.name, key, fingerprint := LeanCrypto.Hex.encode (LeanCrypto.sha256 canonical.toUTF8) }
 
-/-- The retry identity of a request: operation, key, and a fingerprint of
-    the canonical input (not the raw bytes, so JSON key order or whitespace
-    does not matter). Reads have none. -/
+/-- The retry identity of a request, computed by the framework when it was
+    decoded (`idemKey`). Reads have none. -/
 def Input.keyed : Input → Option Keyed
-  | .openGame opp tc k => keyedFor .openGame k s!"openGame|{opp.n}|{tc.minutes}"
-  | .playMove gid rev cell k => keyedFor .playMove k s!"playMove|{gid.n}|{rev}|{cell.i}"
-  | .resign gid k => keyedFor .resign k s!"resign|{gid.n}"
+  | .openGame _ _ k => k
+  | .playMove _ _ _ k => k
+  | .resign _ k => k
   | .listGames .. => none
   | .readGame _ => none
+
+/-- The pre-`v1` retry identity (LAPI-10): the operation's short name and
+    the SHA-256 of the string each endpoint used to build by hand. Registered
+    as `LegacyFingerprint` only so receipts written before the framework
+    computed fingerprints still replay. Nothing new is stored with it. -/
+def legacyV0 (r : Req) : Option (String × String) :=
+  let hex (s : String) := LeanCrypto.Hex.encode (LeanCrypto.sha256 s.toUTF8)
+  match routeTable.find? (fun (_, m, t) => s!"{m} {t}" == Retry.opOf r) with
+  | none => none
+  | some (op, _, _) =>
+    match decode op r with
+    | .ok (.openGame opp tc _) => some (op.name, hex s!"openGame|{opp.n}|{tc.minutes}")
+    | .ok (.playMove gid rev cell _) => some (op.name, hex s!"playMove|{gid.n}|{rev}|{cell.i}")
+    | .ok (.resign gid _) => some (op.name, hex s!"resign|{gid.n}")
+    | _ => none
 
 /-! ## Loads -/
 

@@ -47,14 +47,14 @@ An endpoint is a plain function. Its type tells you what the request does:
 <!-- check: signature PrivateGames.DbApi.playMove -->
 ```lean
 def playMove (me : Auth PlayerId) (rev : IfMatchRequired ETagRev) (body : Body MoveBody) (id : Path GameId)
-    (key : KeyHeader) : Tx Games GameError (Replayed (Versioned GameView))
+    (key : Idempotency) : Tx Games GameError (Replayed (Versioned GameView))
 ```
 
 Read the signature:
 - the caller is an authenticated player;
 - they must send the revision of the game they saw (`If-Match`);
 - the body is decoded and validated as a move;
-- the game id comes from the path, and a retry key from a header;
+- the game id comes from the path; `Idempotency` is the retry key, with a fingerprint the framework computes from everything the endpoint reads;
 - it is a database transaction (`Tx`) over the `Games` schema: it commits or rolls back as a whole;
 - it answers the updated game with its `ETag`, possibly replayed from an earlier identical request, or fails with one of the cases of `GameError`.
 
@@ -120,7 +120,7 @@ There are many ways to get this wrong in a normal backend:
 - Answer **403** for someone else's game but **404** for a missing one. That tells an attacker which ids exist.
 - Load every game and filter in code, so one missed filter leaks everything.
 
-Tests catch the cases you thought of. Here we prove that **no code path** reachable through the API does any of this.
+Tests catch the cases you thought of. Here we prove that **no route of `gamesApi`** does any of this, whatever the request. The proof is about the routes listed in `gamesApi`: add one, and the proof stops compiling until it covers the new route too. A route served outside `gamesApi` isn't covered.
 
 ### Property 1: you only ever see your own games
 
@@ -137,7 +137,7 @@ In words:
 3. They may differ in anything else. Other people's games can be completely different.
 4. Then the **entire HTTP response is identical**: status code, every header, every byte of the body.
 
-So nothing `p` receives can depend on data `p` isn't allowed to see. `gamesApi.step` is the whole API: routing, authentication, decoding, the queries and the writes. So this covers every route and every branch, including 401, 404, 405, 409 and 412, not just the happy path.
+So nothing `p` receives from `gamesApi` can depend on data `p` isn't allowed to see. `gamesApi.step` is the API as a whole: routing, authentication, decoding, the queries and the writes. So this covers every route of `gamesApi` and every branch, including 401, 404, 405, 409 and 412, not just the happy path.
 
 And a stronger one: the other players' games are never even *fetched*. Every query a request makes on behalf of `p` is restricted to the games `p` plays in:
 
@@ -168,18 +168,18 @@ theorem step_safe (api : Api σ) (env : Env) (r : Req) (s : σ) (hm : r.method.S
 
 A player makes a move and the network drops the response, so the client retries with the same `Idempotency-Key`. If the server applied the move twice, the game would be corrupted.
 
-The receipt is looked up by its key in the same transaction as the move:
+The receipt is looked up by its key in the same transaction as the move. The key and the request's fingerprint (`Idempotency`) are computed by the framework, from everything the endpoint reads, so an endpoint can't forget an input:
 
 <!-- check: excerpt examples/private-games/PrivateGames/DbApi.lean -->
 ```lean
-def keyed [ToResponse α] (me : PlayerId) (k? : Option Keyed)
+def keyed [ToResponse α] (me : PlayerId) (key : Idempotency)
     (decide : Txn σ Games GameError (Bool × α)) : Txn σ Games GameError (Replayed α) :=
-  match k? with
+  match key.retry with
   | none => do let (_, a) ← decide; pure (.fresh a)
   | some k => do
-    match ← Txn.liftRead (Read.lookup ReceiptRow ReceiptRow.Unique.byKey (pref me, k.op, k.key)) with
-    | some rc =>
-      if rc.val.fingerprint == k.fingerprint then pure (.replay (receiptOfRow rc.val))
+    match ← findReceipt me k with
+    | some (rc, fp) =>
+      if rc.val.fingerprint == fp then pure (.replay (receiptOfRow rc.val))
       else Txn.throw .keyReused
     | none =>
       let (wrote, a) ← decide
@@ -282,6 +282,7 @@ It assumes one thing, `ExecutesAsMeaning`: that LeanDB runs each query and write
 I want to be precise here, because a proof is only as good as its statement.
 
 - **Proved:** isolation, restricted reads, existence privacy, availability, safe reads, retry safety, valid games, unique ids, about `gamesApi` itself, with no `sorry` and no axioms beyond Lean's standard three.
+- **Not covered:** routes served next to `gamesApi` rather than in it. In this example, that's sign-up and login, which touch only the player and session tables.
 - **Assumed, and checked by testing:** that LeanDB executes queries and writes as their meaning says, on SQLite.
 - **Trusted:** SQLite itself, the HTTP parser, the crypto library, and the middleware in front of the API (logging, rate limits).
 - **Out of scope:** timing. And the "view" is spelled out: it includes the next game id, so a new game's id reveals how many games exist. That release is written into the theorem rather than hidden.

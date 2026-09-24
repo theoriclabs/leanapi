@@ -61,6 +61,7 @@ instance (priority := high) [FromParam α] : FromRequest.Pure σ (Header n (Opti
 instance [FromParam α] : FromRequest.Pure σ (IfMatch α) := ⟨fun _ _ _ _ => rfl⟩
 instance [FromParam α] : FromRequest.Pure σ (IfMatchRequired α) := ⟨fun _ _ _ _ => rfl⟩
 instance : FromRequest.Pure σ FreshToken := ⟨fun _ _ _ _ => rfl⟩
+instance [LegacyFingerprint σ] : FromRequest.Pure σ Idempotency := ⟨fun _ _ _ _ => rfl⟩
 instance : FromRequest.Pure σ Now := ⟨fun _ _ _ _ => rfl⟩
 instance (priority := high) [FromBody α] [FromForm α] : FromRequest.Pure σ (Body α) :=
   ⟨fun _ _ _ _ => rfl⟩
@@ -510,6 +511,7 @@ def toRoute (e : DbEndpoint s) (dc : DbConns) (log : String → IO Unit) : Route
   template := e.template
   handler req := do
     let env ← Env.fresh
+    let req := { req with params := req.params ++ Retry.routeParams e.method e.template e.inputs }
     match ← DbProg.exec dc (e.prog env req) with
     | .ok res => return res
     | .error f =>

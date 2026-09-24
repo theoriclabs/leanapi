@@ -10,6 +10,7 @@ import Tests.PropsCommands
 import Tests.Registry
 import Tests.Endpoint
 import Tests.DbEndpoint
+import Tests.Idempotency
 
 open LeanApi.Test
 
@@ -25,6 +26,7 @@ def main : IO UInt32 := do
     Tests.Props.run
     Tests.Endpoint.run
     Tests.DbEndpoint.run
+    Tests.Idempotency.run
     : TestM Unit).run {}
   IO.println s!"\n{r.passed} passed, {r.failed.length} failed"
   return if r.failed.isEmpty then 0 else 1

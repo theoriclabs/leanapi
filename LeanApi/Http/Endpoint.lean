@@ -40,6 +40,7 @@ import LeanApi.Auth.Jwt
 import LeanApi.Util.Base64
 import LeanApi.Runtime.Server
 import LeanApi.Props.Sys
+import LeanApi.Http.Idempotency
 import Std.Sync.Mutex
 
 namespace LeanApi
@@ -320,6 +321,21 @@ instance [A : Authenticates σ α] : FromRequest σ (Auth α) where
     | .ok who => .ok ⟨who⟩
     | .error .missing => .reject (unauthorized A.challenge)
     | .error (.invalid _) => .reject (unauthorized A.challenge "invalid credentials")
+
+/-- The request's `Idempotency-Key`, with the retry identity the framework
+    computes for it (`Retry`): the endpoint, and a fingerprint of the request
+    as the endpoint reads it. Handlers never build a fingerprint. -/
+structure Idempotency where
+  retry : Option Retry
+
+instance [L : LegacyFingerprint σ] : FromRequest σ Idempotency where
+  kind := "idempotency"
+  extract _ _ r :=
+    match r.header? "idempotency-key" with
+    | none => .ok ⟨none⟩
+    | some k =>
+      if Retry.validKey k then .ok ⟨some (Retry.ofReq (Retry.opOf r) (Retry.declaredOf r) k r (L.v0 r))⟩
+      else .invalid [⟨"header.idempotency-key", "1–255 visible ASCII characters"⟩]
 
 instance : FromRequest σ FreshToken where
   kind := "fresh token"
@@ -786,6 +802,7 @@ def toRoute (e : Endpoint σ) (store : Store σ) : Route where
   template := e.template
   handler req := do
     let env ← Env.fresh
+    let req := { req with params := req.params ++ Retry.routeParams e.method e.template e.inputs }
     store.modify fun s => let (res, s') := e.step env req s; (s', res)
   bodyLimit := e.bodyLimit
   name := if e.signature.isEmpty then none else some e.signature
@@ -820,11 +837,12 @@ def entries (api : Api σ) : List (Endpoint σ × Method × List Seg) :=
   api.filterMap fun e => (parseTemplate e.template).toOption.map fun segs => (e, e.method, segs)
 
 /-- The API's meaning: route with the same `resolveIn` the router uses, then
-    run the endpoint. (Middleware is outside it.) -/
+    run the endpoint, with its identity passed as the router passes it
+    (`Retry.routeParams`). (Middleware is outside it.) -/
 def step (api : Api σ) (env : Env) (r : Req) (s : σ) : Res × σ :=
   match Router.resolveIn api.entries .redirect r with
   | .respond res => (res, s)
-  | .route e ps => e.step env { r with params := ps } s
+  | .route e ps => e.step env { r with params := ps ++ Retry.routeParams e.method e.template e.inputs } s
 
 /-- The API as a transition system, for the property library. -/
 def toSys (api : Api σ) (init : σ → Prop) : Props.Sys where

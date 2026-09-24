@@ -25,7 +25,7 @@ import LeanApi.Http.DbEndpoint
 namespace PrivateGames.DbApi
 
 open LeanApi Lean LeanDb PrivateGames PrivateGames.App PrivateGames.Storage
-open PrivateGames.Api (IdemKey ETagRev KeyHeader OpenBody MoveBody PageReq GameView GamePage
+open PrivateGames.Api (ETagRev OpenBody MoveBody PageReq GameView GamePage
   Replayed GameError)
 
 /-! ## Actors -/
@@ -50,19 +50,36 @@ def visibleGame (p : PlayerId) (gid : GameId) : Read Games (Option (Stored GameR
 
 def versioned (s : Stored GameRow) : Versioned GameView := PrivateGames.Api.Game.versioned (reconstruct s)
 
-/-! ## Retries -/
+/-! ## Retries
+
+The fingerprint is the framework's (`LeanApi.Retry`). Receipts stored
+before that change carry the app's old operation name and fingerprint; they
+still replay, because the app registers its old function as `v0`. -/
+
+instance : LegacyFingerprint (DbState Games) := ⟨legacyV0⟩
+
+
+/-- My receipt for this key, with the fingerprint to compare it against.
+    Falls back to the pre-`v1` identity (`v0`) for receipts stored before
+    the framework computed fingerprints. -/
+def findReceipt (me : PlayerId) (k : Retry) : Txn σ Games GameError (Option (Stored ReceiptRow × String)) := do
+  let receipt (op : String) := Txn.liftRead (Read.lookup ReceiptRow ReceiptRow.Unique.byKey (pref me, op, k.key))
+  match ← receipt k.op with
+  | some rc => pure (some (rc, k.fingerprint))
+  | none => match k.legacy with
+    | some (op0, fp0) => (·.map (·, fp0)) <$> receipt op0
+    | none => pure none
 
 /-- A keyed write: replay the recorded answer, refuse a reused key, or
-    decide. `decide` says whether it wrote; a write is recorded with its
-    answer, in the same transaction. -/
-def keyed [ToResponse α] (me : PlayerId) (k? : Option Keyed)
+    decide. The key and its fingerprint are the framework's. -/
+def keyed [ToResponse α] (me : PlayerId) (key : Idempotency)
     (decide : Txn σ Games GameError (Bool × α)) : Txn σ Games GameError (Replayed α) :=
-  match k? with
+  match key.retry with
   | none => do let (_, a) ← decide; pure (.fresh a)
   | some k => do
-    match ← Txn.liftRead (Read.lookup ReceiptRow ReceiptRow.Unique.byKey (pref me, k.op, k.key)) with
-    | some rc =>
-      if rc.val.fingerprint == k.fingerprint then pure (.replay (receiptOfRow rc.val))
+    match ← findReceipt me k with
+    | some (rc, fp) =>
+      if rc.val.fingerprint == fp then pure (.replay (receiptOfRow rc.val))
       else Txn.throw .keyReused
     | none =>
       let (wrote, a) ← decide
@@ -78,9 +95,9 @@ def keyed [ToResponse α] (me : PlayerId) (k? : Option Keyed)
 /-! ## Endpoints -/
 
 /-- Open a game against `opponent`. -/
-def openGame (me : Auth PlayerId) (body : Body OpenBody) (key : KeyHeader) :
+def openGame (me : Auth PlayerId) (body : Body OpenBody) (key : Idempotency) :
     Tx Games GameError (Replayed (Created (Versioned GameView))) :=
-  keyed me.val (keyedFor .openGame (key.val.map (·.val)) s!"openGame|{body.val.opponent.n}|{body.val.tc.minutes}") do
+  keyed me.val key do
     let opp := body.val.opponent
     let known ← Txn.liftRead (Read.get PlayerRow (pref opp))
     if known.isNone || opp.n ≥ 2^63 then Txn.throw .unknownOpponent
@@ -122,8 +139,8 @@ def writeStep (me : PlayerId) (cmd : Command) (s : Stored GameRow) {g' : Game}
 
 /-- Play a move in one of my games, decided against revision `rev`. -/
 def playMove (me : Auth PlayerId) (rev : IfMatchRequired ETagRev) (body : Body MoveBody) (id : Path GameId)
-    (key : KeyHeader) : Tx Games GameError (Replayed (Versioned GameView)) :=
-  keyed me.val (keyedFor .playMove (key.val.map (·.val)) s!"playMove|{id.val.n}|{rev.val.rev}|{body.val.cell.i}") do
+    (key : Idempotency) : Tx Games GameError (Replayed (Versioned GameView)) :=
+  keyed me.val key do
     match ← Txn.liftRead (visibleGame me.val id.val) with
     | none => Txn.throw .hidden
     | some s =>
@@ -133,9 +150,9 @@ def playMove (me : Auth PlayerId) (rev : IfMatchRequired ETagRev) (body : Body M
       | .ok _ => writeStep me.val _ s h
 
 /-- Resign one of my games. Resigning twice answers the same game. -/
-def resign (me : Auth PlayerId) (id : Path GameId) (key : KeyHeader) :
+def resign (me : Auth PlayerId) (id : Path GameId) (key : Idempotency) :
     Tx Games GameError (Replayed (Versioned GameView)) :=
-  keyed me.val (keyedFor .resign (key.val.map (·.val)) s!"resign|{id.val.n}") do
+  keyed me.val key do
     match ← Txn.liftRead (visibleGame me.val id.val) with
     | none => Txn.throw .hidden
     | some s =>

@@ -4,6 +4,19 @@
 
 - **LeanAPI is now under the Business Source License 1.1** (`LICENSE`), from version 0.6.0. Each version converts to the MIT License four years after it is published. Production use is free for organizations with 100 or fewer people and US $100 million or less in annual revenue, unless the use is a Competing Service (see `LICENSE`). Versions up to v0.5.0 remain under the MIT License.
 
+## Unreleased: framework-computed retry fingerprints (LAPI-10)
+
+- `Idempotency` input: the `Idempotency-Key` with a `v1:` fingerprint of the request as the endpoint reads it (endpoint, path, sorted query, canonical JSON body, `If-Match`, declared headers). Handlers never build one.
+- `LegacyFingerprint σ`: an app's pre-`v1` identity, so older receipts still replay. private-games registers its old strings (`legacyV0`).
+- Receipts now record the endpoint identity (`POST /games`) as their operation.
+
+## Unreleased: database endpoints read like the rest (LAPI-11)
+
+- `Tx s ε ρ` takes the transaction index implicitly: handler bodies are `do …`.
+- `api!` builds `DbApi s` too (`dbapi!` is a deprecated alias). New: `DbApi.step`, `DbApi.runAll`.
+- `LeanApi.Query` is now `QueryParams` (deprecated alias), so it no longer clashes with `LeanDb.Query`.
+- `WithReferrers` names the referencing table and column from the schema.
+
 ## Unreleased: private-games over LeanDB programs (LAPI-05)
 
 - `PrivateGames.DbApi.gamesApi`: the five game routes as LeanDB `Read`/`Tx` programs over `DbState Games`. New and changed games are `Checked` from the domain proofs.
