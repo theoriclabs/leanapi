@@ -42,6 +42,9 @@ def PersonId.ofNat! (n : Nat) : PersonId :=
 
 def PersonId.lit (n : Nat) (h : n < 2^63 := by decide) : PersonId := ⟨n, h⟩
 
+theorem PersonId.ext {a b : PersonId} (h : a.n = b.n) : a = b := by
+  cases a; cases b; simp_all
+
 structure BookingId where
   n : Nat
   deriving DecidableEq, Repr, Hashable, Ord, Inhabited
@@ -138,6 +141,8 @@ structure BusyInterval where
   deriving DecidableEq, Repr
 
 def BusyInterval.ofSlot (s : Slot) : BusyInterval := ⟨s.start.unix, s.finish.unix⟩
+
+def BusyInterval.ofInterval (i : Interval) : BusyInterval := ⟨i.startUnix, i.finishUnix⟩
 
 def Booking.toBusy (b : Booking) : BusyInterval := BusyInterval.ofSlot b.slot
 
@@ -268,6 +273,9 @@ theorem reinvite_preserves_freeBusy (bs : List Booking) (p : PersonId) :
 /-- The projection of one booking is exactly its interval. -/
 theorem toBusy_eq_interval (b : Booking) :
     b.toBusy = ⟨b.interval.startUnix, b.interval.finishUnix⟩ := rfl
+
+theorem toBusy_eq_ofInterval (b : Booking) :
+    b.toBusy = BusyInterval.ofInterval b.interval := rfl
 
 theorem decideBook_ok {now : Instant} {avail taken : List Slot} {slot : Slot}
     (h : decideBook now avail taken slot = .ok ()) :

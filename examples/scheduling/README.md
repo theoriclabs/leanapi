@@ -28,7 +28,7 @@ Three tables: `PersonRow` (handle + token digest), `AvailabilityRow` (host, slot
 
 **Free/busy is a projection**, not a filter in the handler. `ProjRead` (private constructor) returns `List BusyInterval`. Titles, notes and invitees cannot be named in that type. The SQL still `SELECT`s the entity — LeanDB has no column-restricted SELECT yet — and maps in Lean. The handler cannot observe the hidden fields; pushing the projection into SQL is planned with DESIGN.md §7.5.
 
-**Details and cancel** go through `Policy Calendar PersonId BookingRow` (host or invitee) and a write view `TxnAs`: delete only a row already read through the view. `PersonRow` has no policy: default deny.
+**Details and cancel** go through `Policy Calendar PersonId BookingRow` (host or invitee) and a write view `TxnAs`: delete only a row already read through the view. `rule` equals `visibleTo` through `reconstruct` (`bookingPolicy_rule_eq_visibleTo`); `WritePolicy.admits` equals “you are the invitee” through `ofBooking`. The SQL `scope` is written again and is not proved to match `rule`. `PersonRow` has no policy: default deny.
 
 Read policies reuse `PolicyView.Policy` (`import PolicyView.Policy`, unchanged). Writes and the projection are in this example: `WritePolicy`, `TxnAs`, `ProjRead`. `Auth`'s constructor is still public, so `TxAs.forAuth` trusts its caller — the same caveat as `ReadAs.forAuth`.
 
@@ -36,10 +36,10 @@ Proofs are about **pure domain functions** (`aligned_slots_disjoint`, `retitle_p
 
 ## What it guarantees
 
-- **Proved:** aligned slots with distinct starts never overlap; free/busy ignores titles, notes and invitees; cancelling a booking in a list with unique `(host, slot)` frees that slot; a successful `decideBook` is in the future and on a published opening.
+- **Proved:** aligned slots with distinct starts never overlap; free/busy ignores titles, notes and invitees; mapping `Project` is `freeBusy` of reconstructed rows (`project_list_eq_freeBusy`); the booking `rule` is `visibleTo` through the row mapping; `WritePolicy.admits` is “the actor is the invitee”; cancelling a booking in a list with unique `(host, slot)` frees that slot; a successful `decideBook` is in the future and on a published opening.
 - **Enforced by the types:** `GET` cannot return `Tx`; unscoped `Read` cannot enter `ReadAs` or `ProjRead`; `PersonRow` cannot be read through a view; `nomatch` on `BookingRow.Unique.bySlot` is refused. Pinned with `#guard_msgs`.
 - **Tested:** double-book 409, including eight concurrent requests with exactly one 201; free/busy body contains no title or notes; stranger 404 on details and cancel; cancel then rebook 201.
-- **Planned:** DESIGN §7.5 restricted reads, frame, write confinement, and API-wide noninterference. They need LeanDB M15.
+- **Planned:** DESIGN §7.5 restricted reads, frame, write confinement, and API-wide noninterference (LeanDB M15). That `scope` equals `rule` (needs `policy%` or LeanDB's view laws). Column-restricted `SELECT` for the projection.
 
 ## Curl
 

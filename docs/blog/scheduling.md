@@ -21,7 +21,7 @@ A typical stack encodes "one booking per slot" as a unique index *and* as a `SEL
 
 Free/busy is often "load the bookings and drop fields in the serializer." One intern adds `invitee` to the JSON "for debugging." The query still selected it. A status code can leak too: 403 on someone else's booking, 404 on a missing id.
 
-The point of this example is to declare each rule once, and to be honest about which layer actually enforces it.
+The point of this example is to be honest about which layer enforces each rule, and to tie the policy and the projection to the domain by proof. `rule` and the SQL `scope` are still written twice; that match is planned, not proved.
 
 ## The example on one screen
 
@@ -39,7 +39,7 @@ schema% Calendar := PersonRow, AvailabilityRow, BookingRow
 
 `BookingRow` stores host and invitee on the row, so the access rule is single-table (the current LeanDB envelope: no child-list filters, no `Option (Ref _)`).
 
-Who may see a booking's details is declared once, as a policy, and compiled to SQL:
+Who may see a booking's details is a policy. Its `rule` is proved equal to the domain's `visibleTo` through the row mapping (`bookingPolicy_rule_eq_visibleTo`). The SQL `scope` is the same predicate written again:
 
 <!-- check: excerpt examples/scheduling/Scheduling/Policies.lean -->
 ```lean
@@ -49,7 +49,16 @@ instance : Policy Calendar PersonId BookingRow where
     r.val.host == pref p || r.val.invitee == pref p
 ```
 
-Read that as: the Lean function and the query are the same predicate. `policy%` would generate both; today they are written twice, so keep them identical. A table with no instance cannot be read through the view. `PersonRow` has none — default deny for token digests.
+Those two fields are not a theorem. `policy%` would generate both from one lambda; until then, `scope` matching `rule` is planned. What *is* proved is that `rule` is `visibleTo` of the reconstructed booking, on the non-negative foreign keys LeanDB issues:
+
+<!-- check: signature Scheduling.bookingPolicy_rule_eq_visibleTo -->
+```lean
+theorem bookingPolicy_rule_eq_visibleTo (p : PersonId) (s : Stored BookingRow)
+    (hh : 0 ≤ s.val.host.toInt64) (hi : 0 ≤ s.val.invitee.toInt64) :
+    Policy.rule (s := Calendar) p s = Booking.visibleTo p (reconstruct s)
+```
+
+`writePolicy_admits_ofBooking` is the same kind of fact for inserts: `admits` on `ofBooking b` is `p == b.invitee`. A table with no instance cannot be read through the view. `PersonRow` has none — default deny for token digests.
 
 The public endpoint does not return a booking. Its type is a list of intervals, built as a projection:
 
@@ -128,7 +137,15 @@ theorem retitle_preserves_freeBusy (bs : List Booking) (t : Title) :
     freeBusy (bs.map (retitle · t)) = freeBusy bs
 ```
 
-The same holds for `renote_preserves_freeBusy` and `reinvite_preserves_freeBusy`. The declared release is the list of intervals.
+The same holds for `renote_preserves_freeBusy` and `reinvite_preserves_freeBusy`. `listBusy` does not call `freeBusy` by name. It maps `Project` over the rows the query yields. That map *is* `freeBusy` of the reconstructed bookings:
+
+<!-- check: signature Scheduling.project_list_eq_freeBusy -->
+```lean
+theorem project_list_eq_freeBusy (rows : List (Stored BookingRow)) :
+    rows.map (Project.project (α := BookingRow)) = freeBusy (rows.map reconstruct)
+```
+
+So those noninterference theorems describe what the endpoint returns, given the rows the query yields. They do not describe which rows the query yields.
 
 A real response after booking `"secret intro"`:
 
@@ -203,11 +220,16 @@ About pure functions, not `DbState`:
 - `aligned_slots_disjoint` — distinct aligned starts do not overlap
 - `next_aligned_le` — the arithmetic that lemma uses
 - `freeBusy_congr`, `retitle_preserves_freeBusy`, `renote_preserves_freeBusy`, `reinvite_preserves_freeBusy` — free/busy depends only on intervals
+- `project_eq_toBusy`, `project_list_eq_freeBusy` — mapping `Project` over stored rows is `freeBusy` of the reconstructed bookings
+- `bookingPolicy_rule_eq_visibleTo` — on non-negative foreign keys, the booking `rule` is `visibleTo` of `reconstruct`
+- `bookingPolicy_rule_implies_visibleTo` — if the policy admits you, `visibleTo` holds (no extra hypothesis)
+- `writePolicy_admits_ofBooking` — `WritePolicy.admits` on `ofBooking b` is `p == b.invitee`
+- `writePolicy_admits_eq_invitee`, `ref_beq_pref`, `pref_inj`, `pid_pref`
 - `cancel_frees` — under unique `(host, slot)`, cancel frees the slot
 - `decideBook_ok`, `decideBook_future`, `decideBook_available` — an accepted book is in the future and published
 - `decidePublish_future`
 - `visibleTo_host`, `visibleTo_invitee`
-- codec round-trips: `instant_roundtrip`, `slot_roundtrip`, `nat_roundtrip`, `pid_pref`
+- codec round-trips: `instant_roundtrip`, `slot_roundtrip`, `nat_roundtrip`
 
 ### Enforced by the types
 
@@ -239,5 +261,6 @@ These are DESIGN.md §7.5. They need LeanDB M15 (`DbState` with real content, me
 - Noninterference for every route of `calendarApi`, from the database layer, not a proof per endpoint
 - Coverage: `api!` refuses a handler whose program is over the unscoped schema
 - Pushing `Project` into `SELECT` so titles are not fetched for free/busy
+- That `scope` equals `rule` (needs `policy%`, or LeanDB's view laws)
 
-Until then, isolation of the running service is tested, not proved. The type checker already refuses the bypasses above.
+Until then, isolation of the running service is tested, not proved. The type checker already refuses the bypasses above. The policy–domain and projection–`freeBusy` lemmas above are about the functions, given a row list, not about which rows SQL returns.

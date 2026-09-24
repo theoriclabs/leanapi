@@ -5,13 +5,18 @@
 
   What this file adds:
   - `Policy` instances (default deny for any table without one).
-  - `Project` / `ProjRead`: a different row type for free/busy. The
-    handler's type is `List BusyInterval`; titles, notes and invitees
-    cannot be named there. LeanDB still `SELECT`s the entity (no
-    column-restricted SELECT yet); pushing the projection into SQL is
-    planned with DESIGN §7.5.
+    `rule` is proved equal to `Booking.visibleTo` through `reconstruct`;
+    `scope` is the same predicate written as SQL and is not yet proved
+    to match `rule`.
+  - `Project` / `ProjRead`: a different row type for free/busy, defined
+    as `BusyInterval.ofInterval ∘ Booking.interval ∘ reconstruct`.
+    Mapping it over stored rows is `freeBusy` of the corresponding
+    bookings. LeanDB still `SELECT`s the entity (no column-restricted
+    SELECT yet); pushing the projection into SQL is planned with
+    DESIGN §7.5.
   - `WritePolicy` / `TxnAs`: insert only when the actor is admitted, and
-    delete only a row already read through the view.
+    delete only a row already read through the view. `admits` is proved
+    equal to "the actor is the invitee" through `ofBooking`.
 -/
 import PolicyView.Policy
 import Scheduling.Schema
@@ -20,7 +25,12 @@ open LeanDb PolicyView
 
 namespace Scheduling
 
-/-! ## Policies: declared once, with the schema -/
+/-! ## Policies
+
+`rule` is the Lean predicate proofs talk about. `scope` is the SQL query,
+written again by hand. They are not yet proved equal (`policy%` / DESIGN
+§7.5). `rule` *is* proved equal to the domain's `visibleTo` through the
+row mapping, below. -/
 
 /-- Booking details: host or invitee. Both ids sit on the row (single-table). -/
 instance : Policy Calendar PersonId BookingRow where
@@ -56,8 +66,10 @@ goes through it never binds title, notes or invitee. -/
 class Project (α β : Type) [Entity α] where
   project : Stored α → β
 
+/-- The free/busy column: `interval` of the reconstructed booking, not a
+    handler-side filter. Equal to `Booking.toBusy` (`project_eq_toBusy`). -/
 instance : Project BookingRow BusyInterval where
-  project s := BusyInterval.ofSlot s.val.slot
+  project s := BusyInterval.ofInterval (reconstruct s).interval
 
 structure ProjRead (s : Type) [IsSchema s] (β : Type) : Type 1 where
   private mk ::
@@ -139,6 +151,58 @@ def deleteVisible (α : Type) [Entity α] [Policy s P α] [HasReferencedBy s α]
     | some row => some <$> Txn.delete α row.id⟩
 
 end TxnAs
+
+/-! ## Policy and projection, tied to the domain
+
+Pure equalities through `reconstruct` / `ofBooking`. Not theorems over
+`DbState`. Foreign-key `Ref`s that LeanDB issues are non-negative, which
+is the hypothesis on `bookingPolicy_rule_eq_visibleTo`. The implication
+`bookingPolicy_rule_implies_visibleTo` does not need it. -/
+
+/-- On a stored row whose host and invitee are non-negative ids, the
+    booking policy is the domain's `visibleTo`. -/
+theorem bookingPolicy_rule_eq_visibleTo (p : PersonId) (s : Stored BookingRow)
+    (hh : 0 ≤ s.val.host.toInt64) (hi : 0 ≤ s.val.invitee.toInt64) :
+    Policy.rule (s := Calendar) p s = Booking.visibleTo p (reconstruct s) := by
+  simp only [Policy.rule, Booking.visibleTo, reconstruct, BookingRow.toBooking]
+  rw [ref_beq_pref s.val.host p hh, ref_beq_pref s.val.invitee p hi]
+
+/-- If the policy admits `p`, the corresponding booking is `visibleTo p`.
+    No hypothesis on the stored refs: `pref p` always maps back to `p`. -/
+theorem bookingPolicy_rule_implies_visibleTo (p : PersonId) (s : Stored BookingRow) :
+    Policy.rule (s := Calendar) p s = true →
+      Booking.visibleTo p (reconstruct s) = true := by
+  simp only [Policy.rule, Booking.visibleTo, reconstruct, BookingRow.toBooking]
+  intro h
+  rcases Bool.or_eq_true_iff.mp h with hh | hi
+  · simp [ref_beq_pref_implies_pid s.val.host p hh]
+  · simp [ref_beq_pref_implies_pid s.val.invitee p hi]
+
+/-- Through `ofBooking`: the write view admits the invitee, and only them. -/
+theorem writePolicy_admits_ofBooking (p : PersonId) (b : Booking) :
+    WritePolicy.admits (s := Calendar) p (BookingRow.ofBooking b) = (p == b.invitee) := by
+  simp only [WritePolicy.admits, BookingRow.ofBooking]
+  rw [ref_beq_pref (pref b.invitee) p (pref_nonneg b.invitee), pid_pref]
+
+/-- Same fact on a stored row whose invitee id is non-negative. -/
+theorem writePolicy_admits_eq_invitee (p : PersonId) (r : BookingRow)
+    (h : 0 ≤ r.invitee.toInt64) :
+    WritePolicy.admits (s := Calendar) p r = (p == pid r.invitee) := by
+  simp only [WritePolicy.admits]
+  exact ref_beq_pref r.invitee p h
+
+/-- The projection of one stored row is `toBusy` of the reconstructed booking. -/
+theorem project_eq_toBusy (s : Stored BookingRow) :
+    Project.project (α := BookingRow) s = (reconstruct s).toBusy :=
+  (toBusy_eq_ofInterval (reconstruct s)).symm
+
+/-- `listBusy` maps this over the rows the query yields: that list is
+    `freeBusy` of the corresponding bookings. -/
+theorem project_list_eq_freeBusy (rows : List (Stored BookingRow)) :
+    rows.map (Project.project (α := BookingRow)) = freeBusy (rows.map reconstruct) := by
+  simp [Project.project, freeBusy, reconstruct, Booking.toBusy,
+    BusyInterval.ofInterval, Booking.interval, Slot.interval, BusyInterval.ofSlot,
+    BookingRow.toBooking, Slot.finish]
 
 /-! ## What a foreign module cannot do is pinned in `Bypass.lean`.
 

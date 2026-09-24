@@ -121,6 +121,72 @@ theorem pid_pref (p : PersonId) : pid (pref p) = p := by
   cases p with
   | mk n h => simp [pid, pref, Int64.toNatClampNeg_ofNat_of_lt h]
 
+theorem pref_nonneg (p : PersonId) : 0 ≤ (pref p).toInt64 := by
+  simp [pref, Int64.le_iff_toInt_le, Int64.toInt_ofNat_of_lt p.lt]
+
+theorem pref_pid (r : Ref PersonRow) (h : 0 ≤ r.toInt64) : pref (pid r) = r := by
+  cases r with
+  | mk i => simp [pref, pid, Int64.ofNat_toNatClampNeg i h]
+
+/-- Unfold the custom `BEq` on `Id`: it is `Int64` equality. -/
+theorem ref_beq_unfold (a b : Ref PersonRow) :
+    (a == b) = (a.toInt64 == b.toInt64) := rfl
+
+theorem pref_toInt64 (p : PersonId) : (pref p).toInt64 = Int64.ofNat p.n := rfl
+
+/-- SQL compares `Ref`s; the domain compares `PersonId`s. They agree on
+    non-negative keys (every id LeanDB issues). -/
+theorem ref_beq_pref (r : Ref PersonRow) (p : PersonId) (h : 0 ≤ r.toInt64) :
+    (r == pref p) = (p == pid r) := by
+  apply Bool.eq_iff_iff.mpr
+  constructor
+  · intro hr
+    have hbeq : r.toInt64 == Int64.ofNat p.n := by
+      rw [ref_beq_unfold, pref_toInt64] at hr; exact hr
+    have hr' : r.toInt64 = Int64.ofNat p.n := eq_of_beq hbeq
+    have : p = pid r := by
+      apply PersonId.ext
+      simp [pid, hr', Int64.toNatClampNeg_ofNat_of_lt p.lt]
+    exact beq_iff_eq.mpr this
+  · intro hp
+    have hp' : p = pid r := eq_of_beq hp
+    have hint : r.toInt64 = Int64.ofNat p.n := by
+      rw [hp', pid]
+      exact (Int64.ofNat_toNatClampNeg r.toInt64 h).symm
+    rw [ref_beq_unfold, pref_toInt64]
+    exact beq_iff_eq.mpr hint
+
+/-- Always: a `Ref` that is `pref p` maps to `p`. The converse needs a
+    non-negative key (`ref_beq_pref`). -/
+theorem ref_beq_pref_implies_pid (r : Ref PersonRow) (p : PersonId) :
+    (r == pref p) = true → (p == pid r) = true := by
+  intro hr
+  have hbeq : r.toInt64 == Int64.ofNat p.n := by
+    rw [ref_beq_unfold, pref_toInt64] at hr; exact hr
+  have hr' : r.toInt64 = Int64.ofNat p.n := eq_of_beq hbeq
+  have : p = pid r := by
+    apply PersonId.ext
+    simp [pid, hr', Int64.toNatClampNeg_ofNat_of_lt p.lt]
+  exact beq_iff_eq.mpr this
+
+theorem pref_inj {a b : PersonId} : (pref a == pref b) = (a == b) := by
+  apply Bool.eq_iff_iff.mpr
+  constructor
+  · intro h
+    have hbeq : Int64.ofNat a.n == Int64.ofNat b.n := by
+      rw [ref_beq_unfold, pref_toInt64, pref_toInt64] at h; exact h
+    have h' : Int64.ofNat a.n = Int64.ofNat b.n := eq_of_beq hbeq
+    have hn : a.n = b.n := by
+      have := congrArg Int64.toNatClampNeg h'
+      simpa [Int64.toNatClampNeg_ofNat_of_lt a.lt,
+        Int64.toNatClampNeg_ofNat_of_lt b.lt] using this
+    exact beq_iff_eq.mpr (PersonId.ext hn)
+  · intro h
+    have : a = b := eq_of_beq h
+    subst this
+    rw [ref_beq_unfold]
+    exact beq_self_eq_true _
+
 theorem BookingRow.toBooking_ofBooking (b : Booking) (hid : b.id.n < 2^63)
     (hh : b.host.n < 2^63 := b.host.lt) (hi : b.invitee.n < 2^63 := b.invitee.lt) :
     (BookingRow.ofBooking b).toBooking ⟨Int64.ofNat b.id.n⟩ = b := by
