@@ -151,6 +151,12 @@ def Money.make (c : Currency) (n : Nat) : Except String (Money c) :=
 theorem Money.lt {c : Currency} (m : Money c) : m.minor < 2 ^ 63 :=
   Nat.lt_of_le_of_lt m.le maxTotal_lt
 
+theorem Money.make_minor {c : Currency} (m : Money c) : Money.make c m.minor = .ok m := by
+  unfold Money.make
+  split
+  · cases m; rfl
+  · rename_i h; exact (h m.le).elim
+
 /-- A unit price is money that cannot exceed `maxUnitPrice`. -/
 structure UnitPrice (c : Currency) where
   minor : Nat
@@ -159,6 +165,12 @@ structure UnitPrice (c : Currency) where
 
 def UnitPrice.make (c : Currency) (n : Nat) : Except String (UnitPrice c) :=
   if h : n ≤ maxUnitPrice then .ok ⟨n, h⟩ else .error "unit price is out of range"
+
+theorem UnitPrice.make_minor {c : Currency} (p : UnitPrice c) : UnitPrice.make c p.minor = .ok p := by
+  unfold UnitPrice.make
+  split
+  · cases p; rfl
+  · rename_i h; exact (h p.le).elim
 
 def UnitPrice.toMoney {c : Currency} (p : UnitPrice c) : Money c :=
   ⟨p.minor, Nat.le_trans p.le (Nat.le_trans
