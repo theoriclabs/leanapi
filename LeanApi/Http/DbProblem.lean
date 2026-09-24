@@ -205,17 +205,23 @@ instance {α : Type} [Entity α] [HasUnique α] [HasForeignKey α] [ToJson α] [
     | .stale cur => [("current", toJson cur.val), ("etag", .str (VersionOf.version cur.val))]
     | e => ToProblem.extensions e
 
-/-- `DeleteError s α`, naming the referencing table and the row count.
-    Reveals that such rows exist. -/
+/-- `DeleteError s α`, naming the referencing table and column (from the
+    schema) and the row count. Reveals that such rows exist. -/
 structure WithReferrers (ε : Type) where
   val : ε
 
-instance {s α : Type} [Entity α] [h : HasReferencedBy s α] [Repr (ReferencedBy.Restricting s α)] :
+/-- The table and column of an inbound key, as the schema declares them. -/
+def referrerJson {s α : Type} [h : HasReferencedBy s α] (r : ReferencedBy s α) (rows : Nat) : Json :=
+  let _ := h.sourceEntity r
+  Json.mkObj [("table", .str (Entity.tableName (h.Source r))), ("column", .str (h.columnName r)),
+    ("rows", toJson rows)]
+
+instance {s α : Type} [Entity α] [HasReferencedBy s α] :
     ToProblem (WithReferrers (DeleteError s α)) where
   status e := ToProblem.status e.val
   detail e := ToProblem.detail e.val
   extensions e := match e.val with
-    | .restricted who n => [("referrers", Json.mkObj [("by", .str (reprStr who)), ("rows", toJson n)])]
+    | .restricted who n => [("referrers", referrerJson who.val n)]
     | _ => []
 
 end LeanApi

@@ -79,7 +79,7 @@ structure Taken where
   deriving ToJson
 
 /-- Unauthenticated: is a name taken? -/
-def nameTaken (n : Query NameQ) : Read App Taken :=
+def nameTaken (n : QueryParams NameQ) : Read App Taken :=
   (fun m => ⟨m.isSome⟩) <$> Read.lookup Member Member.Unique.byName n.val.name
 
 /-! ### Writes: transaction programs -/
@@ -111,7 +111,7 @@ private def checkedMember (m : Member) : Checked Member := Checked.of m trivial
 /-- Add a member to my team. A duplicate name is the schema's `.duplicate`,
     turned into 409. More than 3 members aborts *after* the insert: the
     insert must not survive. -/
-def join (me : Auth Me) (b : Body NewMember) : Tx App JoinError (Created MemberView) := fun _ => do
+def join (me : Auth Me) (b : Body NewMember) : Tx App JoinError (Created MemberView) := do
   let row ← Txn.orAbort (Txn.insert Member (checkedMember ⟨b.val.name, me.val.team⟩)) fun
     | .duplicate _ _ => JoinError.taken
     | .missingRef _ => JoinError.noTeam
@@ -128,16 +128,16 @@ structure Signup where
 instance : FromBody Signup := FromBody.record (Signup.mk <$> Fields.req "name" <*> Fields.req "team")
 
 /-- Unauthenticated signup that exposes LeanDB's own failure type. -/
-def signup (b : Body Signup) : Tx App (InsertError Member) (Created MemberView) := fun _ => do
+def signup (b : Body Signup) : Tx App (InsertError Member) (Created MemberView) := do
   let row ← Txn.orAbort (Txn.insert Member (checkedMember ⟨b.val.name, ⟨Int64.ofNat b.val.team⟩⟩)) fun e => e
   pure ⟨⟨row.id.toInt64.toInt, row.val.name⟩, s!"/members/{row.id.toInt64.toInt}"⟩
 
 /-- Remove a team: `.gone` → 404, `.restricted` → 409 without saying by what. -/
-def dropTeam (id : Path Nat) : Tx App (DeleteError App Team) NoContent := fun _ => do
+def dropTeam (id : Path Nat) : Tx App (DeleteError App Team) NoContent := do
   let _ ← Txn.orAbort (Txn.delete Team ⟨Int64.ofNat id.val⟩) fun e => e
   pure ⟨⟩
 
-def api : DbApi App := dbapi! [
+def api : DbApi App := api! [
   .get "/members/{id}" getMember,
   .get "/team" myTeam,
   .get "/names" nameTaken,
@@ -160,11 +160,25 @@ error: a GET or HEAD endpoint must not change state, but this handler's effect i
 #guard_msgs (error) in
 example : DbEndpoint App := .get "/members" join
 
--- `dbapi!` checks path arity like `api!`.
-/-- error: dbapi!: GET /members/{a}/{b} has 2 path parameter(s), but `Tests.DbEndpoint.getMember` takes 1 `Path` argument(s):
+-- A `Tx` handler cannot hand back a `Current` row: the transaction index
+-- is bound by `Tx` itself, so nothing outside can name it.
+/-- error: Type mismatch
+  Txn.get Member { toInt64 := 1 }
+has type
+  Txn ?m.3 ?m.4 ?m.5 (Option (Current ?m.3 Member))
+but is expected to have type
+  Txn σ✝ App Unit (Option (Current σ Member)) -/
+#guard_msgs (error) in
+example : Tx App Unit (Option (Current σ Member)) := Txn.get Member ⟨1⟩
+
+/-- `DbApi.step` is the API's meaning; `gamesApi.step` reads as for `Api`. -/
+example (env : Env) (r : Req) (st : DbState App) : api.step env r st = api.toApi.step env r st := rfl
+
+-- `api!` checks path arity for database endpoints too.
+/-- error: api!: GET /members/{a}/{b} has 2 path parameter(s), but `Tests.DbEndpoint.getMember` takes 1 `Path` argument(s):
   Auth Me → Path Nat → Read App (Except NotFound MemberView) -/
 #guard_msgs (error) in
-example : DbApi App := dbapi! [.get "/members/{a}/{b}" getMember]
+example : DbApi App := api! [.get "/members/{a}/{b}" getMember]
 
 /-- The API's meaning is an ordinary typed API: the laws apply. -/
 theorem api_step_safe (env : Env) (r : Req) (st : DbState App) (hm : r.method.Safe) :
@@ -174,9 +188,9 @@ theorem api_step_safe (env : Env) (r : Req) (st : DbState App) (hm : r.method.Sa
 /-- An invariant preserved by `join`'s transaction holds in every reachable
     state: reads carry no obligation. -/
 theorem api_inductive (I : DbState App → Prop)
-    (hjoin : ∀ (me : Auth Me) (b : Body NewMember) st, I st → I (Txn.denote (join me b Unit) st).2)
-    (hsignup : ∀ (b : Body Signup) st, I st → I (Txn.denote (signup b Unit) st).2)
-    (hdrop : ∀ (i : Nat) st, I st → I (Txn.denote (dropTeam ⟨i⟩ Unit) st).2) :
+    (hjoin : ∀ (me : Auth Me) (b : Body NewMember) st, I st → I (Txn.denote (join me b (σ := Unit)) st).2)
+    (hsignup : ∀ (b : Body Signup) st, I st → I (Txn.denote (signup b (σ := Unit)) st).2)
+    (hdrop : ∀ (i : Nat) st, I st → I (Txn.denote (dropTeam ⟨i⟩ (σ := Unit)) st).2) :
     Props.Inductive (api.toApi.toSys I) I :=
   Api.inductive_of _ (fun _ h => h) (by
     intro e he
@@ -388,6 +402,14 @@ def run : TestM Unit := do
     let r ← request svc "DELETE" "/teams/1"
     check "restricted does not say by what" ((r.body.splitOn "member").length == 1)
     checkEq "delete missing team → 404" (← request svc "DELETE" "/teams/999").status 404
+    -- The opt-in wrapper names the referrer from the schema.
+    match (ReferencedBy.all App Team)[0]? with
+    | none => check "Team has an inbound key" false
+    | some rb =>
+      let body := (ToProblem.problem (ε := WithReferrers (DeleteError App Team)) ⟨.restricted
+        (ReferencedBy.toRestricting rb rfl rfl) 2⟩).toJson.compress
+      check s!"WithReferrers names table and column: {body}"
+        ((body.splitOn "\"table\":\"member\"").length > 1 && (body.splitOn "\"column\":\"team\"").length > 1)
     let _ ← must (← DbM.run w (insert Team ⟨"empty"⟩)) "empty team"
     let empty := ((← must (← DbM.run w (Read.exec (s := App)
       (Read.all (Query.from Team (s := App))))) "teams").getLast?.map (·.id.toInt64.toInt)).getD 0

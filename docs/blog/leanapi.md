@@ -76,8 +76,8 @@ The same rule, as a database query, and the one game a player may read:
 <!-- check: excerpt examples/private-games/PrivateGames/DbApi.lean -->
 ```lean
 /-- The games `p` plays in. -/
-def GameRow.visibleTo (p : PlayerId) : LeanDb.Query Games [GameRow] (Stored GameRow) :=
-  (LeanDb.Query.from GameRow).where' fun g => g.val.x == pref p || g.val.o == pref p
+def GameRow.visibleTo (p : PlayerId) : Query Games [GameRow] (Stored GameRow) :=
+  (Query.from GameRow).where' fun g => g.val.x == pref p || g.val.o == pref p
 
 /-- The game with id `gid`, if `p` plays in it. -/
 def visibleGame (p : PlayerId) (gid : GameId) : Read Games (Option (Stored GameRow)) :=
@@ -98,7 +98,7 @@ def readGame (me : Auth PlayerId) (id : Path GameId) :
 
 <!-- check: excerpt examples/private-games/PrivateGames/DbApi.lean -->
 ```lean
-def gamesApi : DbApi Games := dbapi! [
+def gamesApi : DbApi Games := api! [
   .post "/games"                       openGame,
   .get  "/games"                       listGames,
   .get  "/games/{id:nat}"              readGame,

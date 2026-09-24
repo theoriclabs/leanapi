@@ -54,7 +54,7 @@ instance {s : Type} [IsSchema s] [ToResponse ρ] : Handler (DbState s) (Read s �
 class FromRequest.Pure (σ : Type) (α : Type) [F : FromRequest σ α] : Prop where
   pure : ∀ s₁ s₂ env r, F.extract s₁ env r = F.extract s₂ env r
 
-instance [FromQuery α] : FromRequest.Pure σ (Query α) := ⟨fun _ _ _ _ => rfl⟩
+instance [FromQuery α] : FromRequest.Pure σ (QueryParams α) := ⟨fun _ _ _ _ => rfl⟩
 instance [FromParam α] : FromRequest.Pure σ (Header n α) := ⟨fun _ _ _ _ => rfl⟩
 instance (priority := high) [FromParam α] : FromRequest.Pure σ (Header n (Option α)) :=
   ⟨fun _ _ _ _ => rfl⟩
@@ -187,8 +187,8 @@ open Lean LeanDb
 
 /-- A transaction program as a handler's result: all or nothing, failing
     with `ε`. Rank-2 in the transaction index, so `Current` rows cannot
-    escape (`fun _ => do …`). -/
-abbrev Tx (s ε ρ : Type) := (σ : Type) → Txn σ s ε ρ
+    escape. The index is implicit: a handler's body is just `do …`. -/
+abbrev Tx (s ε ρ : Type) := {σ : Type} → Txn σ s ε ρ
 
 /-- The meaning of a transaction handler: commit answers `ToResponse ρ`,
     abort answers `ToProblem ε` and restores the state (`Txn.denote`). -/
@@ -196,15 +196,15 @@ instance {s : Type} [IsSchema s] [ToResponse ρ] [ToProblem ε] : Handler (DbSta
   effect := .writes
   pathArity := 0
   inputs := []
-  step p _ _ st _ := (ToResponse.toRes (Txn.denote (p Unit) st).1, (Txn.denote (p Unit) st).2)
+  step p _ _ st _ := (ToResponse.toRes (Txn.denote (p (σ := Unit)) st).1, (Txn.denote (p (σ := Unit)) st).2)
   errors _ _ _ _ := []
   step_safe h := h.elim
-  Preserved I p := ∀ st, I st → I (Txn.denote (p Unit) st).2
+  Preserved I p := ∀ st, I st → I (Txn.denote (p (σ := Unit)) st).2
   step_preserved _ _ hp _ _ st _ hs := hp st hs
   ErrStable _ := True
   errors_stable _ _ _ _ _ _ _ _ := rfl
   Isolated R p := ∀ env r s₁ s₂, R env r s₁ s₂ →
-    ToResponse.toRes (Txn.denote (p Unit) s₁).1 = ToResponse.toRes (Txn.denote (p Unit) s₂).1
+    ToResponse.toRes (Txn.denote (p (σ := Unit)) s₁).1 = ToResponse.toRes (Txn.denote (p (σ := Unit)) s₂).1
   step_isolated _ _ hI env r s₁ s₂ _ h := hI env r s₁ s₂ h
 
 /-! ## Programs, indexed by effect
@@ -216,7 +216,7 @@ the response, so a refused request rolls back and still answers. -/
 
 def DbProg (s : Type) [IsSchema s] : Effect → Type 1
   | .pure | .reads => Read s Res
-  | .writes => (σ : Type) → Txn σ s Res Res
+  | .writes => {σ : Type} → Txn σ s Res Res
 
 namespace DbProg
 
@@ -230,18 +230,18 @@ def merge : Except Res Res → Res
 def denote : {e : Effect} → DbProg s e → DbState s → Res × DbState s
   | .pure, p, st => (Read.denote p st, st)
   | .reads, p, st => (Read.denote p st, st)
-  | .writes, p, st => (merge (Txn.denote (p Unit) st).1, (Txn.denote (p Unit) st).2)
+  | .writes, p, st => (merge (Txn.denote (p (σ := Unit)) st).1, (Txn.denote (p (σ := Unit)) st).2)
 
 def ret : {e : Effect} → Res → DbProg s e
   | .pure, r => (pure r : Read s Res)
   | .reads, r => (pure r : Read s Res)
-  | .writes, r => fun _ => .pure r
+  | .writes, r => .pure r
 
 /-- Read first, then continue with a program of the same effect. -/
 def bindRead : {e : Effect} → Read s α → (α → DbProg s e) → DbProg s e
   | .pure, r, k => (r >>= k : Read s Res)
   | .reads, r, k => (r >>= k : Read s Res)
-  | .writes, r, k => fun σ => .bind (.liftRead r) (fun a => k a σ)
+  | .writes, r, k => .bind (.liftRead r) (fun a => k a)
 
 theorem denote_ret {e : Effect} (r : Res) (st : DbState s) : denote (ret (e := e) r) st = (r, st) := by
   cases e <;> rfl
@@ -276,15 +276,15 @@ instance {s : Type} [IsSchema s] [ToResponse ρ] : DbHandler s (Read s ρ) where
   errors_denote _ _ _ _ := rfl
 
 instance {s : Type} [IsSchema s] [ToResponse ρ] [ToProblem ε] : DbHandler s (Tx s ε ρ) where
-  prog p _ _ _ := fun σ =>
-    .bind (Txn.mapErr (fun e => ToResponse.toRes (Except.error e : Except ε ρ)) (p σ))
+  prog p _ _ _ :=
+    .bind (Txn.mapErr (fun e => ToResponse.toRes (Except.error e : Except ε ρ)) p)
       (fun a => .pure (ToResponse.toRes (Except.ok a : Except ε ρ)))
   errorsProg _ _ _ := pure []
   prog_denote p env r st i := by
     show (DbProg.merge (Txn.denote _ st).1, (Txn.denote _ st).2) =
-      (ToResponse.toRes (Txn.denote (p Unit) st).1, (Txn.denote (p Unit) st).2)
+      (ToResponse.toRes (Txn.denote (p (σ := Unit)) st).1, (Txn.denote (p (σ := Unit)) st).2)
     simp only [Txn.denote, Txn.denote.go, Txn.denote_go_mapErr]
-    cases Txn.denote.go st (p Unit) st with
+    cases Txn.denote.go st (p (σ := Unit)) st with
     | mk x st' => cases x <;> rfl
   errors_denote _ _ _ _ := rfl
 
@@ -483,7 +483,7 @@ def exec (dc : DbConns) : {e : Effect} → DbProg s e → IO (Except DbFault Res
   | .pure, p => runRead p
   | .reads, p => runRead p
   | .writes, p => do
-    match ← dc.writer.run (Txn.run (s := s) (fun {σ} => p σ)) with
+    match ← dc.writer.run (Txn.run (s := s) p) with
     | .error .busy => return .error (.locking "writer queue full")
     | .error .stopped => return .error (.io "writer stopped")
     | .ok (.error err) => return .error (DbFault.ofDbError err)
@@ -534,6 +534,15 @@ def toApi (api : DbApi s) : Api (DbState s) := api.map (·.toEndpoint)
 
 def describe (api : DbApi s) : String := api.toApi.describe
 
+/-- The API's meaning, as for any typed API: route, then run the endpoint. -/
+def step (api : DbApi s) (env : Env) (r : Req) (st : DbState s) : Res × DbState s :=
+  api.toApi.step env r st
+
+/-- The state after a sequence of requests. -/
+def runAll (api : DbApi s) : List (Env × Req) → DbState s → DbState s
+  | [], st => st
+  | (env, r) :: rest, st => api.runAll rest (api.step env r st).2
+
 def routes (api : DbApi s) (dc : DbConns) (log : String → IO Unit) : List Route :=
   api.map (·.toRoute dc log)
 
@@ -549,59 +558,12 @@ theorem prog_denote (api : DbApi s) : ∀ e ∈ api, ∀ env r st,
 
 end DbApi
 
-/-! ## Compile-time checking: `dbapi!` -/
+/-! ## Compile-time checking
 
-open Elab Term Meta in
-/-- `dbapi! [e₁, e₂, …]`: `api!`'s checks (template syntax, path arity
-    against the handler's `Path` arguments, route conflicts, the recorded
-    signature) for endpoints over LeanDB programs. -/
-elab "dbapi!" xs:term : term <= expectedType => do
-  let e ← elabTerm xs (some expectedType)
-  let e ← instantiateMVars e
-  let mut items : Array Expr := #[]
-  let mut l ← whnfR e
-  repeat
-    match l.getAppFnArgs with
-    | (``List.cons, #[_, h, t]) => items := items.push h; l ← whnfR t
-    | (``List.nil, _) => break
-    | _ => throwError "dbapi!: expected a list literal"
-  let mut keys : List (Method × String) := []
-  let mut out : Array Expr := #[]
-  for it in items do
-    let ep ← mkAppM ``LeanApi.DbEndpoint.toEndpoint #[it]
-    let m ← reduce (← mkAppM ``LeanApi.Endpoint.method #[ep])
-    let t ← reduce (← mkAppM ``LeanApi.Endpoint.template #[ep])
-    let n ← reduce (← mkAppM ``LeanApi.Endpoint.pathArity #[ep])
-    if m.hasFVar || t.hasFVar || n.hasFVar || m.hasMVar || t.hasMVar || n.hasMVar then
-      throwError "dbapi!: could not compute an endpoint's method, template and path arity statically"
-    let mv ← unsafe evalExpr Method (mkConst ``LeanApi.Method) m
-    let tv ← unsafe evalExpr String (mkConst ``String) t
-    let nv ← unsafe evalExpr Nat (mkConst ``Nat) n
-    -- `{s} [IsSchema s] {τ} (t) (h)`: τ is argument 2, h is argument 4.
-    let ctors := [``LeanApi.DbEndpoint.get, ``LeanApi.DbEndpoint.head, ``LeanApi.DbEndpoint.post,
-      ``LeanApi.DbEndpoint.put, ``LeanApi.DbEndpoint.patch, ``LeanApi.DbEndpoint.delete]
-    let found := ctors.findSome? fun c =>
-      (it.find? (·.isAppOf c)).bind fun app => (app.getAppArgs[2]?).bind fun τ =>
-        (app.getAppArgs[4]?).map fun h => (τ, h)
-    let (hName, sig) ← match found with
-      | some (τ, h) =>
-        let hName := match h.getAppFn.constName? with
-          | some c => s!"`{c}`"
-          | none => "the handler"
-        pure (hName, toString (← ppExpr τ))
-      | none => pure ("the handler", "")
-    match parseTemplate tv with
-    | .error msg => throwError "dbapi!: {mv} {tv}: {msg}"
-    | .ok segs =>
-      let k := (segs.filter fun | .lit _ => false | _ => true).length
-      unless k == nv do
-        throwError "dbapi!: {mv} {tv} has {k} path parameter(s), but {hName} takes {nv} `Path` argument(s):\n  {sig}"
-    keys := keys ++ [(mv, tv)]
-    out := out.push (← mkAppM ``LeanApi.DbEndpoint.withSignature #[it, toExpr sig])
-  let errs := routeErrors keys
-  unless errs.isEmpty do
-    throwError m!"dbapi!: invalid routes:\n  {"\n  ".intercalate errs}"
-  let elemTy := (← whnfR (← instantiateMVars expectedType)).appArg!
-  mkListLit elemTy out.toList
+`api!` checks lists of `DbEndpoint`s too (by the expected type). `dbapi!`
+is its old name, kept for one release. -/
+
+/-- Deprecated: write `api!`. -/
+macro "dbapi!" xs:term : term => `(api! $xs)
 
 end LeanApi

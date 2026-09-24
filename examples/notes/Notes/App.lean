@@ -177,7 +177,7 @@ def login (who : Auth ByPassword) (tok : FreshToken) : Writes State (Created (Wi
    { val := ⟨⟨tok.val⟩, { name := "sid", value := tok.val }⟩ })
 
 /-- One page of my notes. -/
-def listNotes (me : Auth User) (p : Query Page) : Reads State (Paged NoteView) := fun s =>
+def listNotes (me : Auth User) (p : QueryParams Page) : Reads State (Paged NoteView) := fun s =>
   let mine := s.notes.filter (·.owner == me.val.name)
   ⟨((mine.toList.drop ((p.val.page - 1) * p.val.per)).take p.val.per).map Note.view, mine.size, p.val.page⟩
 

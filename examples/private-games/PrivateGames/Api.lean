@@ -178,7 +178,7 @@ def openGame (me : Auth PlayerId) (body : Body OpenBody) (key : KeyHeader) :
                   { val := Game.versioned g, location := some s!"/games/{g.id.n}" }
 
 /-- One page of my games. -/
-def listGames (me : Auth PlayerId) (q : Query PageReq) : Reads World GamePage := fun w =>
+def listGames (me : Auth PlayerId) (q : QueryParams PageReq) : Reads World GamePage := fun w =>
   let vs := visibleGames me.val w
   ⟨(vs.drop ((q.val.page - 1) * q.val.per)).take q.val.per, vs.length, q.val.page, q.val.per⟩
 

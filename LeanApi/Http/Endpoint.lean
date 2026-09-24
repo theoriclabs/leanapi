@@ -113,9 +113,13 @@ abbrev ErrorStatus := {n : Nat // 400 ≤ n ∧ n < 600}
 structure Path (α : Type) where
   val : α
 
-/-- A value decoded from the query string (`FromQuery α`). -/
-structure Query (α : Type) where
+/-- A value decoded from the query string (`FromQuery α`). Named
+    `QueryParams` so it does not clash with `LeanDb.Query`. -/
+structure QueryParams (α : Type) where
   val : α
+
+/-- The old name of `QueryParams`, kept for one release. -/
+@[deprecated QueryParams (since := "2026-09-23")] abbrev Query := QueryParams
 
 /-- The request body, decoded as `α`: JSON (`FromBody α`), and also a form
     when `FromForm α` exists. -/
@@ -149,7 +153,7 @@ structure Now where
   val : Nat
 
 instance : CoeHead (Path α) α := ⟨Path.val⟩
-instance : CoeHead (Query α) α := ⟨Query.val⟩
+instance : CoeHead (QueryParams α) α := ⟨QueryParams.val⟩
 instance : CoeHead (Body α) α := ⟨Body.val⟩
 instance : CoeHead (Header n α) α := ⟨Header.val⟩
 instance : CoeHead (Auth α) α := ⟨Auth.val⟩
@@ -270,9 +274,9 @@ def jwt (policy : Jwt.Policy) (toActor : σ → Json → Option α) (realm : Str
 
 end Authenticates
 
-instance [FromQuery α] : FromRequest σ (Query α) where
+instance [FromQuery α] : FromRequest σ (QueryParams α) where
   kind := "query"
-  extract _ _ r := (Got.ofDecoded (FromQuery.fromQuery r)).map Query.mk
+  extract _ _ r := (Got.ofDecoded (FromQuery.fromQuery r)).map QueryParams.mk
 
 instance [FromParam α] : FromRequest σ (Header n α) where
   kind := s!"header {n}"
@@ -919,38 +923,26 @@ end Api
 /-! ## Compile-time checking: `api!` -/
 
 open Elab Term Meta in
-/-- `api! [e₁, e₂, …]` elaborates a list of endpoints and, for each one,
-    checks that the template parses and has exactly as many parameters as
-    the handler has `Path` arguments, records the handler's elaborated type
-    as its signature, and rejects conflicting routes. -/
-elab "api!" xs:term : term <= expectedType => do
-  let e ← elabTerm xs (some expectedType)
-  let e ← instantiateMVars e
-  let mut items : Array Expr := #[]
-  let mut l ← whnfR e
-  repeat
-    match l.getAppFnArgs with
-    | (``List.cons, #[_, h, t]) => items := items.push h; l ← whnfR t
-    | (``List.nil, _) => break
-    | _ => throwError "api!: expected a list literal"
+/-- The checks `api!` makes, for any endpoint kind: `toEp` projects an
+    item to its `Endpoint`, `ctors` are the constructors with the index of
+    the handler argument `h`, `tyIdx` the index of its type `τ`, and
+    `withSig` records the signature. -/
+def checkEndpoints (who : String) (items : Array Expr) (toEp : Expr → MetaM Expr)
+    (ctors : List (Name × Nat)) (tyIdx : Nat) (withSig : Name) : TermElabM (Array Expr) := do
   let mut keys : List (Method × String) := []
   let mut out : Array Expr := #[]
   for it in items do
-    let m ← reduce (← mkAppM ``LeanApi.Endpoint.method #[it])
-    let t ← reduce (← mkAppM ``LeanApi.Endpoint.template #[it])
-    let n ← reduce (← mkAppM ``LeanApi.Endpoint.pathArity #[it])
+    let ep ← toEp it
+    let m ← reduce (← mkAppM ``LeanApi.Endpoint.method #[ep])
+    let t ← reduce (← mkAppM ``LeanApi.Endpoint.template #[ep])
+    let n ← reduce (← mkAppM ``LeanApi.Endpoint.pathArity #[ep])
     if m.hasFVar || t.hasFVar || n.hasFVar || m.hasMVar || t.hasMVar || n.hasMVar then
-      throwError "api!: could not compute an endpoint's method, template and path arity statically"
+      throwError "{who}: could not compute an endpoint's method, template and path arity statically"
     let mv ← unsafe evalExpr Method (mkConst ``LeanApi.Method) m
     let tv ← unsafe evalExpr String (mkConst ``String) t
     let nv ← unsafe evalExpr Nat (mkConst ``Nat) n
-    -- The handler: every constructor takes `{σ τ}` first; `h : τ` follows
-    -- the template (and, for `make`, the method).
-    let ctors := [(``LeanApi.Endpoint.make, 4), (``LeanApi.Endpoint.get, 3), (``LeanApi.Endpoint.head, 3),
-      (``LeanApi.Endpoint.post, 3), (``LeanApi.Endpoint.put, 3), (``LeanApi.Endpoint.patch, 3),
-      (``LeanApi.Endpoint.delete, 3)]
     let found := ctors.findSome? fun (c, i) =>
-      (it.find? (·.isAppOf c)).bind fun app => (app.getAppArgs[1]?).bind fun τ =>
+      (it.find? (·.isAppOf c)).bind fun app => (app.getAppArgs[tyIdx]?).bind fun τ =>
         (app.getAppArgs[i]?).map fun h => (τ, h)
     let (hName, sig) ← match found with
       | some (τ, h) =>
@@ -960,17 +952,57 @@ elab "api!" xs:term : term <= expectedType => do
         pure (hName, toString (← ppExpr τ))
       | none => pure ("the handler", "")
     match parseTemplate tv with
-    | .error msg => throwError "api!: {mv} {tv}: {msg}"
+    | .error msg => throwError "{who}: {mv} {tv}: {msg}"
     | .ok segs =>
       let k := (segs.filter fun | .lit _ => false | _ => true).length
       unless k == nv do
-        throwError "api!: {mv} {tv} has {k} path parameter(s), but {hName} takes {nv} `Path` argument(s):\n  {sig}"
+        throwError "{who}: {mv} {tv} has {k} path parameter(s), but {hName} takes {nv} `Path` argument(s):\n  {sig}"
     keys := keys ++ [(mv, tv)]
-    out := out.push (← mkAppM ``LeanApi.Endpoint.withSignature #[it, toExpr sig])
+    out := out.push (← mkAppM withSig #[it, toExpr sig])
   let errs := routeErrors keys
   unless errs.isEmpty do
-    throwError m!"api!: invalid routes:\n  {"\n  ".intercalate errs}"
-  let elemTy := (← whnfR (← instantiateMVars expectedType)).appArg!
-  mkListLit elemTy out.toList
+    throwError m!"{who}: invalid routes:\n  {"\n  ".intercalate errs}"
+  return out
+
+open Elab Term Meta in
+/-- Elaborate a list literal and collect its items. -/
+def listItems (who : String) (xs : Syntax) (expectedType : Expr) : TermElabM (Array Expr) := do
+  let e ← instantiateMVars (← elabTerm xs (some expectedType))
+  let mut items : Array Expr := #[]
+  let mut l ← whnfR e
+  repeat
+    match l.getAppFnArgs with
+    | (``List.cons, #[_, h, t]) => items := items.push h; l ← whnfR t
+    | (``List.nil, _) => break
+    | _ => throwError "{who}: expected a list literal"
+  return items
+
+open Elab Term Meta in
+/-- `api! [e₁, e₂, …]` elaborates a list of endpoints and, for each one,
+    checks that the template parses and has exactly as many parameters as
+    the handler has `Path` arguments, records the handler's elaborated type
+    as its signature, and rejects conflicting routes. The list is an
+    `Api σ` (in-memory endpoints) or a `DbApi s` (LeanDB programs), by the
+    expected type. -/
+elab "api!" xs:term : term <= expectedType => do
+  let expectedType ← instantiateMVars expectedType
+  let elemTy := (← whnfR expectedType).appArg!
+  if (← whnfR elemTy).isAppOf `LeanApi.DbEndpoint then
+    let items ← listItems "api!" xs expectedType
+    -- `{s} [IsSchema s] {τ} (t) (h)`: τ is argument 2, h is argument 4.
+    let ctors := [`get, `head, `post, `put, `patch, `delete].map fun c =>
+      (`LeanApi.DbEndpoint ++ c, 4)
+    let out ← checkEndpoints "api!" items (fun it => mkAppM `LeanApi.DbEndpoint.toEndpoint #[it])
+      ctors 2 `LeanApi.DbEndpoint.withSignature
+    mkListLit elemTy out.toList
+  else
+    let items ← listItems "api!" xs expectedType
+    -- Every constructor takes `{σ τ}` first; `h : τ` follows the template
+    -- (and, for `make`, the method).
+    let ctors := [(``LeanApi.Endpoint.make, 4), (``LeanApi.Endpoint.get, 3), (``LeanApi.Endpoint.head, 3),
+      (``LeanApi.Endpoint.post, 3), (``LeanApi.Endpoint.put, 3), (``LeanApi.Endpoint.patch, 3),
+      (``LeanApi.Endpoint.delete, 3)]
+    let out ← checkEndpoints "api!" items pure ctors 1 ``LeanApi.Endpoint.withSignature
+    mkListLit elemTy out.toList
 
 end LeanApi

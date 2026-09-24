@@ -41,8 +41,8 @@ instance gamesAuth : AuthenticatesDb Games PlayerId :=
 /-! ## The scoped query -/
 
 /-- The games `p` plays in. -/
-def GameRow.visibleTo (p : PlayerId) : LeanDb.Query Games [GameRow] (Stored GameRow) :=
-  (LeanDb.Query.from GameRow).where' fun g => g.val.x == pref p || g.val.o == pref p
+def GameRow.visibleTo (p : PlayerId) : Query Games [GameRow] (Stored GameRow) :=
+  (Query.from GameRow).where' fun g => g.val.x == pref p || g.val.o == pref p
 
 /-- The game with id `gid`, if `p` plays in it. -/
 def visibleGame (p : PlayerId) (gid : GameId) : Read Games (Option (Stored GameRow)) :=
@@ -79,7 +79,7 @@ def keyed [ToResponse α] (me : PlayerId) (k? : Option Keyed)
 
 /-- Open a game against `opponent`. -/
 def openGame (me : Auth PlayerId) (body : Body OpenBody) (key : KeyHeader) :
-    Tx Games GameError (Replayed (Created (Versioned GameView))) := fun _ =>
+    Tx Games GameError (Replayed (Created (Versioned GameView))) :=
   keyed me.val (keyedFor .openGame (key.val.map (·.val)) s!"openGame|{body.val.opponent.n}|{body.val.tc.minutes}") do
     let opp := body.val.opponent
     let known ← Txn.liftRead (Read.get PlayerRow (pref opp))
@@ -96,7 +96,7 @@ def openGame (me : Auth PlayerId) (body : Body OpenBody) (key : KeyHeader) :
       else Txn.throw .unknownOpponent
 
 /-- One page of my games, and how many there are, from one snapshot. -/
-def listGames (me : Auth PlayerId) (q : LeanApi.Query PageReq) : Read Games GamePage := do
+def listGames (me : Auth PlayerId) (q : QueryParams PageReq) : Read Games GamePage := do
   let page ← Read.page (GameRow.visibleTo me.val)
     { offset := (q.val.page - 1) * q.val.per, limit := some q.val.per }
   pure ⟨page.items.map reconstruct, page.total, q.val.page, q.val.per⟩
@@ -122,7 +122,7 @@ def writeStep (me : PlayerId) (cmd : Command) (s : Stored GameRow) {g' : Game}
 
 /-- Play a move in one of my games, decided against revision `rev`. -/
 def playMove (me : Auth PlayerId) (rev : IfMatchRequired ETagRev) (body : Body MoveBody) (id : Path GameId)
-    (key : KeyHeader) : Tx Games GameError (Replayed (Versioned GameView)) := fun _ =>
+    (key : KeyHeader) : Tx Games GameError (Replayed (Versioned GameView)) :=
   keyed me.val (keyedFor .playMove (key.val.map (·.val)) s!"playMove|{id.val.n}|{rev.val.rev}|{body.val.cell.i}") do
     match ← Txn.liftRead (visibleGame me.val id.val) with
     | none => Txn.throw .hidden
@@ -134,7 +134,7 @@ def playMove (me : Auth PlayerId) (rev : IfMatchRequired ETagRev) (body : Body M
 
 /-- Resign one of my games. Resigning twice answers the same game. -/
 def resign (me : Auth PlayerId) (id : Path GameId) (key : KeyHeader) :
-    Tx Games GameError (Replayed (Versioned GameView)) := fun _ =>
+    Tx Games GameError (Replayed (Versioned GameView)) :=
   keyed me.val (keyedFor .resign (key.val.map (·.val)) s!"resign|{id.val.n}") do
     match ← Txn.liftRead (visibleGame me.val id.val) with
     | none => Txn.throw .hidden
@@ -148,7 +148,7 @@ def resign (me : Auth PlayerId) (id : Path GameId) (key : KeyHeader) :
 
 /-! ## The HTTP surface -/
 
-def gamesApi : DbApi Games := dbapi! [
+def gamesApi : DbApi Games := api! [
   .post "/games"                       openGame,
   .get  "/games"                       listGames,
   .get  "/games/{id:nat}"              readGame,

@@ -26,7 +26,7 @@ These are the LeanAPI side of the LeanDB work in [docs/QUERIES.md](../docs/QUERI
 | ID | Title | Pri | Size | Depends on | Status |
 | --- | --- | --- | --- | --- | --- |
 | [LAPI-10](LAPI-10-framework-computed-retry-fingerprints.md) | Retry fingerprints computed by the framework, not written by hand | P1 | M | none | open |
-| [LAPI-11](LAPI-11-database-endpoints-read-like-the-rest.md) | Endpoints over LeanDB read like the rest: one `api!`, no `fun _ =>`, no name clash | P2 | M | LAPI-02 | open |
+| [LAPI-11](LAPI-11-database-endpoints-read-like-the-rest.md) | Endpoints over LeanDB read like the rest: one `api!`, no `fun _ =>`, no name clash | P2 | M | LAPI-02 | done |
 | [LAPI-12](LAPI-12-private-games-no-runtime-checks-a-type-can-carry.md) | private-games: no runtime checks where a type can carry the fact | P2 | S | LeanDB: reads return invariant evidence (part 2); easier after LAPI-08 | open |
 
 ```mermaid

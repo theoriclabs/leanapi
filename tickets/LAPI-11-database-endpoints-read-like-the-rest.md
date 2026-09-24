@@ -49,3 +49,11 @@ LAPI-02 made LeanDB programs endpoint results. Four things make the resulting co
 - **Source-compatible for one release:** `dbapi!` and `Query` remain, deprecated.
 - **A breaking change for handlers that bind `σ` explicitly** (`fun σ => …`). They must drop the binder or write `fun {σ} => …`.
 - **`WithReferrers`' JSON changes** (opt-in wrapper; no example uses it).
+
+## Status (2026-09-23): done on LeanDB M14c (`afe4544`)
+
+- `Tx s ε ρ := {σ : Type} → Txn σ s ε ρ`: handler bodies are `do …`, with no `fun _ =>` in `DbApi.lean` or the tests. A `#guard_msgs` test pins that a `Current σ α` in a `Tx` result is refused.
+- `api!` elaborates `DbApi s` or `Api σ` by the expected type, and both share one check function (`checkEndpoints`). `dbapi!` is a macro alias for one release. `DbApi.step`/`DbApi.runAll` are added (`api.step = api.toApi.step` by `rfl`).
+- `LeanApi.Query` → `QueryParams`, with a deprecated alias. `DbApi.lean` writes `Query Games …`/`Query.from` unqualified.
+- `WithReferrers` renders `{"table", "column", "rows"}` from `HasReferencedBy.sourceEntity`/`columnName`, with no `Repr`. A test checks `member`/`team`.
+- The blog's `gamesApi` and `visibleTo` excerpts are updated. `check_blog.sh` is at 9/13 as before: the 4 failures are the LAPI-06/07 theorems.
