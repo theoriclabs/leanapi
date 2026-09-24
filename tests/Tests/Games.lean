@@ -307,6 +307,20 @@ example : LeanDb.Unique.Key (α := PlayerRow) PlayerRow.Unique.byName = String :
 example : LeanDb.Unique.Key (α := TokenRow) TokenRow.Unique.byDigest = String := rfl
 example : LeanDb.Unique.Key (α := ReceiptRow) ReceiptRow.Unique.byKey =
     (LeanDb.Ref PlayerRow × String × String) := rfl
+/-- A `match` on `InsertError GameRow` that omits `duplicate` compiles: the
+    case is uninhabited, not merely absent. -/
+example : LeanDb.InsertError GameRow → String
+  | .missingRef _ => "missing player"
+  | .duplicate ix _ => nomatch ix
+/-- And so a game insert's only failure is a missing player. -/
+example (e : LeanDb.InsertError GameRow) : ∃ fk, e = .missingRef fk := by
+  cases e with
+  | duplicate ix _ => exact nomatch ix
+  | missingRef fk => exact ⟨fk, rfl⟩
+/-- `Checked GameRow` from the domain proof feeds LeanDB's typed insert. -/
+example (g : Game) (hv : Valid g) (hb : g.Bounded) :
+    LeanDb.Txn σ Games Unit (Except (LeanDb.InsertError GameRow) (LeanDb.Current σ GameRow)) :=
+  LeanDb.Txn.insert GameRow (GameRow.checked g hv hb)
 /-- Everything that references a player, per the schema. -/
 example (r : LeanDb.ReferencedBy Games PlayerRow) : True := by cases r <;> trivial
 

@@ -56,18 +56,22 @@ The in-memory `Store σ` effects stay supported. Notes keeps using them.
 
 Additive: the `Store`-based `Reads`/`Writes` are unchanged. Existing typed APIs keep working.
 
-## Status (2026-09-23): read half done, write half blocked on M14b
+## Status (2026-09-23): done on LeanDB M14b (`d33d067`, pinned by commit)
 
-Branch `lapi-02-read-effects`, stacked on LAPI-04 and pinned to LeanDB `64c768e` (M14 part A: `Read`, no `Txn`).
+Branch `lapi-02-read-effects` (name predates the write half), stacked on LAPI-04.
 
-**Done** (`LeanApi/Http/DbEndpoint.lean`, `tests/Tests/DbEndpoint.lean`):
-- `Handler (DbState s) (Read s ρ)`: effect `.reads`, meaning `Read.denote`.
-- `DbHandler`: the program a handler runs, with `prog_denote` (the program denotes the meaning's response), derived over `Path`, pure inputs (`FromRequest.Pure`) and `Auth`.
-- `AuthenticatesDb` with `sessions`/`passwords` as read programs. Its `Authenticates (DbState s)` instance *is* the denotation, so authentication runs in the request's snapshot.
-- `DbEndpoint`/`DbApi`, `dbapi!` (arity, conflicts, signature), `DbApi.service` over `DbReaders` (one worker per read-only connection, `Read.run` = one snapshot). Faults: 503 + `retry-after` for locking and queue-full, 500 otherwise, logged as `db_fault` with the request id.
-- Laws instantiated on a test schema (two entities, a unique index, a reference): `api_step_safe`, `api_inductive`, `getMember_isolated` (via `Api.noninterference`), no `sorry`, axiom-audited.
-- Tests: HTTP answers (200/404/401/422), `run = denote (load)` per endpoint, one snapshot for count+page, revocation seen by the next request, faults answer 503/500 with nothing written.
+`LeanApi/Http/DbEndpoint.lean`:
+- `Handler (DbState s) (Read s ρ)` (effect `.reads`) and `Handler (DbState s) (Tx s ε ρ)` (effect `.writes`; `Tx s ε ρ := (σ : Type) → Txn σ s ε ρ`, rank-2 so `Current` rows cannot escape). The meanings are `Read.denote` and `Txn.denote`. An abort restores the state and answers `ToProblem ε`.
+- `DbHandler`: the program a request runs, typed by its effect (`DbProg s e`: a `Read` for reads, a `Txn` whose abort value is the response for writes). Its law `prog_denote` says the program's meaning is the handler's meaning, **both response and next state**. It is derived over `Path`, pure inputs (`FromRequest.Pure`) and `Auth`. `Txn.mapErr` with `denote_go_mapErr` turns `ε` into a response.
+- `AuthenticatesDb.sessions`/`passwords` are read programs, and `Authenticates (DbState s)` is defined as their denotation. So authentication runs inside the request's snapshot or transaction.
+- `DbEndpoint`/`DbApi` (`get`/`head`/`post`/`put`/`patch`/`delete`), `dbapi!`, and `DbApi.service` over `DbConns` (one writer, read-only readers, each connection on its own thread). Reads use `Read.run`, which is one snapshot. Writes use `Txn.run`: `BEGIN IMMEDIATE`, with a SAVEPOINT per write.
+- Faults: 503 plus `retry-after` for locking or a full queue, 500 otherwise. Faults are logged as `db_fault` with the request id, and the body carries no detail.
 
-**Blocked on LeanDB M14b**: `Txn s ε` handlers, `.writes` on the writer under `BEGIN IMMEDIATE`, "abort discards writes", "a GET returning a `Txn` does not compile" (today the `GET` guard already rejects any `.writes` effect).
+Acceptance, on the test schema (`tests/Tests/DbEndpoint.lean`: two entities with a unique index and a reference, plus sessions):
+- A `Read` endpoint and a `Txn` endpoint (`join`) answer correctly over HTTP.
+- `api_step_safe`, `api_inductive` (with `join`'s preservation obligation) and `getMember_isolated` (via `Api.noninterference`) are proved, with no `sorry`, and pass the axiom audit.
+- `dbapi!` checks arity (pinned with `#guard_msgs`), and `describe` prints the `Read …`/`Tx …` signatures.
+- A `GET` returning a `Tx` does not compile (pinned).
+- Tests: abort discards the insert (`team full` → 409, name not taken afterwards), duplicate → 409, run = denote for reads and for a committed write, one snapshot for count and page, revocation seen by the next request, a locked writer → 503 with nothing written, a poisoned reader → 500.
 
-**Finding for LeanDB (blocks LAPI-06/07, not this ticket).** At `64c768e`, `DbState.get`, `set` and `source` are `@[implemented_by]` with logical bodies that ignore the state (`get` is always the empty table). So in the logic every `DbState` is empty and `Read.denote p st` does not depend on `st`: `getMember_isolated` holds, but so would any isolation claim (checked by `rfl` with no view hypothesis). The laws above are correct in form and will mean something once `DbState` has a real logical model. M15 must replace the `unsafeCast` slots with a dependent map (e.g. `(t : Table) → Table (pack t).ty`), or LAPI-06/07 prove nothing.
+**Finding for LeanDB (blocks LAPI-06/07, not this ticket).** At `d33d067` (still true after M14b), `DbState.get`/`set`/`source`/`load` are `@[implemented_by]`, and their proof-side bodies ignore the state (`get` is always the empty table, `set` returns the state unchanged). So in proofs every `DbState` is empty, `Read.denote p st` does not depend on `st`, and any isolation claim holds trivially (checked by `rfl` with no view hypothesis). The laws above have the right form and will mean something once `DbState` has a real proof-side model. M15 must replace the `unsafeCast` slots with a dependent map, e.g. `(t : Table) → Table (pack t).ty`.

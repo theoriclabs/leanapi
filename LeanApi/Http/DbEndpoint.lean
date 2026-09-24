@@ -1,5 +1,5 @@
 /-
-  Endpoints over LeanDB programs (LAPI-02, read half).
+  Endpoints over LeanDB programs (LAPI-02).
 
   A handler may end in a LeanDB read program instead of an in-memory
   effect:
@@ -19,8 +19,9 @@
   connection (one deferred snapshot). A `DbFault` answers without effect:
   503 for locking, 500 otherwise, logged with the request id.
 
-  Write programs (`Txn s ε`) are LeanDB M14 part B. Until then there is no
-  `DbHandler` for writes, so a `DbEndpoint` is always read-only.
+  A handler may also end in a transaction, `Tx s ε ρ`: all or nothing,
+  run on the writer under `BEGIN IMMEDIATE`; an abort with `e : ε` rolls
+  back every write and answers `ToProblem ε`.
 -/
 import LeanApi.Http.Endpoint
 import LeanApi.Runtime.Blocking
@@ -132,28 +133,163 @@ def sessionToken (req : Req) (cookie : Option String) : Except AuthFailure (Stri
 
 end AuthenticatesDb
 
+end LeanApi
+
+/-! ## Changing a transaction's failure type -/
+
+namespace LeanDb.Txn
+variable {σ s ε ε' : Type}
+def mapErr (g : ε → ε') : {α : Type} → Txn σ s ε α → Txn σ s ε' α
+  | _, .pure a => .pure a
+  | _, .bind m f => .bind (mapErr g m) (fun a => mapErr g (f a))
+  | _, .liftRead r => .liftRead r
+  | _, @Txn.get _ _ _ α i id => @Txn.get _ _ _ α i id
+  | _, @Txn.lookup _ _ _ α i1 i2 ix k => @Txn.lookup _ _ _ α i1 i2 ix k
+  | _, .throw e => .throw (g e)
+  | _, .orAbort m f => .orAbort (mapErr g m) (g ∘ f)
+  | _, .orElse m h => .orElse (mapErr g m) (fun e => mapErr g (h e))
+  | _, @Txn.insert _ _ _ α a b c v => @Txn.insert _ _ _ α a b c v
+  | _, @Txn.update _ _ _ α a b c o n => @Txn.update _ _ _ α a b c o n
+  | _, @Txn.set _ _ _ α a b c r n => @Txn.set _ _ _ α a b c r n
+  | _, @Txn.patch _ _ _ α a b c r fs n => @Txn.patch _ _ _ α a b c r fs n
+  | _, @Txn.append _ _ _ α a b o n => @Txn.append _ _ _ α a b o n
+  | _, @Txn.delete _ _ _ α a b id => @Txn.delete _ _ _ α a b id
+
+theorem denote_go_mapErr [IsSchema s] (g : ε → ε') (st0 : DbState s) {α : Type} (p : Txn σ s ε α) :
+    ∀ st, denote.go st0 (mapErr g p) st =
+      ((denote.go st0 p st).1.mapError g, (denote.go st0 p st).2) := by
+  induction p with
+  | pure a => intro st; rfl
+  | bind m f ihm ihf =>
+    intro st
+    simp only [mapErr, denote.go, ihm]
+    cases denote.go st0 m st with
+    | mk r st' => cases r <;> simp [Except.mapError, ihf]
+  | throw e => intro st; rfl
+  | orAbort m f ih =>
+    intro st
+    simp only [mapErr, denote.go, ih]
+    cases denote.go st0 m st with
+    | mk r st' => rcases r with e | (e | a) <;> rfl
+  | orElse m h ihm ihh =>
+    intro st
+    simp only [mapErr, denote.go, ihm]
+    cases denote.go st0 m st with
+    | mk r st' => rcases r with e | (e | a) <;> simp [Except.mapError, ihh]
+  | _ => intro st; simp only [mapErr, denote.go]; (repeat' split) <;> rfl
+end LeanDb.Txn
+
+namespace LeanApi
+
+open Lean LeanDb
+
+/-! ## Write handlers: `Tx s ε ρ` -/
+
+/-- A transaction program as a handler's result: all or nothing, failing
+    with `ε`. Rank-2 in the transaction index, so `Current` rows cannot
+    escape (`fun _ => do …`). -/
+abbrev Tx (s ε ρ : Type) := (σ : Type) → Txn σ s ε ρ
+
+/-- The meaning of a transaction handler: commit answers `ToResponse ρ`,
+    abort answers `ToProblem ε` and restores the state (`Txn.denote`). -/
+instance {s : Type} [IsSchema s] [ToResponse ρ] [ToProblem ε] : Handler (DbState s) (Tx s ε ρ) where
+  effect := .writes
+  pathArity := 0
+  inputs := []
+  step p _ _ st _ := (ToResponse.toRes (Txn.denote (p Unit) st).1, (Txn.denote (p Unit) st).2)
+  errors _ _ _ _ := []
+  step_safe h := h.elim
+  Preserved I p := ∀ st, I st → I (Txn.denote (p Unit) st).2
+  step_preserved _ _ hp _ _ st _ hs := hp st hs
+  ErrStable _ := True
+  errors_stable _ _ _ _ _ _ _ _ := rfl
+  Isolated R p := ∀ env r s₁ s₂, R env r s₁ s₂ →
+    ToResponse.toRes (Txn.denote (p Unit) s₁).1 = ToResponse.toRes (Txn.denote (p Unit) s₂).1
+  step_isolated _ _ hI env r s₁ s₂ _ h := hI env r s₁ s₂ h
+
+/-! ## Programs, indexed by effect
+
+The program a request runs has the shape its effect allows: a `Read` for
+`pure`/`reads` (a reader connection, one snapshot) and a transaction for
+`writes` (the writer, `BEGIN IMMEDIATE`). A transaction's abort value is
+the response, so a refused request rolls back and still answers. -/
+
+def DbProg (s : Type) [IsSchema s] : Effect → Type 1
+  | .pure | .reads => Read s Res
+  | .writes => (σ : Type) → Txn σ s Res Res
+
+namespace DbProg
+
+variable {s : Type} [IsSchema s]
+
+def merge : Except Res Res → Res
+  | .ok r => r
+  | .error r => r
+
+/-- The meaning: the response and the next state. -/
+def denote : {e : Effect} → DbProg s e → DbState s → Res × DbState s
+  | .pure, p, st => (Read.denote p st, st)
+  | .reads, p, st => (Read.denote p st, st)
+  | .writes, p, st => (merge (Txn.denote (p Unit) st).1, (Txn.denote (p Unit) st).2)
+
+def ret : {e : Effect} → Res → DbProg s e
+  | .pure, r => (pure r : Read s Res)
+  | .reads, r => (pure r : Read s Res)
+  | .writes, r => fun _ => .pure r
+
+/-- Read first, then continue with a program of the same effect. -/
+def bindRead : {e : Effect} → Read s α → (α → DbProg s e) → DbProg s e
+  | .pure, r, k => (r >>= k : Read s Res)
+  | .reads, r, k => (r >>= k : Read s Res)
+  | .writes, r, k => fun σ => .bind (.liftRead r) (fun a => k a σ)
+
+theorem denote_ret {e : Effect} (r : Res) (st : DbState s) : denote (ret (e := e) r) st = (r, st) := by
+  cases e <;> rfl
+
+theorem denote_bindRead {e : Effect} (r : Read s α) (k : α → DbProg s e) (st : DbState s) :
+    denote (bindRead r k) st = denote (k (Read.denote r st)) st := by
+  cases e
+  · rfl
+  · rfl
+  · simp only [denote, bindRead, Txn.denote, Txn.denote.go]
+
+end DbProg
+
 /-! ## Programs from handlers -/
 
-/-- The read program a handler runs, with its law: it denotes exactly the
-    response of the handler's pure meaning. Found by instance resolution
-    over the arrows of `τ`, like `Handler`. -/
+/-- The program a handler runs, with its law: it denotes exactly the
+    handler's pure meaning, response *and* next state. Found by instance
+    resolution over the arrows of `τ`, like `Handler`. -/
 class DbHandler (s : Type) [IsSchema s] (τ : Type u) [H : Handler (DbState s) τ] where
-  prog : τ → Env → Req → Nat → Read s Res
+  prog : τ → Env → Req → Nat → DbProg s H.effect
   /-- The field errors of all inputs, as a program. -/
   errorsProg : Env → Req → Nat → Read s (List FieldError)
-  prog_denote : ∀ h env r st i, Read.denote (prog h env r i) st = (H.step h env r st i).1
+  prog_denote : ∀ h env r st i, (prog h env r i).denote st = H.step h env r st i
   errors_denote : ∀ env r st i, Read.denote (errorsProg env r i) st = H.errors env r st i
 
 private def invalidRes (es : List FieldError) : Res := (FieldError.problem es).toRes
 
 instance {s : Type} [IsSchema s] [ToResponse ρ] : DbHandler s (Read s ρ) where
-  prog p _ _ _ := ToResponse.toRes <$> p
+  prog p _ _ _ := (ToResponse.toRes <$> p : Read s Res)
   errorsProg _ _ _ := pure []
   prog_denote _ _ _ _ _ := rfl
   errors_denote _ _ _ _ := rfl
 
+instance {s : Type} [IsSchema s] [ToResponse ρ] [ToProblem ε] : DbHandler s (Tx s ε ρ) where
+  prog p _ _ _ := fun σ =>
+    .bind (Txn.mapErr (fun e => ToResponse.toRes (Except.error e : Except ε ρ)) (p σ))
+      (fun a => .pure (ToResponse.toRes (Except.ok a : Except ε ρ)))
+  errorsProg _ _ _ := pure []
+  prog_denote p env r st i := by
+    show (DbProg.merge (Txn.denote _ st).1, (Txn.denote _ st).2) =
+      (ToResponse.toRes (Txn.denote (p Unit) st).1, (Txn.denote (p Unit) st).2)
+    simp only [Txn.denote, Txn.denote.go, Txn.denote_go_mapErr]
+    cases Txn.denote.go st (p Unit) st with
+    | mk x st' => cases x <;> rfl
+  errors_denote _ _ _ _ := rfl
+
 instance (priority := low) {s : Type} [IsSchema s] [ToResponse ρ] : DbHandler s ρ where
-  prog a _ _ _ := pure (ToResponse.toRes a)
+  prog a _ _ _ := (pure (ToResponse.toRes a) : Read s Res)
   errorsProg _ _ _ := pure []
   prog_denote _ _ _ _ _ := rfl
   errors_denote _ _ _ _ := rfl
@@ -163,19 +299,19 @@ instance {s : Type} [IsSchema s] {β : Type u} [FromParam α] [H : Handler (DbSt
   prog f env r i :=
     match pathAt (α := α) r i with
     | .ok a => D.prog (f ⟨a⟩) env r (i + 1)
-    | .error es => (fun more => invalidRes (es ++ more)) <$> D.errorsProg env r (i + 1)
+    | .error es => DbProg.bindRead (D.errorsProg env r (i + 1)) fun more => DbProg.ret (invalidRes (es ++ more))
   errorsProg env r i :=
     (fun more => (match pathAt (α := α) r i with | .ok _ => [] | .error es => es) ++ more) <$>
       D.errorsProg env r (i + 1)
   prog_denote f env r st i := by
     show _ = (match pathAt (α := α) r i with
       | .ok a => H.step (f ⟨a⟩) env r st (i + 1)
-      | .error es => (invalidRes (es ++ H.errors env r st (i + 1)), st)).1
+      | .error es => (invalidRes (es ++ H.errors env r st (i + 1)), st))
     cases pathAt (α := α) r i with
     | ok a => exact D.prog_denote _ env r st _
     | error es =>
-      show invalidRes (es ++ Read.denote (D.errorsProg env r (i + 1)) st) = _
-      rw [D.errors_denote]
+      show DbProg.denote (DbProg.bindRead _ _) st = _
+      rw [DbProg.denote_bindRead, DbProg.denote_ret, D.errors_denote]
   errors_denote env r st i := by
     show _ ++ Read.denote (D.errorsProg env r (i + 1)) st = _
     rw [D.errors_denote]; rfl
@@ -186,8 +322,8 @@ instance (priority := low) {s : Type} [IsSchema s] {β : Type u} [R' : FromReque
   prog f env r i :=
     match R'.extract DbState.empty env r with
     | .ok a => D.prog (f a) env r i
-    | .invalid es => (fun more => invalidRes (es ++ more)) <$> D.errorsProg env r i
-    | .reject res => pure res
+    | .invalid es => DbProg.bindRead (D.errorsProg env r i) fun more => DbProg.ret (invalidRes (es ++ more))
+    | .reject res => DbProg.ret res
   errorsProg env r i :=
     (fun more => (match R'.extract DbState.empty env r with | .invalid es => es | _ => []) ++ more) <$>
       D.errorsProg env r i
@@ -195,14 +331,14 @@ instance (priority := low) {s : Type} [IsSchema s] {β : Type u} [R' : FromReque
     show _ = (match R'.extract st env r with
       | .ok a => H.step (f a) env r st i
       | .invalid es => (invalidRes (es ++ H.errors env r st i), st)
-      | .reject res => (res, st)).1
+      | .reject res => (res, st))
     rw [FromRequest.Pure.pure (σ := DbState s) (α := α) st DbState.empty env r]
     cases R'.extract DbState.empty env r with
     | ok a => exact D.prog_denote _ env r st _
     | invalid es =>
-      show invalidRes (es ++ Read.denote (D.errorsProg env r i) st) = _
-      rw [D.errors_denote]
-    | reject res => rfl
+      show DbProg.denote (DbProg.bindRead _ _) st = _
+      rw [DbProg.denote_bindRead, DbProg.denote_ret, D.errors_denote]
+    | reject res => exact DbProg.denote_ret res st
   errors_denote env r st i := by
     show _ ++ Read.denote (D.errorsProg env r i) st =
       (match R'.extract st env r with | .invalid es => es | _ => []) ++ H.errors env r st i
@@ -210,92 +346,119 @@ instance (priority := low) {s : Type} [IsSchema s] {β : Type u} [R' : FromReque
 
 instance {s : Type} [IsSchema s] {β : Type u} [A : AuthenticatesDb s α] [V : ViewOf (DbState s) α]
     [H : Handler (DbState s) β] [D : DbHandler s β] : DbHandler s (Auth α → β) where
-  prog f env r i := do
-    match ← A.authProg env r with
-    | .ok who => D.prog (f ⟨who⟩) env r i
-    | .error .missing => pure (unauthorized A.challenge)
-    | .error (.invalid _) => pure (unauthorized A.challenge "invalid credentials")
+  prog f env r i :=
+    DbProg.bindRead (A.authProg env r) fun
+      | .ok who => D.prog (f ⟨who⟩) env r i
+      | .error .missing => DbProg.ret (unauthorized A.challenge)
+      | .error (.invalid _) => DbProg.ret (unauthorized A.challenge "invalid credentials")
   errorsProg := D.errorsProg
   prog_denote f env r st i := by
-    show _ = (match Read.denote (A.authProg env r) st with
+    show DbProg.denote (DbProg.bindRead _ _) st = (match Read.denote (A.authProg env r) st with
       | .ok who => H.step (f ⟨who⟩) env r st i
       | .error .missing => (unauthorized A.challenge, st)
-      | .error (.invalid _) => (unauthorized A.challenge "invalid credentials", st)).1
-    have hb : ∀ k : Except AuthFailure α → Read s Res,
-        Read.denote (A.authProg env r >>= k) st = Read.denote (k (Read.denote (A.authProg env r) st)) st :=
-      fun _ => rfl
-    show Read.denote (A.authProg env r >>= _) st = _
-    rw [hb]
+      | .error (.invalid _) => (unauthorized A.challenge "invalid credentials", st))
+    rw [DbProg.denote_bindRead]
     cases Read.denote (A.authProg env r) st with
     | ok who => exact D.prog_denote _ env r st _
-    | error e => cases e <;> rfl
+    | error e => cases e <;> exact DbProg.denote_ret _ st
   errors_denote := D.errors_denote
 
 /-! ## Endpoints that carry their program -/
 
-/-- An endpoint over `DbState s`, together with the read program the runtime
-    executes and the proof that it denotes the endpoint's response. -/
+/-- An endpoint over `DbState s`, together with the program the runtime
+    executes and the proof that it denotes the endpoint's meaning. -/
 structure DbEndpoint (s : Type) [IsSchema s] extends Endpoint (DbState s) where
-  prog : Env → Req → Read s Res
-  prog_denote : ∀ env r st, Read.denote (prog env r) st = (toEndpoint.step env r st).1
+  prog : Env → Req → DbProg s toEndpoint.effect
+  prog_denote : ∀ env r st, (prog env r).denote st = toEndpoint.step env r st
 
 namespace DbEndpoint
 
 variable {s : Type} [IsSchema s]
 
-def ofEndpoint {τ : Type u} (e : Endpoint (DbState s)) (h : τ) [H : Handler (DbState s) τ]
-    [D : DbHandler s τ] (hstep : ∀ env r st, e.step env r st = H.step h env r st 0) : DbEndpoint s where
-  toEndpoint := e
+def get {τ : Type u} (t : String) (h : τ) [H : Handler (DbState s) τ] [D : DbHandler s τ]
+    (safe : H.effect.Safe := by endpoint_safe) : DbEndpoint s where
+  toEndpoint := Endpoint.get t h safe
   prog env r := D.prog h env r 0
-  prog_denote env r st := by rw [hstep]; exact D.prog_denote h env r st 0
+  prog_denote env r st := D.prog_denote h env r st 0
 
-def get {τ : Type u} (t : String) (h : τ) [H : Handler (DbState s) τ] [DbHandler s τ]
-    (safe : H.effect.Safe := by endpoint_safe) : DbEndpoint s :=
-  ofEndpoint (Endpoint.get t h safe) h fun _ _ _ => rfl
+def head {τ : Type u} (t : String) (h : τ) [H : Handler (DbState s) τ] [D : DbHandler s τ]
+    (safe : H.effect.Safe := by endpoint_safe) : DbEndpoint s where
+  toEndpoint := Endpoint.head t h safe
+  prog env r := D.prog h env r 0
+  prog_denote env r st := D.prog_denote h env r st 0
 
-def head {τ : Type u} (t : String) (h : τ) [H : Handler (DbState s) τ] [DbHandler s τ]
-    (safe : H.effect.Safe := by endpoint_safe) : DbEndpoint s :=
-  ofEndpoint (Endpoint.head t h safe) h fun _ _ _ => rfl
+def post {τ : Type u} (t : String) (h : τ) [H : Handler (DbState s) τ] [D : DbHandler s τ]
+    (limit : Nat := 1024 * 1024) : DbEndpoint s where
+  toEndpoint := Endpoint.post t h limit
+  prog env r := D.prog h env r 0
+  prog_denote env r st := D.prog_denote h env r st 0
 
-def post {τ : Type u} (t : String) (h : τ) [Handler (DbState s) τ] [DbHandler s τ]
-    (limit : Nat := 1024 * 1024) : DbEndpoint s :=
-  ofEndpoint (Endpoint.post t h limit) h fun _ _ _ => rfl
+def put {τ : Type u} (t : String) (h : τ) [H : Handler (DbState s) τ] [D : DbHandler s τ]
+    (limit : Nat := 1024 * 1024) : DbEndpoint s where
+  toEndpoint := Endpoint.put t h limit
+  prog env r := D.prog h env r 0
+  prog_denote env r st := D.prog_denote h env r st 0
+
+def patch {τ : Type u} (t : String) (h : τ) [H : Handler (DbState s) τ] [D : DbHandler s τ]
+    (limit : Nat := 1024 * 1024) : DbEndpoint s where
+  toEndpoint := Endpoint.patch t h limit
+  prog env r := D.prog h env r 0
+  prog_denote env r st := D.prog_denote h env r st 0
+
+def delete {τ : Type u} (t : String) (h : τ) [H : Handler (DbState s) τ] [D : DbHandler s τ]
+    (limit : Nat := 1024 * 1024) : DbEndpoint s where
+  toEndpoint := Endpoint.delete t h limit
+  prog env r := D.prog h env r 0
+  prog_denote env r st := D.prog_denote h env r st 0
 
 def withSignature (e : DbEndpoint s) (sig : String) : DbEndpoint s :=
   { e with toEndpoint := e.toEndpoint.withSignature sig }
 
 end DbEndpoint
 
-/-! ## Runtime: reader connections and faults -/
+/-! ## Runtime: connections and faults -/
 
-/-- Read-only connections, each on its own worker thread, round-robin. -/
-structure DbReaders where
-  workers : Array Worker
-  conns : Array Conn
+/-- One connection on its own worker thread. -/
+structure DbWorker where
+  worker : Worker
+  conn : Conn
+
+def DbWorker.run (w : DbWorker) (act : DbM α) : IO (Except SubmitError (Except DbError α)) :=
+  w.worker.run (DbM.run w.conn act)
+
+/-- The writer (one connection, `BEGIN IMMEDIATE`) and read-only
+    connections, round-robin. -/
+structure DbConns where
+  writer : DbWorker
+  readers : Array DbWorker
   next : IO.Ref Nat
 
-namespace DbReaders
+namespace DbConns
 
-/-- `n` read-only connections to an existing instance. -/
-def «open» (path : System.FilePath) (n : Nat := 4) (queue : Nat := 1024) : IO DbReaders := do
-  let mut conns := #[]
-  for _ in [0:max n 1] do
+/-- Open (creating, and verifying the schema of) the instance at `path`. -/
+def «open» (path : System.FilePath) (specs : List TableSpec) (readers : Nat := 4) (queue : Nat := 1024) :
+    IO DbConns := do
+  let w ← match ← openDb path specs with
+    | .ok c => pure c
+    | .error e => throw (IO.userError s!"open {path}: {e}")
+  let mut rs := #[]
+  for _ in [0:max readers 1] do
     match ← openDbRaw path (readOnly := true) with
-    | .ok c => conns := conns.push c
+    | .ok c => rs := rs.push { worker := ← Worker.start queue, conn := c }
     | .error e => throw (IO.userError s!"open reader {path}: {e}")
-  let workers ← conns.mapM fun _ => Worker.start queue
-  return { workers, conns, next := ← IO.mkRef 0 }
+  return { writer := { worker := ← Worker.start queue, conn := w }, readers := rs, next := ← IO.mkRef 0 }
 
-def run (rd : DbReaders) (act : DbM α) : IO (Except SubmitError (Except DbError α)) := do
-  let i ← rd.next.modifyGet fun i => (i, i + 1)
-  let k := i % rd.conns.size
-  match rd.workers[k]?, rd.conns[k]? with
-  | some w, some c => w.run (DbM.run c act)
-  | _, _ => return .error .stopped
+def read (dc : DbConns) (act : DbM α) : IO (Except SubmitError (Except DbError α)) := do
+  let i ← dc.next.modifyGet fun i => (i, i + 1)
+  match dc.readers[i % dc.readers.size]? with
+  | some w => w.run act
+  | none => return .error .stopped
 
-def close (rd : DbReaders) : IO Unit := rd.workers.forM Worker.stop
+def close (dc : DbConns) : IO Unit := do
+  dc.readers.forM (·.worker.stop)
+  dc.writer.worker.stop
 
-end DbReaders
+end DbConns
 
 /-- A request that stopped on a fault has no effect. Locking is transient
     (503, retry); every other fault is the server's (500). No detail leaves
@@ -309,27 +472,49 @@ def faultRes (f : DbFault) (requestId : String) : Res :=
   let p := if faultStatus f == 503 then p.withHeader "retry-after" "1" else p
   p.toRes
 
+namespace DbProg
+
+variable {s : Type} [IsSchema s]
+
+/-- Execute: reads on a reader in one snapshot, transactions on the
+    writer under `BEGIN IMMEDIATE`. An abort rolls back and answers its
+    response. -/
+def exec (dc : DbConns) : {e : Effect} → DbProg s e → IO (Except DbFault Res)
+  | .pure, p => runRead p
+  | .reads, p => runRead p
+  | .writes, p => do
+    match ← dc.writer.run (Txn.run (s := s) (fun {σ} => p σ)) with
+    | .error .busy => return .error (.locking "writer queue full")
+    | .error .stopped => return .error (.io "writer stopped")
+    | .ok (.error err) => return .error (DbFault.ofDbError err)
+    | .ok (.ok (.error f)) => return .error f
+    | .ok (.ok (.ok x)) => return .ok (merge x)
+where
+  runRead (p : Read s Res) : IO (Except DbFault Res) := do
+    match ← dc.read (Read.run p) with
+    | .error .busy => return .error (.locking "reader queue full")
+    | .error .stopped => return .error (.io "reader stopped")
+    | .ok (.error err) => return .error (DbFault.ofDbError err)
+    | .ok (.ok r) => return r
+
+end DbProg
+
 namespace DbEndpoint
 
 variable {s : Type} [IsSchema s]
 
-/-- Run against reader connections: a fresh environment, and the whole
-    request (authentication, decoding, the handler) as one read program in
-    one snapshot. -/
-def toRoute (e : DbEndpoint s) (rd : DbReaders) (log : String → IO Unit) : Route where
+/-- A fresh environment, and the whole request (authentication, decoding,
+    the handler) as one program: one snapshot, or one transaction. -/
+def toRoute (e : DbEndpoint s) (dc : DbConns) (log : String → IO Unit) : Route where
   method := e.method
   template := e.template
   handler req := do
     let env ← Env.fresh
-    let fault (f : DbFault) : IO Res := do
+    match ← DbProg.exec dc (e.prog env req) with
+    | .ok res => return res
+    | .error f =>
       log s!"\{\"event\":\"db_fault\",\"request_id\":\"{req.requestId}\",\"fault\":{(Json.str (toString f)).compress}}"
       return faultRes f req.requestId
-    match ← rd.run (Read.run (e.prog env req)) with
-    | .error .busy => fault (.locking "reader queue full")
-    | .error .stopped => fault (.io "reader stopped")
-    | .ok (.error err) => fault (DbFault.ofDbError err)
-    | .ok (.ok (.error f)) => fault f
-    | .ok (.ok (.ok res)) => return res
   bodyLimit := e.bodyLimit
   name := if e.signature.isEmpty then none else some e.signature
 
@@ -349,16 +534,17 @@ def toApi (api : DbApi s) : Api (DbState s) := api.map (·.toEndpoint)
 
 def describe (api : DbApi s) : String := api.toApi.describe
 
-def routes (api : DbApi s) (rd : DbReaders) (log : String → IO Unit) : List Route :=
-  api.map (·.toRoute rd log)
+def routes (api : DbApi s) (dc : DbConns) (log : String → IO Unit) : List Route :=
+  api.map (·.toRoute dc log)
 
-def service (api : DbApi s) (rd : DbReaders) (stack : Stack := {}) (log : String → IO Unit := IO.eprintln) :
+def service (api : DbApi s) (dc : DbConns) (stack : Stack := {}) (log : String → IO Unit := IO.eprintln) :
     Service :=
-  Service.ofRouter (Router.build! (api.routes rd log)) stack
+  Service.ofRouter (Router.build! (api.routes dc log)) stack
 
-/-- Every endpoint's program denotes its response. -/
+/-- Every endpoint's program denotes its meaning: the response and the
+    next state. -/
 theorem prog_denote (api : DbApi s) : ∀ e ∈ api, ∀ env r st,
-    Read.denote (e.prog env r) st = (e.step env r st).1 :=
+    (e.prog env r).denote st = e.step env r st :=
   fun e _ => e.prog_denote
 
 end DbApi
@@ -392,7 +578,8 @@ elab "dbapi!" xs:term : term <= expectedType => do
     let tv ← unsafe evalExpr String (mkConst ``String) t
     let nv ← unsafe evalExpr Nat (mkConst ``Nat) n
     -- `{s} [IsSchema s] {τ} (t) (h)`: τ is argument 2, h is argument 4.
-    let ctors := [``LeanApi.DbEndpoint.get, ``LeanApi.DbEndpoint.head, ``LeanApi.DbEndpoint.post]
+    let ctors := [``LeanApi.DbEndpoint.get, ``LeanApi.DbEndpoint.head, ``LeanApi.DbEndpoint.post,
+      ``LeanApi.DbEndpoint.put, ``LeanApi.DbEndpoint.patch, ``LeanApi.DbEndpoint.delete]
     let found := ctors.findSome? fun c =>
       (it.find? (·.isAppOf c)).bind fun app => (app.getAppArgs[2]?).bind fun τ =>
         (app.getAppArgs[4]?).map fun h => (τ, h)

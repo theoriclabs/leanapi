@@ -1,12 +1,13 @@
 # Changelog
 
-## Unreleased: endpoints over LeanDB read programs (LAPI-02, read half)
+## Unreleased: endpoints over LeanDB programs (LAPI-02)
 
 - `LeanApi.Http.DbEndpoint`: a handler may end in `Read s ρ`. Its meaning is `Read.denote` over `DbState s`, so `Api.step_safe`, `Api.inductive_of` and `Api.noninterference` apply to `DbApi.toApi`. `DbHandler` builds the program the runtime runs, with `prog_denote`.
 - `AuthenticatesDb.sessions`/`passwords`: authentication as a read program, in the request's snapshot.
-- `DbApi.service`: each request is one `Read.run` (one snapshot) on a reader connection. Faults: 503 for locking, 500 otherwise, logged with the request id.
+- `DbApi.service` over `DbConns`: reads are one `Read.run` (one snapshot) on a reader; writes are one `Txn.run` on the writer. Faults: 503 for locking, 500 otherwise, logged with the request id.
 - `Handler`'s handler type is universe-polymorphic (`Read s ρ : Type 1`).
-- Write programs (`Txn`) wait for LeanDB M14b.
+- Write programs: a handler may end in `Tx s ε ρ` (a LeanDB `Txn`). It runs on the writer under `BEGIN IMMEDIATE`; an abort rolls back and answers `ToProblem ε`. `prog_denote` covers the next state as well as the response.
+- LeanDB pinned at M14b (`d33d067`).
 
 ## Unreleased: private-games schema on typed symbols (LAPI-04)
 

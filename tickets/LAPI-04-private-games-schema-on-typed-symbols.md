@@ -49,8 +49,8 @@ The DDL must stay identical, so existing databases open without migration. If in
 
 ## Status (2026-09-23)
 
-Done against LeanDB M14 part A (`64c768e`, pinned by commit), branch `lapi-04-typed-schema`.
+Done against LeanDB M14 part A (`64c768e`, pinned by commit), now built on M14b (`d33d067`), branch `lapi-04-typed-schema`.
 
 - Criteria 1, 3 and the two tests are met. `Checked GameRow` is built from proofs (`GameRow.checked`/`checkedOpen`/`checkedStep`), and `Valid.check` is no longer called by the repository. LeanDB's LDB-16 invariant (proved equal to `Valid`, `GameRow.invariant_iff`) now does the check that `guardLoad`/`guardWrite` used to do.
-- Criterion 2: `InsertError` is M14b, so the "`match` without `duplicate`" pin waits for it. `Unique GameRow` is pinned empty (`tests/Tests/Games.lean`), and that is the fact that pin would rest on.
+- Criterion 2: met on M14b (`d33d067`). A `match` on `InsertError GameRow` whose `duplicate` arm is `nomatch` compiles, and `Checked GameRow` from the domain proof type-checks as a `Txn.insert` (`tests/Tests/Games.lean`).
 - Criterion 4: the DDL is **not** identical. `unique%` names indexes `uq_<table>_<ctor>`, and the declared invariant is part of the fingerprint. The migration is recorded: `Runtime.open` migrates a v1 instance (three index renames and an invariant restamp, non-destructive), and a test opens a real v1 file.

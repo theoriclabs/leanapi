@@ -82,32 +82,88 @@ structure Taken where
 def nameTaken (n : Query NameQ) : Read App Taken :=
   (fun m => ⟨m.isSome⟩) <$> Read.lookup Member Member.Unique.byName n.val.name
 
+/-! ### Writes: transaction programs -/
+
+structure NewMember where
+  name : String
+
+instance : FromBody NewMember := FromBody.record (NewMember.mk <$> Fields.req "name")
+
+/-- Why joining can fail: the failure type is the schema's, mapped to a
+    status by `ToProblem`. -/
+inductive JoinError where
+  | taken
+  | noTeam
+  | limit
+
+instance : ToProblem JoinError where
+  status
+    | .taken => ⟨409, by decide⟩
+    | .noTeam => ⟨422, by decide⟩
+    | .limit => ⟨409, by decide⟩
+  detail
+    | .taken => some "name taken"
+    | .noTeam => some "team is gone"
+    | .limit => some "team is full"
+
+private def checkedMember (m : Member) : Checked Member := Checked.of m trivial
+
+/-- Add a member to my team. A duplicate name is the schema's `.duplicate`,
+    turned into 409. More than 3 members aborts *after* the insert: the
+    insert must not survive. -/
+def join (me : Auth Me) (b : Body NewMember) : Tx App JoinError (Created MemberView) := fun _ => do
+  let row ← Txn.orAbort (Txn.insert Member (checkedMember ⟨b.val.name, me.val.team⟩)) fun
+    | .duplicate _ _ => JoinError.taken
+    | .missingRef _ => JoinError.noTeam
+  let n ← Txn.liftRead (Read.count ((Query.from Member (s := App)).where' (fun r => r.val.team == me.val.team)))
+  if n > 3 then Txn.throw .limit
+  pure ⟨⟨row.id.toInt64.toInt, row.val.name⟩, s!"/members/{row.id.toInt64.toInt}"⟩
+
 def api : DbApi App := dbapi! [
   .get "/members/{id}" getMember,
   .get "/team" myTeam,
-  .get "/names" nameTaken
+  .get "/names" nameTaken,
+  .post "/members" join
 ]
 
 /-! ## Compile time -/
 
-/-- The effect of a read program is `reads`. -/
+/-- The effect of a read program is `reads`, of a transaction `writes`. -/
 example : Handler.effect (σ := DbState App) (τ := type_of% getMember) = .reads := rfl
+example : Handler.effect (σ := DbState App) (τ := type_of% join) = .writes := rfl
+
+-- A GET whose handler returns a transaction does not build.
+/-- error: could not synthesize default value for parameter 'safe' using tactics
+---
+error: a GET or HEAD endpoint must not change state, but this handler's effect is `writes`. Return `Reads σ _` (or a pure value), or use POST, PUT, PATCH or DELETE.
+⊢ (Handler.effect (DbState App) (Auth Me → Body NewMember → LeanApi.Tx App JoinError (Created MemberView))).Safe -/
+#guard_msgs (error) in
+example : DbEndpoint App := .get "/members" join
+
+-- `dbapi!` checks path arity like `api!`.
+/-- error: dbapi!: GET /members/{a}/{b} has 2 path parameter(s), but `Tests.DbEndpoint.getMember` takes 1 `Path` argument(s):
+  Auth Me → Path Nat → Read App (Except NotFound MemberView) -/
+#guard_msgs (error) in
+example : DbApi App := dbapi! [.get "/members/{a}/{b}" getMember]
 
 /-- The API's meaning is an ordinary typed API: the laws apply. -/
 theorem api_step_safe (env : Env) (r : Req) (st : DbState App) (hm : r.method.Safe) :
     (api.toApi.step env r st).2 = st :=
   Api.step_safe _ env r st hm
 
-/-- Reads never write, so every invariant is preserved. -/
-theorem api_inductive (I : DbState App → Prop) :
+/-- An invariant preserved by `join`'s transaction holds in every reachable
+    state: reads carry no obligation. -/
+theorem api_inductive (I : DbState App → Prop)
+    (hjoin : ∀ (me : Auth Me) (b : Body NewMember) st, I st → I (Txn.denote (join me b Unit) st).2) :
     Props.Inductive (api.toApi.toSys I) I :=
   Api.inductive_of _ (fun _ h => h) (by
     intro e he
     simp only [DbApi.toApi, api, List.map, List.mem_cons, List.not_mem_nil, or_false] at he
-    rcases he with rfl | rfl | rfl
+    rcases he with rfl | rfl | rfl | rfl
     · exact fun _ _ => trivial
     · exact fun _ => trivial
-    · exact fun _ => trivial)
+    · exact fun _ => trivial
+    · exact fun me b => hjoin ⟨me⟩ b)
 
 /-- What a member may see: which session and member rows authenticate,
     and every member row of their team. -/
@@ -182,7 +238,7 @@ private def must (r : Except DbError α) (what : String) : IO α :=
 def run : TestM Unit := do
   section_ "LAPI-02: read programs served over SQLite" do
     let path ← freshPath "db-endpoint"
-    let w ← must (← openDb path (IsSchema.specs App)) "open"
+    let w ← must (← openDb path (IsSchema.specs App)) "seed conn"
     let (ada, grace, eve) ← must (← DbM.run w do
       let eng ← insert Team ⟨"eng"⟩
       let ops ← insert Team ⟨"ops"⟩
@@ -193,7 +249,7 @@ def run : TestM Unit := do
       let _ ← insert Session ⟨"tok-grace", grace.id⟩
       return (ada, grace, eng)) "seed"
     let _ := eve
-    let rd ← DbReaders.open path 2
+    let rd ← DbConns.open path (IsSchema.specs App) 2
     let logs ← IO.mkRef (#[] : Array String)
     let svc := api.service rd (log := fun l => logs.modify (·.push l))
     let r ← get svc s!"/members/{ada.id.toInt64.toInt}" [bearer "tok-ada"]
@@ -225,11 +281,11 @@ def run : TestM Unit := do
                            | none => [],
                          headers := hs.map fun (k, v) => (k.toLower, v) }
       let env : Env := {}
-      let got ← must (← DbM.run w (Read.run (s := App) (match Router.resolveIn api.toApi.entries .redirect req with
-        | .route e ps => match api.find? (·.template == e.template) with
-          | some de => de.prog env { req with params := ps }
-          | none => pure {}
-        | .respond res => pure res))) "run"
+      let got ← match Router.resolveIn api.toApi.entries .redirect req with
+        | .route e ps => match api.find? (fun de => de.template == e.template && de.method == e.method) with
+          | some de => DbProg.exec rd (de.prog env { req with params := ps })
+          | none => pure (.ok {})
+        | .respond res => pure (.ok res)
       match got with
       | .error f => check s!"{target}: fault {f}" false
       | .ok res =>
@@ -238,8 +294,8 @@ def run : TestM Unit := do
 
     -- One snapshot per read: the count and the page of `/team` agree even
     -- when a writer commits in between (checked on the reader connection).
-    let some reader := rd.conns[0]? | check "reader" false
-    let observed ← DbM.run reader (Read.run (s := App) (do
+    let some reader := rd.readers[0]? | check "reader" false
+    let observed ← DbM.run reader.conn (Read.run (s := App) (do
       let q := (Query.from Member (s := App)).where' (fun r => r.val.team == ada.val.team)
       let before ← Read.count q
       let page ← Read.page q { limit := some 10 }
@@ -254,26 +310,67 @@ def run : TestM Unit := do
       | none => pure ()) "revoke"
     checkEq "revoked token 401" (← get svc "/team" [bearer "tok-grace"]).status 401
 
-    -- Faults answer without effect, logged with the request id: a full
-    -- reader queue is transient (503), a poisoned connection is not (500).
-    let rdBusy ← DbReaders.open path 1 (queue := 0)
-    let svcBusy := api.service rdBusy (log := fun l => logs.modify (·.push l))
-    let r ← get svcBusy "/team" [bearer "tok-ada"]
-    checkEq "busy readers → 503" r.status 503
+    -- Transactions: commit, typed failure, abort discards writes.
+    let jn := fun (tok nm : String) => request svc "POST" "/members"
+      [bearer tok, ("Content-Type", "application/json")] (Json.mkObj [("name", .str nm)]).compress
+    let r ← jn "tok-ada" "ann"
+    checkEq "join 201" r.status 201
+    check "join location" ((r.header? "location").isSome)
+    checkEq "duplicate name 409" (← jn "tok-ada" "ann").status 409
+    checkEq "bad body 422" (← request svc "POST" "/members"
+      [bearer "tok-ada", ("Content-Type", "application/json")] "{}").status 422
+    let r ← jn "tok-ada" "abe"
+    checkEq "team full 409" r.status 409
+    let gone ← get svc "/names?name=abe"
+    checkEq "aborted insert discarded"
+      (gone.json?.bind fun j => (j.getObjValAs? Bool "taken").toOption) (some false)
+    checkEq "team still 3" ((← get svc "/team" [bearer "tok-ada"]).json?.bind
+      fun j => (j.getObjValAs? Nat "total").toOption) (some 3)
+
+    -- The write path agrees with the meaning: same answer, same next state.
+    -- (grace's earlier token was revoked above; give her a new one.)
+    let _ ← must (← DbM.run w (insert Session ⟨"tok-grace2", grace.id⟩)) "new session"
+    let st0 ← must (← DbM.run w (DbState.load (s := App))) "load"
+    let req : Req := { (default : Req) with
+      method := Method.post, path := ["members"],
+      headers := [("authorization", "Bearer tok-grace2"), ("content-type", "application/json")],
+      body := (Json.mkObj [("name", .str "gus")]).compress.toUTF8 }
+    let want := api.toApi.step {} req st0
+    let got ← match Router.resolveIn api.toApi.entries .redirect req with
+      | .route e ps => match api.find? (fun de => de.template == e.template && de.method == e.method) with
+        | some de => DbProg.exec rd (de.prog {} { req with params := ps })
+        | none => pure (.ok {})
+      | .respond res => pure (.ok res)
+    checkEq "write: run status = denote status" (got.toOption.map (·.status)) (some want.1.status)
+    checkEq "write: committed" want.1.status 201
+    let st1 ← must (← DbM.run w (DbState.load (s := App))) "reload"
+    checkEq "write: member count matches the meaning's next state"
+      (Read.denote (Read.count (Query.from Member (s := App))) st1)
+      ((Read.denote (Read.count (Query.from Member (s := App))) st0) + 1)
+
+    -- Faults answer without effect, logged with the request id.
+    let before ← must (← DbM.run w (DbState.load (s := App))) "before faults"
+    let count := fun st => Read.denote (Read.count (Query.from Member (s := App))) st
+    let lock ← must (← openDbRaw path) "locker"
+    lock.raw.exec "PRAGMA busy_timeout = 0"
+    lock.raw.exec "BEGIN IMMEDIATE"
+    rd.writer.conn.raw.exec "PRAGMA busy_timeout = 0"
+    let r ← jn "tok-ada" "zoe"
+    checkEq "locked writer → 503" r.status 503
     checkEq "retry-after" (r.header? "retry-after") (some "1")
-    rdBusy.close
-    let rdBad ← DbReaders.open path 1
-    for c in rdBad.conns do c.poison "test: connection lost"
+    check "no internal detail" ((r.body.splitOn "locked").length == 1)
+    lock.raw.exec "ROLLBACK"
+    rd.writer.conn.raw.exec "PRAGMA busy_timeout = 5000"
+    let rdBad ← DbConns.open path (IsSchema.specs App) 1
+    for c in rdBad.readers do c.conn.poison "test: connection lost"
     let svcBad := api.service rdBad (log := fun l => logs.modify (·.push l))
     let r ← get svcBad "/team" [bearer "tok-ada"]
     checkEq "poisoned reader → 500" r.status 500
-    check "no internal detail" ((r.body.splitOn "connection lost").length == 1)
+    check "no internal detail (500)" ((r.body.splitOn "connection lost").length == 1)
     check "fault logged" ((← logs.get).any fun l => (l.splitOn "db_fault").length > 1)
     rdBad.close
-    -- nothing was written by any of the above
-    let st' ← must (← DbM.run w (DbState.load (s := App))) "reload"
-    checkEq "state unchanged by faults"
-      (Read.denote (Read.count (Query.from Member (s := App))) st') 3
+    let after ← must (← DbM.run w (DbState.load (s := App))) "after faults"
+    checkEq "faults wrote nothing" (count after) (count before)
     rd.close
 
 end Tests.DbEndpoint
