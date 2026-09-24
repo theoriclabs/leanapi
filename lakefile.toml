@@ -66,3 +66,8 @@ root = "PolicyViewMain"
 name = "Billing"
 srcDir = "examples/billing"
 globs = ["Billing.+"]
+
+[[lean_exe]]
+name = "billing"
+srcDir = "examples/billing"
+root = "BillingMain"
