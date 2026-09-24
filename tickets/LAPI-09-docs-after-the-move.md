@@ -17,15 +17,13 @@ Update, each against what the code then says:
 - **docs/ENDPOINTS.md:** principle 4 (state backends: `Store` and LeanDB programs), principle 7 (the carry-over theorem).
 - **DESIGN.md §7.4** and **docs/QUERIES.md §7:** from vision to status; what shipped, what remains.
 - **EVIDENCE.md prose:** the trusted base (generated tables are handled by LAPI-08).
-- **docs/blog/leanapi.md:**
-  - "What exactly is proved" now says the theorems hold of the running service, relative to LeanDB executing as its meaning;
-  - retry safety is proved on the API itself;
-  - the examples use `Read`/`Txn` signatures.
+- **docs/blog/leanapi.md** is already written for the finished system (2026-09-23). Its examples are the specification the implementation must meet: `scripts/check_blog.sh` checks every `lean` block against the code (verbatim excerpts, exact theorem statements, compiling examples). On 2026-09-23, 3 of 12 blocks pass; the others wait on LAPI-02, 05, 06, 07 and 08. If the implementation settles on different names or shapes, update the post and keep the check passing, rather than weakening the check.
 - **CHANGELOG.md** and a release note for the version that ships it.
 
 ## Acceptance criteria
 
 - `check_readme.sh` passes (README examples compile against the new API).
+- `check_blog.sh` passes, and is added to CI next to `check_readme.sh`.
 - Every theorem name in README, ENDPOINTS, QUERIES and the blog exists and is registered.
 - No document mentions `Model.step`, `App/Service.lean` or the app differential test as current.
 

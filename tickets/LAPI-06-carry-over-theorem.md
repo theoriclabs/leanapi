@@ -29,7 +29,7 @@ In words: on a well-formed database, when a request completes (no `DbFault`), th
 
 ## Acceptance criteria
 
-- `Api.serve_eq_step` proved with no `sorry`, audited, with `ExecutesAsMeaning` as a hypothesis.
+- `Api.serve_eq_step` proved with no `sorry`, audited, with `ExecutesAsMeaning` as a hypothesis. Its statement is the blog post's (checked by `scripts/check_blog.sh`).
 - `Api.wf_invariant`: `WF` holds in every reachable state of any LeanDB-backed typed API.
 - **Corollaries** stated for production, each from the corresponding `Api` theorem and `serve_eq_step`: GET never changes the database; invariants hold of the running database; `noninterference` holds of running responses.
 - EVIDENCE.md's trusted base updated as above; `gen_evidence.sh --check` passes.

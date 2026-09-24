@@ -27,6 +27,7 @@ After LAPI-05, `gamesApi` is over `DbState Games`, so they must be proved again 
 
 - `api_reads_safe`, `api_allValid`, `api_uniqueIds`, `api_noninterference` and `api_existence_private` proved about `gamesApi : Api (DbState Games)`, audited, registered in `Evidence.lean`.
 - `api_restricted_reads` proved and registered as a new claim.
+- The statements of `api_noninterference` and `api_restricted_reads` are the blog post's (checked by `scripts/check_blog.sh`), and `api_read_available` replaces the model's `read_available`.
 - Each also stated of the running service through LAPI-06's corollaries.
 
 ## Tests

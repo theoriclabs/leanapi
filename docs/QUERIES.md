@@ -386,15 +386,10 @@ These LeanDB bugs are independent of the new language:
 ## 7. What changes in private-games
 
 - **`gamesApi` is written over the LeanDB schema** (`Storage/Schema.lean`) with `Read`/`Txn` programs, as in §3.6. For example, `readGame` becomes one `first` over `GameRow`, scoped by `visibleTo me` and the id.
-- **Idempotency becomes an ordinary typed write.** The receipts table declares `unique ReceiptRow.byKey := (actor, op, key)`. Recording a receipt is an `insert`, and its `duplicate .byKey holder` failure *is* the replay:
-
-  ```lean
-  insert receipt |>.orElse fun
-    | .duplicate .byKey h => replayOrRefuse h      -- same fingerprint: replay; otherwise 422
-    | .missingRef .actor  => throw .hidden         -- the actor was deleted
-  ```
-
-  The unique index, the error type and the retry logic are the same thing, and the exhaustive match keeps them in step.
+- **Idempotency becomes an ordinary typed write.** The receipts table declares `unique ReceiptRow.byKey := (actor, op, key)`.
+  - **The key is claimed first.** A keyed request inserts its receipt *before* deciding. The insert's `duplicate .byKey held` failure *is* the replay: `held` is the earlier request's receipt, which is replayed, or refused with 422 if the fingerprint differs.
+  - **Then it decides, and records.** On a successful claim it decides, then `patch`es the claim with its answer (`status`, `body`). All of this is one transaction, so a refused request rolls back its claim too.
+  - **Why not insert at the end?** Inserting the receipt after deciding would detect a clash only after the change was made. The unique index, the failure type and the retry logic are the same thing, and the exhaustive `match` keeps them in step (the blog post shows the code: `keyed`).
 - **The theorems carry over.** GET safety, `api_allValid`, `api_uniqueIds` and `api_noninterference` are re-established on `DbState`; `Model.World` becomes redundant.
 - **Deleted:**
   - `Model/` (after its remaining theorems move: keyed replay, `movesGrow`, trace isolation);

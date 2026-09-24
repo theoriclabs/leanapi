@@ -1,72 +1,95 @@
+<!--
+blog-check prelude
+import LeanApi
+import PrivateGames.Api
+import PrivateGames.ApiProofs
+import PrivateGames.ApiIsolation
+import PrivateGames.Storage.Schema
+open LeanApi LeanApi.Props PrivateGames PrivateGames.Api PrivateGames.Storage
+-->
+<!--
+Every `lean` block below is checked by `scripts/check_blog.sh`, as marked just
+above it:
+- `excerpt <file>`: the block appears verbatim in that file of the repository;
+- `signature <name>`: the block is the exact statement of that declaration;
+- `compile`: the block builds on its own.
+Several blocks describe code that does not exist yet (tickets LAPI-02…08), so
+the check fails until that work is done. It must pass before this is published.
+-->
+
 # LeanAPI
 
-*A FastAPI / Express alternative for Lean 4, with theorems about your whole backend.*
+*A FastAPI / Express alternative for Lean 4, with theorems about your whole backend, database included.*
 
 Over the past few days I released a handful of tools for the Lean ecosystem:
 
 - **LeanReact**, for UIs;
 - **LeanDB**, a typed database;
-- **LeanHttp**, an HTTP client, two days ago.
+- **LeanHttp**, an HTTP client.
 
 This is the next one: **LeanAPI**, a backend framework in the spirit of FastAPI and Express.
 
-Several people have asked me what the point is of rewriting all of this in Lean. The short answer: **you can prove properties of a program across system boundaries.**
+Several people have asked what the point is of rewriting all of this in Lean. The short answer: **you can prove properties of a program across system boundaries.**
 
-A backend sits between two systems: the API that clients call, and the database behind it. Most bugs that hurt are in the gaps between them. A check is done in one place and forgotten in another, or data that was valid on the way in is invalid on the way out. When the API, the domain logic and the database interface are all written in Lean, you can state properties about the *whole* system and prove them.
+A backend sits between two systems: the API that clients call, and the database behind it. Most bugs that hurt are in the gaps between them. A check done in one place is forgotten in another, a query returns a row it shouldn't, or a retry writes twice. When the API, the domain logic and the database queries are all Lean, you can state properties about the *whole* system, prove them, and have the proofs hold of the service that is actually running.
 
-I'll show two such properties with a small example, then how you write your own.
+I'll show two such properties with a small example, and then how the proofs reach the running service.
 
-## It's a normal web framework first
+## An endpoint's type is its specification
 
-An endpoint is a plain function, and its type tells you what the request does:
+An endpoint is a plain function. Its type tells you what the request does:
 
+<!-- check: signature PrivateGames.Api.playMove -->
 ```lean
-def editNote (me : Auth User) (id : Path NoteId) (rev : IfMatch Rev) (edit : Body NoteEdit) :
-    Writes State (Except EditError (Versioned NoteView))
+def playMove (me : Auth PlayerId) (rev : IfMatchRequired ETagRev) (mv : Body MoveBody) (id : Path GameId)
+    (key : KeyHeader) : Txn Games GameError (Replayed (Versioned GameView))
 ```
 
 Read the signature:
-- the caller is authenticated as a `User`;
-- the note id comes from the path;
-- an `If-Match` revision is taken if one is sent;
-- the body is decoded (and validated) as a `NoteEdit`;
-- it **changes state**;
-- it answers with the note and its `ETag`, or with one of the failures listed in `EditError`.
+- the caller is an authenticated player;
+- they must send the revision of the game they saw (`If-Match`);
+- the body is decoded and validated as a move;
+- the game id comes from the path, and a retry key from a header;
+- it is a database transaction (`Txn`) over the `Games` schema: it commits or rolls back as a whole;
+- it answers the updated game with its `ETag`, possibly replayed from an earlier identical request, or fails with one of the cases of `GameError`.
 
-The body is plain logic, with no request or response objects. A `GET` whose handler writes doesn't compile.
-
-You get what you'd expect:
-- routing with typed path parameters;
-- JSON and form extraction, validated at the boundary;
-- errors in `problem+json`;
-- middleware;
-- authentication with JWT, bearer tokens and username/password;
-- rate limiting, CORS, conditional requests and OpenAPI.
+There is no request object, response object or SQL in the body. A `GET` endpoint whose handler can write doesn't compile.
 
 ## The example: private games
 
-Take a table of games. Each game has two players, and the rule is simple: **only those two players can see a game.**
+A table of games. Each game has two players, and the rule is simple: **only those two players can see a game.**
 
-Here is the rule, exactly as it appears in the code:
+The rule, as it appears in the code:
 
+<!-- check: excerpt examples/private-games/PrivateGames/Domain/Game.lean -->
 ```lean
 def visible (p : PlayerId) (g : Game) : Bool := g.isParticipant p
 ```
 
-And here is one of the endpoints, with the table of all five:
+The same rule, as a database query:
 
+<!-- check: excerpt examples/private-games/PrivateGames/Api.lean -->
 ```lean
-/-- The games `p` may see: the rule above, applied to the store. -/
-def visibleGames (p : PlayerId) (w : World) : List Game := w.games.filter (visible p)
+/-- The games `p` plays in. -/
+def GameRow.visibleTo (p : PlayerId) : Query Games GameRow :=
+  .from GameRow |>.where fun g => g.val.x == pref p || g.val.o == pref p
+```
 
+One endpoint, and the table of all five:
+
+<!-- check: excerpt examples/private-games/PrivateGames/Api.lean -->
+```lean
 /-- One of my games. Someone else's game is indistinguishable from a missing one. -/
 def readGame (me : Auth PlayerId) (id : Path GameId) :
-    Reads World (Except GameError (Versioned GameView)) :=
-  fun w => match (visibleGames me.val w).find? (·.id = id.val) with
-    | some g => .ok (Game.versioned g)
-    | none => .error .hidden
+    Read Games (Except GameError (Versioned GameView)) := do
+  match ← first (GameRow.visibleTo me.val |>.where (·.id == gidRef id.val)) with
+  | some g => return .ok g.versioned
+  | none   => return .error .hidden
+```
 
-def gamesApi : Api World := api! [
+<!-- check: excerpt examples/private-games/PrivateGames/Api.lean -->
+```lean
+def gamesApi : Api (DbState Games) := api! [
   .post "/games"                       openGame,
   .get  "/games"                       listGames,
   .get  "/games/{id:nat}"              readGame,
@@ -75,73 +98,110 @@ def gamesApi : Api World := api! [
 ```
 
 Reading `readGame`:
-- `me` is the authenticated player; without valid credentials the request never reaches the function (401).
-- `id` is the `{id}` segment of the path, already decoded and validated as a `GameId`.
-- `Reads World` means the function receives the current state (`w`) and can't change it.
-- It looks only at `visibleGames me.val w`, the caller's own games. A game that doesn't exist and a game that isn't theirs both end in the same `.hidden`, a 404.
+- `me` is the authenticated player. Without valid credentials the request never reaches the function (401).
+- `id` is the `{id}` segment of the path, already decoded and validated.
+- `Read Games` means it reads the database and cannot change it.
+- It asks for the first game that `me` plays in with that id. The answer is the game or `none`: a game that doesn't exist and a game that isn't theirs are both `none`, a 404.
 
-There are many ways to get this wrong:
+There are many ways to get this wrong in a normal backend:
 
 - Forget the auth check on one route.
-- Check that the user is logged in, but not that the game is *theirs*. Someone who guesses or leaks a game id can then watch another person's game.
-- Return **403** for someone else's game but **404** for a missing one. That tells an attacker which ids exist.
-- Put another player's name into an error message.
+- Check that the user is logged in, but not that the game is *theirs*. Someone who guesses a game id can then watch another person's game.
+- Answer **403** for someone else's game but **404** for a missing one. That tells an attacker which ids exist.
+- Load every game and filter in code, so one missed filter leaks everything.
 
-Tests catch the cases you thought of. In Lean we can prove that **no code path** accessible through API, does any of this.
+Tests catch the cases you thought of. Here we prove that **no code path** reachable through the API does any of this.
 
 ### Property 1: you only ever see your own games
 
-This is the theorem, about the `gamesApi` above:
-
+<!-- check: signature PrivateGames.Api.api_noninterference -->
 ```lean
-theorem api_noninterference (p : PlayerId) (env : Env) (r : Req) {w₁ w₂ : World}
-    (hv : SameView p w₁ w₂) (ha : gamesAuth.authenticate w₁ env r = .ok p) :
-    (gamesApi.step env r w₁).1 = (gamesApi.step env r w₂).1
+theorem api_noninterference (p : PlayerId) (env : Env) (r : Req) {s₁ s₂ : DbState Games}
+    (hv : SameView p s₁ s₂) (ha : AuthenticatesAs p env r s₁) :
+    (gamesApi.step env r s₁).1 = (gamesApi.step env r s₂).1
 ```
 
 In words:
 1. Take any request `r` that authenticates as player `p`.
-2. Take any two database states `w₁` and `w₂` that look the same to `p`: the same games visible to `p`, and the same session and player tables.
+2. Take any two database states `s₁` and `s₂` that look the same to `p`: the same games `p` plays in, and the same session and player tables.
 3. They may differ in anything else. Other people's games can be completely different.
 4. Then the **entire HTTP response is identical**: status code, every header, every byte of the body.
 
-So nothing `p` receives can depend on data `p` isn't allowed to see. `gamesApi.step` is the whole API: routing, authentication, decoding, the handler and its read or write. So this covers every route and every branch, including 401, 404, 405, 409 and 412, not just the happy path.
+So nothing `p` receives can depend on data `p` isn't allowed to see. `gamesApi.step` is the whole API: routing, authentication, decoding, the queries and the writes. So this covers every route and every branch, including 401, 404, 405, 409 and 412, not just the happy path.
 
-Most of the proof is the framework's. LeanAPI proves once, for every API written this way, that the response depends only on the caller's view, provided each endpoint meets an obligation it computes from the endpoint's *signature*:
-- inputs that don't read the database (the path, the body, headers) are handled automatically;
+And a stronger one: the other players' games are never even *fetched*. Every query a request makes on behalf of `p` is restricted to the games `p` plays in:
+
+<!-- check: signature PrivateGames.Api.api_restricted_reads -->
+```lean
+theorem api_restricted_reads (p : PlayerId) (env : Env) (r : Req) (s : DbState Games)
+    (ha : AuthenticatesAs p env r s) :
+    ∀ q ∈ gamesApi.queriesOf env r s, q.ScopedTo (GameRow.visibleTo p)
+```
+
+Most of the work is the framework's. LeanAPI proves once, for every API written this way, that the response depends only on the caller's view, provided each endpoint meets an obligation computed from its *signature*:
+- inputs that don't touch the database are handled automatically;
 - `Auth` switches the obligation to "what this player can see";
-- what's left for the app is to show each handler body answers alike in two states that look the same to the player.
+- what is left for the app is to show that each query is scoped to the player, and LeanDB's laws do the rest.
 
-For the five game endpoints, that's about a hundred lines.
+Three things follow:
+- **A guessed game id is indistinguishable from a missing one** (`api_existence_private`).
+- **"Deny everyone" isn't a loophole.** A player can always read their own games (`api_read_available`).
+- **GET never changes anything**, and this one is free: every API written this way gets it.
 
-Three things follow directly:
-- **A guessed game id is indistinguishable from a missing one.** Both return the same 404 (`api_existence_private`).
-- **"Deny everyone" isn't a loophole.** A separate theorem proves a player can always read their own games (`read_available`).
-- **GET never changes anything**, and this one is free: every API written this way gets it (`Api.step_safe`). A `GET` endpoint whose handler writes doesn't even compile.
+<!-- check: signature LeanApi.Api.step_safe -->
+```lean
+theorem step_safe (api : Api σ) (env : Env) (r : Req) (s : σ) (hm : r.method.Safe) :
+    (api.step env r s).2 = s
+```
 
 ### Property 2: retrying a request is safe
 
-A player makes a move and the network drops the response, so the client retries. If the server applied the move twice, the game would be corrupted.
+A player makes a move and the network drops the response, so the client retries with the same `Idempotency-Key`. If the server applied the move twice, the game would be corrupted.
 
-With an `Idempotency-Key` header, LeanAPI records the outcome in the same database transaction as the move. The theorem is about what happens when the same request comes back:
+The key is claimed before anything is decided, in the same transaction as the move:
 
+<!-- check: excerpt examples/private-games/PrivateGames/Api.lean -->
 ```lean
-step r (runReqs rs (step r w).2) = (markReplay (step r w).1, runReqs rs (step r w).2)
+/-- The first request with a key decides; later ones replay its answer. -/
+def keyed [ToResponse α] (me : PlayerId) (key : Option IdemKey) (op : Op) (fp : String)
+    (decide : Txn Games GameError α) : Txn Games GameError (Replayed α) := do
+  let some key := key | return .fresh (← decide)
+  match ← insert (ReceiptRow.claim me op key.val fp) with
+  | .ok claim => do
+    let answer ← decide
+    let res := ToResponse.toRes answer
+    let _ ← patch claim { status := res.status, body := ReceiptRow.encode res } |>.orAbort fun
+      | .gone => .hidden
+    return .fresh answer
+  | .error (.duplicate .byKey held) => replay held fp
+  | .error (.missingRef .actor) => throw .hidden
 ```
 
-In words:
-1. Run a keyed request `r` once, and let it commit.
-2. Then run any sequence `rs` of other requests to the game routes, from any player.
-3. Then send `r` again. You get back the recorded response, marked as a replay, and the state doesn't change.
+The receipts table has a unique index on (player, operation, key). So:
+- the first request claims the key, decides, and records its answer;
+- a retry's claim clashes on that index, and the clash *is* the replay: `replay` answers what was recorded, or refuses if the retry's body differs;
+- if the move is refused, the transaction rolls back, claim included, so a corrected retry can go through.
 
-The move is applied exactly once. Reusing the same key with a *different* body is refused (checked by the test suite).
+`insert` can fail only in the ways its type lists, and the `match` must handle each one. The unique index and the foreign key to the player are declared in the schema, and the failure cases come from them. Add another unique index to receipts, and this `match` stops compiling until the new case is handled.
 
-One caveat: this theorem is still proved on the reference model the API grew out of. A test checks that the typed API answers byte for byte like that model on random request sequences. Moving this proof onto the API itself, as Property 1 already is, is next.
+The theorem:
+
+<!-- check: signature PrivateGames.Api.api_keyed_replay_after -->
+```lean
+theorem api_keyed_replay_after (env env' : Env) (r : Req) (rest : List (Env × Req)) (s : DbState Games)
+    (hr : KeyedWriteCommits gamesApi env r s) :
+    let (answer, s₁) := gamesApi.step env r s
+    let s₂ := gamesApi.runAll rest s₁
+    gamesApi.step env' r s₂ = (markReplay answer, s₂)
+```
+
+In words: once a keyed request has committed, sending it again, after any other requests from anyone, answers exactly what it answered the first time, marked as a replay, and changes nothing.
 
 ## Writing your own properties
 
-These two aren't special cases. Your domain rules are properties too, and LeanAPI makes them cheap to state:
+These aren't special cases. Your domain rules are properties too, and LeanAPI makes them cheap to state:
 
+<!-- check: compile -->
 ```lean
 structure Board where
   items : List String
@@ -156,11 +216,11 @@ def Board.add (t : String) (b : Board) : Except String Board :=
 preserves Board.Valid by Board.add
 ```
 
-`invariant` declares the rule. From it you also get a runtime check (which names the field that failed) and a proof that the runtime check and the rule agree. `preserves` proves that every successful `add` keeps the board valid.
+`invariant` declares the rule. From it you also get a runtime check that names the failing field, and a proof that the check and the rule agree. `preserves` proves that every successful `add` keeps the board valid.
 
 Now introduce an off-by-one: change `<` to `≤`. The **build fails**, and Lean shows exactly what no longer holds:
 
-```
+```text
 `Board.add` (Board.Valid.preserved_add) leaves:
   case isTrue.refl.bounded
   c1 : b.items.length ≤ 100
@@ -169,22 +229,40 @@ Now introduce an off-by-one: change `<` to `≤`. The **build fails**, and Lean 
 
 No test had to think of the 101st item.
 
-The same tools scale up. For `gamesApi`, **every stored game is valid** and **game ids are unique**, in every state the API can reach. The framework reduces this to one obligation per endpoint, again computed from its signature: nothing for the two `Reads` endpoints, and "this write keeps the invariant" for the three `Writes`. Those are discharged by the domain's own `preserves` theorems. Before, both invariants were only checked at runtime.
+The same machinery covers the games. **Every stored game is valid** and **game ids are unique**, in every state the database can reach. The database won't store a game unless it comes with evidence that it is valid, and the domain's `preserves` theorems supply that evidence for every move. So no runtime check is needed, and none can be forgotten.
+
+## From the proof to the running service
+
+All of this is about `gamesApi`, the API as written. The step that makes it about production:
+
+<!-- check: signature LeanApi.Api.serve_eq_step -->
+```lean
+theorem Api.serve_eq_step (api : Api (DbState s)) (hexec : ExecutesAsMeaning s)
+    (hwf : st.WF) (hdone : Completes api env r st) :
+    api.served env r st = api.step env r st
+```
+
+In words: when a request completes, the running service (SQLite, through LeanDB) answers and changes the database exactly as `gamesApi.step` says. Every theorem above is therefore a theorem about the service you deploy.
+
+It assumes one thing, `ExecutesAsMeaning`: that LeanDB runs each query and write as its meaning says. It is not proved, because it is about SQLite. LeanDB checks it once for everyone, by running random queries and writes against SQLite and against their meaning, and comparing. It is written as a hypothesis, so it can't be forgotten.
+
+`hwf` says the database is well-formed: every row decodes and satisfies its rules. That isn't an assumption either. It holds of every state the service can reach, because every write keeps it.
 
 ## What exactly is proved
 
 I want to be precise here, because a proof is only as good as its statement.
 
-- **The theorems are about the API as written**, `gamesApi`: pure functions over an in-memory world. The production server keeps games in SQLite (through LeanDB). That it answers exactly like `gamesApi` is checked by a differential test, which also injects malformed requests to exercise every error status. It is not proved.
-- **Some things are trusted, not proved:** SQLite, the HTTP parser, the crypto library, and the middleware.
-- **The "view" is spelled out.** It includes the next game id, so a new game's id reveals how many games exist. That release is written into the theorem rather than hidden. Timing isn't covered.
+- **Proved:** isolation, restricted reads, existence privacy, availability, safe reads, retry safety, valid games, unique ids, about `gamesApi` itself, with no `sorry` and no axioms beyond Lean's standard three.
+- **Assumed, and checked by testing:** that LeanDB executes queries and writes as their meaning says, on SQLite.
+- **Trusted:** SQLite itself, the HTTP parser, the crypto library, and the middleware in front of the API (logging, rate limits).
+- **Out of scope:** timing. And the "view" is spelled out: it includes the next game id, so a new game's id reveals how many games exist. That release is written into the theorem rather than hidden.
 
-Every claim is listed in [EVIDENCE.md](../../EVIDENCE.md) as **proved**, **checked**, **assumed** or **open**. The table is generated from a registry of theorems. The build refuses to call a claim "proved" if its theorem uses `sorry` or any axiom beyond Lean's standard three.
+Every claim is listed in [EVIDENCE.md](../../EVIDENCE.md) as **proved**, **checked**, **assumed** or **open**. The table is generated from a registry of theorems, and the build refuses to call a claim "proved" if its theorem uses `sorry` or an extra axiom.
 
 ## Why bother
 
 No amount of testing can tell you a bug *isn't* there. Tests show the cases you imagined. As an application grows, the cases you didn't imagine grow faster, and bugs remain.
 
-A proof covers every request and every state at once. Lean lets us write the backend, the domain and the database interface in one language and prove things across all three. That brings us closer to a future with no bugs.
+A proof covers every request and every database state at once. Lean lets us write the API, the domain and the queries in one language, prove things across all three, and carry the proofs to the running service. That brings us closer to a future with no bugs.
 
 LeanAPI is at [github.com/theoriclabs/leanapi](https://github.com/theoriclabs/leanapi). It's experimental and APIs will change. I'd love to hear what you'd want to prove about your own backend.

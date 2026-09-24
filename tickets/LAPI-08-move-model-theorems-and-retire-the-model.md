@@ -33,7 +33,7 @@ While they remain there, so does everything they need:
 
 ## Acceptance criteria
 
-- `api_keyed_replay`, `api_keyed_replay_after`, `api_movesGrow` and `api_trace_noninterference` proved about `gamesApi` over `DbState`, audited and registered.
+- `api_keyed_replay`, `api_keyed_replay_after`, `api_movesGrow` and `api_trace_noninterference` proved about `gamesApi` over `DbState`, audited and registered. `api_keyed_replay_after`'s statement is the blog post's (checked by `scripts/check_blog.sh`).
 - The retired files are deleted, and nothing references them.
 - CI passes; the axiom audit covers every registered theorem; `gen_evidence.sh --check` passes.
 - EVIDENCE.md no longer lists "native ≡ model" as an assumption, only LeanDB's trusted step (LAPI-06).

@@ -21,12 +21,13 @@ Rewrite the five endpoints as LeanDB programs (QUERIES.md §3.6):
 
 **Authentication:** `Authenticates Games PlayerId` looks the token digest up with `lookup TokenRow.byDigest`, a read program, in the request's transaction.
 
-**Idempotency receipts are a typed insert** into `ReceiptRow` (unique `byKey`):
-- `duplicate .byKey holder` with the same fingerprint replays the recorded answer;
-- a different fingerprint is refused with `keyReused` (422);
-- `missingRef .actor` becomes `hidden`.
+**Idempotency receipts are a typed insert** into `ReceiptRow` (unique `byKey`), made **before** deciding. The code is fixed by the blog post's `keyed` example.
+- **Claim:** insert a pending receipt (`ReceiptRow.claim`, status 0).
+- **Clash:** `duplicate .byKey held` is the replay. Replay `held`'s recorded answer, or refuse with `keyReused` (422) if the fingerprint differs.
+- **Decide and record:** on a successful claim, decide, then `patch` the claim with the answer (`status`, `body`). The `patch` writes no unique or reference field, so only `.gone` needs handling.
+- **Failures:** `missingRef .actor` becomes `hidden`. A refused request aborts the transaction, claim included.
 
-This replaces `keyed`'s hand-written receipt lookup, and the insert happens in the same transaction as the change, as the native service does today (`Repo.lean:124-163`).
+This replaces `keyed`'s hand-written receipt lookup, and keeps the receipt in the same transaction as the change, as the native service does today (`Repo.lean:124-163`). The table's columns are unchanged.
 
 **Failure mapping is exhaustive** by `orAbort`, over the types LAPI-04 generates. For example, `playMove`'s `patch` writes no unique or reference field, so only `.gone` needs handling.
 
@@ -41,6 +42,7 @@ This replaces `keyed`'s hand-written receipt lookup, and the insert happens in t
   It requires 0 mismatches on status, `ETag`, `Location`, `Idempotent-Replayed`, `Allow`, `WWW-Authenticate` and body, over at least 400 probes exercising every status.
 - All existing private-games HTTP tests pass against the new service (`tests/Tests/Games.lean`): concurrency, restart-after-commit replay, revocation, stored-invalid-row handling.
 - `Api.describe` shows the `Read`/`Txn` signatures.
+- The blog post's excerpts of `Api.lean` (`GameRow.visibleTo`, `readGame`, `gamesApi`, `keyed`) and `playMove`'s signature pass `scripts/check_blog.sh`.
 
 ## Tests
 
