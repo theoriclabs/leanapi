@@ -29,6 +29,7 @@ These are the LeanAPI side of the LeanDB work in [docs/QUERIES.md](../docs/QUERI
 | [LAPI-11](LAPI-11-database-endpoints-read-like-the-rest.md) | Endpoints over LeanDB read like the rest: one `api!`, no `fun _ =>`, no name clash | P2 | M | LAPI-02 | done |
 | [LAPI-12](LAPI-12-private-games-no-runtime-checks-a-type-can-carry.md) | private-games: no runtime checks where a type can carry the fact | P2 | S | LeanDB: reads return invariant evidence (part 2); easier after LAPI-08 | done (part 2 on LeanDB M15-pre `79cfbcc`) |
 | [LAPI-13](LAPI-13-handler-types-say-the-game-is-visible.md) | Handler types say the game is visible to the caller: `GameView me` | P1 | M | LAPI-12 part 1; LeanDB: reads return filter evidence (final form) | open; mostly subsumed by DESIGN §7.5 views (LeanDB M16), whose rows carry the policy's evidence |
+| [LAPI-14](LAPI-14-handlers-over-leandb-views.md) | Handlers over LeanDB's row-level views; retire the prototype | P1 | L | LeanDB M16 (and M15a/M15b) | open |
 
 ```mermaid
 flowchart LR
@@ -48,6 +49,8 @@ flowchart LR
     L11 --> L6
     L8 -.-> L12["LAPI-12"]
     L12 --> L13["LAPI-13"]
+    DB16["LeanDB M16"] --> L14["LAPI-14"]
+    L14 --> L7
     L10["LAPI-10"] -.-> L8
 ```
 
