@@ -17,8 +17,9 @@ open LeanDb PolicyView LeanApi
 
 /-! ## Read policies: the domain rules, as SQL
 
-`rule` is the meaning; `scope` is the same predicate LeanDB compiles.
-Keep them identical. `OrgRow` has no instance: default deny. -/
+`rule` is a copy of `seesTicket` / `seesMessage` on stored rows; `scope`
+is a third copy that LeanDB compiles. They are written by hand.
+`OrgRow` has no instance: default deny. -/
 
 instance : Policy HelpdeskDb Who TicketRow where
   rule who t :=
@@ -77,6 +78,139 @@ instance : WritePolicy HelpdeskDb Who MessageRow where
     m.org == oref who.org && m.author == uref who.user &&
       (who.role == Role.agent ||
         (m.requester == uref who.user && m.internal == false && who.role == Role.customer))
+
+/-! ## Domain functions vs `rule` / `admit`
+
+`rule` and `sees*` are two copies. A stored `Ref` that `== oref o`
+reconstructs to `o`; the converse can fail for a negative id, so these
+are implications (policy admits ⇒ domain true), not equalities.
+`scope` is a third copy; it is not proved equal to `rule`.
+
+`WritePolicy.admit` does not see ticket status, so it is not `mayPost` /
+`mayAdvance`. It implies the visibility rule plus (for tickets) that the
+actor is an agent. On a row mapped *from* the domain, `mayPost` /
+`mayAdvance` imply `admit`. -/
+
+theorem ticket_rule_implies_seesTicket (who : Who) (t : Stored TicketRow)
+    (h : Policy.rule (s := HelpdeskDb) (P := Who) (α := TicketRow) who t = true) :
+    seesTicket who (reconstructTicket t) = true := by
+  have hrule :
+      (t.val.org == oref who.org &&
+        (who.role == Role.agent || t.val.requester == uref who.user)) = true := h
+  rw [Bool.and_eq_true] at hrule
+  have horg := beq_oref_implies_oid t.val.org who.org hrule.1
+  unfold seesTicket reconstructTicket TicketRow.toTicket
+  simp [horg]
+  cases hagent : (who.role == Role.agent)
+  · have hcust := role_eq_customer_of_not_agent (role_ne_agent_of_beq_false hagent)
+    have req : (t.val.requester == uref who.user) = true := by
+      simpa [hagent] using hrule.2
+    have huser := beq_uref_implies_uid t.val.requester who.user req
+    simp [hcust, huser]
+  · have ha := role_eq_agent_of_beq hagent
+    simp [ha]
+
+theorem message_rule_implies_seesMessage (who : Who) (m : Stored MessageRow)
+    (h : Policy.rule (s := HelpdeskDb) (P := Who) (α := MessageRow) who m = true) :
+    seesMessage who (reconstructMessage m) = true := by
+  have hrule :
+      (m.val.org == oref who.org &&
+        (who.role == Role.agent ||
+          (m.val.requester == uref who.user && m.val.internal == false))) = true := h
+  rw [Bool.and_eq_true] at hrule
+  have horg := beq_oref_implies_oid m.val.org who.org hrule.1
+  unfold seesMessage reconstructMessage MessageRow.toMessage
+  simp [horg]
+  cases hagent : (who.role == Role.agent)
+  · have hcust := role_eq_customer_of_not_agent (role_ne_agent_of_beq_false hagent)
+    have hrest : (m.val.requester == uref who.user && m.val.internal == false) = true := by
+      simpa [hagent] using hrule.2
+    rw [Bool.and_eq_true] at hrest
+    have huser := beq_uref_implies_uid m.val.requester who.user hrest.1
+    have hpub : m.val.internal = false := eq_of_beq hrest.2
+    simp [hcust, huser, hpub]
+  · have ha := role_eq_agent_of_beq hagent
+    simp [ha]
+
+theorem ticket_admit_implies_agent (who : Who) (t : TicketRow)
+    (h : WritePolicy.admit (s := HelpdeskDb) (P := Who) (α := TicketRow) who t = true) :
+    who.role = .agent := by
+  have hadm : (who.role == Role.agent && t.org == oref who.org) = true := h
+  rw [Bool.and_eq_true] at hadm
+  exact role_eq_agent_of_beq hadm.1
+
+theorem ticket_admit_implies_seesTicket (who : Who) (t : TicketRow)
+    (h : WritePolicy.admit (s := HelpdeskDb) (P := Who) (α := TicketRow) who t = true) :
+    seesTicket who (t.toTicket ⟨0⟩) = true := by
+  have hadm : (who.role == Role.agent && t.org == oref who.org) = true := h
+  rw [Bool.and_eq_true] at hadm
+  have ha := role_eq_agent_of_beq hadm.1
+  have horg := beq_oref_implies_oid t.org who.org hadm.2
+  unfold seesTicket TicketRow.toTicket
+  simp [ha, horg]
+
+theorem message_admit_implies_seesMessage (who : Who) (m : MessageRow)
+    (h : WritePolicy.admit (s := HelpdeskDb) (P := Who) (α := MessageRow) who m = true) :
+    seesMessage who (m.toMessage ⟨0⟩) = true := by
+  have hadm :
+      (m.org == oref who.org && m.author == uref who.user &&
+        (who.role == Role.agent ||
+          (m.requester == uref who.user && m.internal == false &&
+            who.role == Role.customer))) = true := h
+  rw [Bool.and_eq_true] at hadm
+  rw [Bool.and_eq_true] at hadm
+  have horg := beq_oref_implies_oid m.org who.org hadm.1.1
+  unfold seesMessage MessageRow.toMessage
+  simp [horg]
+  cases hagent : (who.role == Role.agent)
+  · have hcust := role_eq_customer_of_not_agent (role_ne_agent_of_beq_false hagent)
+    have hrest :
+        (m.requester == uref who.user && m.internal == false &&
+          who.role == Role.customer) = true := by
+      simpa [hagent] using hadm.2
+    rw [Bool.and_eq_true] at hrest
+    rw [Bool.and_eq_true] at hrest
+    have huser := beq_uref_implies_uid m.requester who.user hrest.1.1
+    have hpub : m.internal = false := eq_of_beq hrest.1.2
+    simp [hcust, huser, hpub]
+  · have ha := role_eq_agent_of_beq hagent
+    simp [ha]
+
+theorem mayAdvance_implies_ticket_admit (who : Who) (t : Ticket)
+    (h : mayAdvance who t = true) :
+    WritePolicy.admit (s := HelpdeskDb) (P := Who) (α := TicketRow) who
+      (TicketRow.ofTicket t) = true := by
+  have ha := mayAdvance_agent who t h
+  have hsees : seesTicket who t = true := by
+    simp [mayAdvance, Bool.and_eq_true] at h
+    exact h.1.2
+  have horg := seesTicket_same_org who t hsees
+  change ((who.role == Role.agent) && ((TicketRow.ofTicket t).org == oref who.org)) = true
+  simp [ha, TicketRow.ofTicket, oref_beq_of_eq horg.symm, role_beq_agent]
+
+theorem mayPost_implies_message_admit (id : MessageId) (t : Ticket) (who : Who)
+    (body : BodyText) (internal : Bool) (now : Instant)
+    (h : mayPost who t internal = true) :
+    WritePolicy.admit (s := HelpdeskDb) (P := Who) (α := MessageRow) who
+      (MessageRow.ofMessage (draftMessage id t who body internal now)) = true := by
+  have hsees := mayPost_implies_sees who t internal h
+  have horg := seesTicket_same_org who t hsees
+  change
+    ((oref t.org == oref who.org) && (uref who.user == uref who.user) &&
+      ((who.role == Role.agent) ||
+        ((uref t.requester == uref who.user) && (internal == false) &&
+          (who.role == Role.customer)))) = true
+  simp only [oref_beq_of_eq horg.symm, uref_beq_self, Bool.and_true]
+  cases hagent : (who.role == Role.agent)
+  · have hcust := role_eq_customer_of_not_agent (role_ne_agent_of_beq_false hagent)
+    have huser := customer_sees_own_ticket who t hcust hsees
+    have hpub : internal = false := by
+      simp [mayPost, hcust, Bool.and_eq_true] at h
+      cases hi : internal
+      · rfl
+      · simp [hi] at h
+    simp [uref_beq_of_eq huser.symm, hpub, hcust, role_beq_customer]
+  · simp
 
 /-! ## Write view
 

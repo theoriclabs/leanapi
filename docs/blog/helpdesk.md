@@ -21,9 +21,13 @@ forgotten `WHERE`, a serializer that includes every column, or a webhook
 retry that opens a second ticket, and the rule is gone.
 
 This post is a small LeanAPI backend for that rule: two orgs, agents and
-customers, five HTTP endpoints. The rule is declared once, as a row-level
-policy, and the SQL the database runs is that policy. What follows is what
-is actually guaranteed today, and what still waits on LeanDB.
+customers, five HTTP endpoints. The rule is written as a domain function
+(`seesMessage`, `seesTicket`) and as a policy (`rule` and `scope`). A
+lemma proves that `rule` implies the domain function on a reconstructed
+row. That the SQL `scope` matches `rule` is **not** proved: that needs
+`policy%` (one lambda generating both) or LeanDB's view laws. What
+follows is what is actually guaranteed today, and what still waits on
+LeanDB.
 
 ## How ordinary backends lose the rule
 
@@ -64,8 +68,12 @@ def seesMessage (who : Who) (m : Message) : Bool :=
 Read: same org; agents see every message in that org; a customer sees only
 messages on their own tickets, and only if `internal` is false.
 
-The same predicate, as a LeanDB policy. `rule` is the meaning; `scope` is
-what becomes SQL. Keep them identical.
+The policy is a second copy, on stored rows. `rule` is what the lemmas
+talk about; `scope` is what LeanDB compiles to SQL. They are written by
+hand. `message_rule_implies_seesMessage` says a row `rule` admits
+reconstructs to a message `seesMessage` allows. A stored `Ref` that
+compares equal to `oref o` reconstructs to `o`; the converse can fail
+for a negative id, so this is an implication, not an equality.
 
 <!-- check: excerpt examples/helpdesk/Helpdesk/Policies.lean -->
 ```lean
@@ -79,6 +87,13 @@ instance : Policy HelpdeskDb Who MessageRow where
       m.val.org == oref who.org &&
         (who.role == Role.agent ||
           (m.val.requester == uref who.user && m.val.internal == false))
+```
+
+<!-- check: signature Helpdesk.message_rule_implies_seesMessage -->
+```lean
+theorem message_rule_implies_seesMessage (who : Who) (m : Stored MessageRow)
+    (h : Policy.rule (s := HelpdeskDb) (P := Who) (α := MessageRow) who m = true) :
+    seesMessage who (reconstructMessage m) = true
 ```
 
 An endpoint does not re-state that. It reads through the view. Its type
@@ -281,21 +296,30 @@ example (who : Who) (m : Message) (hr : who.role = .customer)
   customer_never_sees_internal who m hr h
 ```
 
-That last block is the domain lemma the SQL is meant to match. It does not
-mention `DbState`.
+That last block is the domain lemma. `message_rule_implies_seesMessage`
+says a row the policy's `rule` admits reconstructs to a message that
+lemma allows. Matching `scope` to `rule` is still planned. Neither
+mentions `DbState`.
 
 ## What exactly is guaranteed
 
 ### Proved
 
-Theorems about pure domain functions and codecs, in `Helpdesk/Domain.lean`
-and `Helpdesk/Schema.lean`:
+Theorems about pure domain functions, the row mapping, and codecs, in
+`Helpdesk/Domain.lean`, `Helpdesk/Schema.lean`, and `Helpdesk/Policies.lean`:
 
 - Visibility: `seesTicket_same_org`, `seesMessage_same_org`,
   `customer_sees_own_ticket`, `customer_never_sees_internal`,
   `customer_sees_own_message`, `customer_thread_no_internal`,
   `customer_thread_same_org`, `customer_thread_own`,
   `other_org_invisible_ticket`, `other_org_invisible_message`.
+- Policy `rule` vs domain (implications: a stored `Ref` that `== oref o`
+  reconstructs to `o`; the converse can fail for a negative id):
+  `ticket_rule_implies_seesTicket`, `message_rule_implies_seesMessage`.
+- Write policy vs domain: `ticket_admit_implies_agent`,
+  `ticket_admit_implies_seesTicket`, `message_admit_implies_seesMessage`;
+  on a row mapped from the domain, `mayAdvance_implies_ticket_admit`,
+  `mayPost_implies_message_admit`. `admit` does not include "not closed".
 - Writes: `mayPost_implies_sees`, `mayPost_same_org`, `mayPost_not_closed`,
   `customer_never_posts_internal`, `closed_ticket_nobody_posts`,
   `mayAdvance_agent`, `mayAdvance_not_closed`, `customer_never_advances`.
@@ -305,7 +329,8 @@ and `Helpdesk/Schema.lean`:
   `draft_agent_ok`; `MessageRow.invariant_iff`, `MessageRow.Invariant_iff`,
   `MessageRow.ofMessage_invariant`.
 - Codecs: `nat_roundtrip`, `instant_roundtrip`, `Instant.make_unix`,
-  `oid_oref`, `uid_uref`, `tid_tref`.
+  `oid_oref`, `uid_uref`, `tid_tref`, `beq_oref_implies_oid`,
+  `beq_uref_implies_uid`.
 
 None of these quantify over `DbState`, `Read.denote`, or `Txn.denote`.
 
@@ -356,8 +381,10 @@ proofs, execution agreeing with meaning):
   `SameView p`.
 - **Coverage** — `api!` refuses an endpoint over the unscoped schema
   unless it is marked trusted, so reachable and proved are the same routes.
+- **`scope` = `rule`** — a `policy%` command that generates both from one
+  lambda, or LeanDB view laws that the SQL is the policy. Today they are
+  written twice.
 
-Until M15, those statements over `DbState` would be vacuous. This example
-does not claim them. The running help desk enforces the rule in SQL and in
-the type of every handler; the proofs are of the functions those handlers
-call.
+Until M15, the `DbState` statements would be vacuous. This example does
+not claim them. The running help desk applies `scope` in SQL and the type
+of every handler; `rule` is proved to imply the domain function.

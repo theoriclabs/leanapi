@@ -163,8 +163,9 @@ structure Message where
 
 /-! ## The rules (the meaning of the policies)
 
-Declared once. The database view's `Policy.rule` is the same function,
-applied to a stored row. -/
+The domain copy. `Policy.rule` is a second copy, on stored rows;
+`ticket_rule_implies_seesTicket` / `message_rule_implies_seesMessage`
+tie them. The SQL `scope` is a third copy, not yet proved equal. -/
 
 /-- Who may see a ticket: agents, every ticket in their org; customers,
     only tickets they opened, and only in their org. -/
@@ -359,5 +360,24 @@ theorem draft_agent_ok (id : MessageId) (t : Ticket) (who : Who)
     Message.ok (draftMessage id t who body internal now) := by
   intro hrole
   simp [draftMessage, hr] at hrole
+
+theorem role_beq_agent (r : Role) : (r == .agent) = decide (r = .agent) := by
+  cases r <;> rfl
+
+theorem role_beq_customer (r : Role) : (r == .customer) = decide (r = .customer) := by
+  cases r <;> rfl
+
+theorem role_eq_agent_of_beq {r : Role} (h : (r == .agent) = true) : r = .agent :=
+  of_decide_eq_true ((role_beq_agent r).symm.trans h)
+
+theorem role_ne_agent_of_beq_false {r : Role} (h : (r == .agent) = false) : r ≠ .agent := by
+  intro heq
+  have : (r == .agent) = true := by rw [heq]; rfl
+  simp [h] at this
+
+theorem role_eq_customer_of_not_agent {r : Role} (h : r ≠ .agent) : r = .customer := by
+  cases r
+  · exact (h rfl).elim
+  · rfl
 
 end Helpdesk

@@ -120,6 +120,47 @@ theorem uid_uref (u : UserId) : uid (uref u) = u := by
 theorem tid_tref (t : TicketId) : tid (tref t) = t := by
   cases t with | mk n h => simp [tid, tref, Int64.toNatClampNeg_ofNat_of_lt h]
 
+/-- A `Ref` that `==` `oref o` reconstructs to `o`. The converse can fail
+    for a negative `Int64` (the mapping clamps); stored ids are
+    non-negative. -/
+theorem beq_oref_implies_oid (r : Ref OrgRow) (o : OrgId)
+    (h : (r == oref o) = true) : oid r = o := by
+  change (r.toInt64 == Int64.ofNat o.n) = true at h
+  have h64 : r.toInt64 = Int64.ofNat o.n := (beq_iff_eq).mp h
+  cases o with
+  | mk n hn =>
+    simp [oid, h64, Int64.toNatClampNeg_ofNat_of_lt hn]
+
+theorem beq_uref_implies_uid (r : Ref UserRow) (u : UserId)
+    (h : (r == uref u) = true) : uid r = u := by
+  change (r.toInt64 == Int64.ofNat u.n) = true at h
+  have h64 : r.toInt64 = Int64.ofNat u.n := (beq_iff_eq).mp h
+  cases u with
+  | mk n hn =>
+    simp [uid, h64, Int64.toNatClampNeg_ofNat_of_lt hn]
+
+theorem oref_inj {a b : OrgId} (h : (oref a == oref b) = true) : a = b := by
+  have := beq_oref_implies_oid (oref a) b h
+  simpa [oid_oref] using this
+
+theorem uref_inj {a b : UserId} (h : (uref a == uref b) = true) : a = b := by
+  have := beq_uref_implies_uid (uref a) b h
+  simpa [uid_uref] using this
+
+theorem oref_beq_self (o : OrgId) : (oref o == oref o) = true := by
+  change (Int64.ofNat o.n == Int64.ofNat o.n) = true
+  exact beq_self_eq_true _
+
+theorem uref_beq_self (u : UserId) : (uref u == uref u) = true := by
+  change (Int64.ofNat u.n == Int64.ofNat u.n) = true
+  exact beq_self_eq_true _
+
+theorem oref_beq_of_eq {a b : OrgId} (h : a = b) : (oref a == oref b) = true := by
+  rw [h]; exact oref_beq_self b
+
+theorem uref_beq_of_eq {a b : UserId} (h : a = b) : (uref a == uref b) = true := by
+  rw [h]; exact uref_beq_self b
+
 /-! ## Row ↔ domain -/
 
 def TicketRow.toTicket (id : LeanDb.Id TicketRow) (r : TicketRow) : Ticket :=

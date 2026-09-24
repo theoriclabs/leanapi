@@ -80,10 +80,13 @@ ticket's customer), `authorRole`, and `internal`, so the policy does not
 join. This avoids LeanDB D1 (no filter on child-list contents) and the
 open question in DESIGN §7.5 about policies that read other tables.
 
-**Read view.** `Policy.rule` is the meaning; `scope` is the same predicate
-compiled to SQL. `OrgRow` has no instance: default deny. `ReadAs.get` /
-`ReadAs.all` are the only reads. `messagesOn` runs `ReadAs.all` (policy in
-SQL) and filters the ticket id in Lean, because `PolicyView.ReadAs` has no
+**Read view.** `Policy.rule` is a copy of `seesTicket` / `seesMessage` on
+stored rows (`ticket_rule_implies_seesTicket`,
+`message_rule_implies_seesMessage`: policy admits ⇒ domain true).
+`scope` is a third copy, compiled to SQL, not proved equal to `rule`.
+`OrgRow` has no instance: default deny. `ReadAs.get` / `ReadAs.all` are
+the only reads. `messagesOn` runs `ReadAs.all` (policy in SQL) and
+filters the ticket id in Lean, because `PolicyView.ReadAs` has no
 `filter` yet.
 
 **Write view (`WritePolicy` / `TxAs`).** PolicyView has no writes. This
@@ -112,9 +115,12 @@ instants bounded below 2^63.
 
 ## What is guaranteed
 
-**Proved** (pure functions in `Domain.lean` / `Schema.lean`):
+**Proved** (pure functions in `Domain.lean` / `Schema.lean` / `Policies.lean`):
 `customer_thread_no_internal`, `customer_thread_same_org`,
 `customer_thread_own`, `other_org_invisible_{ticket,message}`,
+`ticket_rule_implies_seesTicket`, `message_rule_implies_seesMessage`,
+`ticket_admit_implies_seesTicket`, `message_admit_implies_seesMessage`,
+`mayAdvance_implies_ticket_admit`, `mayPost_implies_message_admit`,
 `closed_is_final`, `advance_not_from_closed`, `customer_never_posts_internal`,
 `closed_ticket_nobody_posts`, `customer_never_advances`,
 `MessageRow.invariant_iff`, codec round-trips.
@@ -129,6 +135,7 @@ privacy), internal notes, who may write, inbound retries, policy SQL.
 
 **Planned** (DESIGN §7.5, need LeanDB M15): restricted reads, frame, write
 confinement, noninterference for every route, coverage (`api!` refuses an
-unscoped program). Not claimed of the running service.
+unscoped program). **`scope` = `rule`** needs `policy%` or LeanDB view
+laws; they are written twice today. Not claimed of the running service.
 
 The longer write-up is [docs/blog/helpdesk.md](../../docs/blog/helpdesk.md).

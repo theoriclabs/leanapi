@@ -219,4 +219,25 @@ Helpdesk.Schema Helpdesk.tid_tref
 Helpdesk.Schema Helpdesk.MessageRow.invariant_iff
 Helpdesk.Schema Helpdesk.MessageRow.Invariant_iff
 Helpdesk.Schema Helpdesk.MessageRow.ofMessage_invariant
+Helpdesk.Schema Helpdesk.beq_oref_implies_oid
+Helpdesk.Schema Helpdesk.beq_uref_implies_uid
+Helpdesk.Schema Helpdesk.oref_inj
+Helpdesk.Schema Helpdesk.uref_inj
+Helpdesk.Schema Helpdesk.oref_beq_self
+Helpdesk.Schema Helpdesk.uref_beq_self
+Helpdesk.Schema Helpdesk.oref_beq_of_eq
+Helpdesk.Schema Helpdesk.uref_beq_of_eq
+Helpdesk.Domain Helpdesk.role_beq_agent
+Helpdesk.Domain Helpdesk.role_beq_customer
+Helpdesk.Domain Helpdesk.role_eq_agent_of_beq
+Helpdesk.Domain Helpdesk.role_ne_agent_of_beq_false
+Helpdesk.Domain Helpdesk.role_eq_customer_of_not_agent
+Helpdesk.Policies Helpdesk.ticket_rule_implies_seesTicket
+Helpdesk.Policies Helpdesk.message_rule_implies_seesMessage
+Helpdesk.Policies Helpdesk.ticket_admit_implies_agent
+Helpdesk.Policies Helpdesk.ticket_admit_implies_seesTicket
+Helpdesk.Policies Helpdesk.message_admit_implies_seesMessage
+Helpdesk.Policies Helpdesk.mayAdvance_implies_ticket_admit
+Helpdesk.Policies Helpdesk.mayPost_implies_message_admit
+
 
