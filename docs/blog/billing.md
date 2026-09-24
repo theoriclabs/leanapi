@@ -17,7 +17,7 @@ Every `lean` block below is checked by `scripts/check_blog.sh`:
 
 A usage-based SaaS charges for what happened, not for how many times the client said it happened. If a meter retry, a timeout, or a duplicated webhook can add the same event twice, the invoice is wrong. If a tenant can read another tenant's usage, the invoice is also wrong, just in a different way.
 
-This post is a small billing backend in LeanAPI and LeanDB. Four rules are declared once and enforced at the API, in the handler, in the query, and in the stored row. Money is minor units tagged `Currency.usd`; time is UTC unix seconds; ids are not strings. The last section says what is actually guaranteed: proved about pure functions, refused by the type checker, tested against SQLite, or still planned.
+This post is a small billing backend in LeanAPI and LeanDB. Four rules live in domain functions and types. Handlers, queries and stored rows are written to follow them. Each table's `Policy` still has two fields, `rule` and SQL `scope`; we prove `rule` agrees with domain ownership through the row mapping, and we do not prove that `scope` matches `rule`. The last section says what is actually guaranteed: proved about pure functions, refused by the type checker, tested against SQLite, or still planned.
 
 ## How this usually goes wrong
 
@@ -34,7 +34,7 @@ unique% UsageEventRow.byTenantEvent := (tenant, eventId)
 unique% InvoiceRow.byTenantPeriod := (tenant, year, month)
 ```
 
-Who may see a row is a `Policy` on that table, default deny, pushed into SQL. The tenant identifier lives on the row itself (LeanDB policies are single-table):
+Who may see a row is a `Policy` on that table, default deny. `rule` is the Lean predicate; `scope` is the SQL we send. They are written to look the same. That they *are* the same is not proved — it needs `policy%` or LeanDB's view laws:
 
 <!-- check: excerpt examples/billing/Billing/Policies.lean -->
 ```lean
@@ -44,7 +44,7 @@ instance : Policy BillingDb Tenant UsageEventRow where
     r.val.tenant == tref t.id
 ```
 
-The ingest endpoint's type is the specification. The caller is an authenticated tenant. The body is a typed event, not a bag of strings. The program is a transaction. A duplicate is a replay, not an error.
+The ingest endpoint's type is the specification. The caller is an authenticated tenant. The body is a typed event, not a bag of strings. The program is a transaction. A retry of the same event is a replay; a reused id with different data is a typed failure.
 
 <!-- check: signature Billing.Api.ingestUsage -->
 ```lean
@@ -71,12 +71,20 @@ Run it with `lake build billing` and `./.lake/build/bin/billing --port 8080 --db
 
 ## Counted exactly once
 
-The pure function is idempotent: ingesting the same event twice is ingesting it once.
+The pure decision is three-way. Same `(tenant, eventId)` and the same payload is a replay; the same id with different data is a conflict; otherwise the event is new. `ingest` only appends on `.fresh`, so ingesting twice still equals ingesting once.
 
 <!-- check: excerpt examples/billing/Billing/Domain.lean -->
 ```lean
-def ingest (log : List UsageEvent) (e : UsageEvent) : List UsageEvent :=
-  if hasEvent log e then log else log ++ [e]
+def ingestChecked (log : List UsageEvent) (e : UsageEvent) : IngestDecision :=
+  match storedEvent log e with
+  | none => .fresh
+  | some s => if s = e then .replay else .conflict
+```
+
+<!-- check: signature Billing.ingestChecked_conflict_iff -->
+```lean
+theorem ingestChecked_conflict_iff (log : List UsageEvent) (e : UsageEvent) :
+    ingestChecked log e = .conflict ↔ ∃ s, storedEvent log e = some s ∧ s ≠ e
 ```
 
 <!-- check: signature Billing.ingest_idem -->
@@ -87,20 +95,15 @@ theorem ingest_idem (log : List UsageEvent) (e : UsageEvent) :
 
 Rating follows. `rateLog_append` says quantity × price adds over a concatenation. `rateLog_ingest_idem` says rating a log is unchanged by ingesting an event that is already there. Those are proofs about lists, not about SQLite.
 
-The running service uses the unique index. A second insert of `(tenant, eventId)` is `InsertError.duplicate`. The handler looks the holder up through the tenant's view and answers as a replay:
+The running service uses the unique index. A second insert of `(tenant, eventId)` is `InsertError.duplicate`. The handler loads the stored event through the tenant's view and runs the same decision:
 
 <!-- check: excerpt examples/billing/Billing/Api.lean -->
 ```lean
-    match ← TxnAs.insert (α := UsageEventRow) (UsageEventRow.checked e) (owns_event me.val e rfl) with
-    | .ok _ =>
-      pure (.fresh { val := view, location := some loc })
-    | .error (.duplicate _ holder) =>
-      match ← TxnAs.get UsageEventRow holder with
-      | some row =>
-        match usageViewOf row.toStored with
-        | some v => pure (.replay { val := v, location := some loc })
-        | none => TxnAs.throw .hidden
-      | none => TxnAs.throw .hidden
+          match ingestChecked [stored] e with
+          | .replay =>
+            pure (.replay { val := projectUsage stored, location := some loc })
+          | .conflict => TxnAs.throw .eventConflict
+          | .fresh => TxnAs.throw .hidden
 ```
 
 A real first report, then the same body again:
@@ -120,7 +123,16 @@ Idempotent-Replayed: true
 {"eventId":"evt_1","occurredAt":1727136000,"period":{"month":9,"year":2026},"quantity":3}
 ```
 
-Sending a different quantity under the same id still returns 3 (`same id, other quantity: still first quantity` in `tests/Tests/Billing.lean`). Six concurrent posts of one event are all 201, at least one replay (`concurrent ingest all 201`). That is not a theorem about `DbState`: at this LeanDB pin, table contents are empty inside a proof, so a statement over the database would be vacuous.
+Same id, quantity 9 instead of 3:
+
+```http
+HTTP/1.1 409 Conflict
+Content-Type: application/problem+json
+
+{"detail":"event id already used for a different event","status":409,"title":"Conflict","type":"about:blank"}
+```
+
+A reused id with a *different* quantity is not a silent replay of the first event. That would hide the sender's bug. LeanAPI's retry fingerprints (LAPI-10) refuse the same situation for HTTP keys; we do the same for the domain id. The status is **409**, not 422: the body is well-typed (422 is for values that fail their constructors), and the conflict is with stored state, like paying a draft. The problem text does not include the stored event — only that the id is taken. Test `same id, other quantity: 409`. GET after the conflict still returns 3 (`stored event unchanged after conflict`). Six concurrent posts of the *same* payload are all 201, at least one replay (`concurrent ingest all 201`). That is not a theorem about `DbState`: at this LeanDB pin, table contents are empty inside a proof, so a statement over the database would be vacuous.
 
 ## The total is the sum of the lines
 
@@ -222,7 +234,16 @@ def readInvoice (me : Auth Tenant) (id : Path InvoiceId) :
     | none => return .error .hidden
 ```
 
-`ReadAs.get` adds the policy to the SQL `WHERE`. Another tenant's invoice is `none`, the same 404 as a missing id (`other's invoice ≡ missing`). Writes go through `TxnAs`: private constructor, insert and update only with `Owns` evidence, `Seen` handles only for rows the policy admits.
+`ReadAs.get` runs `Policy.scope` as a SQL `WHERE`. We do not prove that `scope` equals `rule`. What we do prove is that `rule`, through the row mapping, is domain ownership:
+
+<!-- check: signature Billing.Policies.usage_rule_ofEvent -->
+```lean
+theorem usage_rule_ofEvent (p : Tenant) (id : LeanDb.Id UsageEventRow) (e : UsageEvent) :
+    Policy.rule (s := BillingDb) p ⟨id, UsageEventRow.ofEvent e⟩ = true ↔
+      e.tenant = p.id
+```
+
+Another tenant's invoice is `none`, the same 404 as a missing id (`other's invoice ≡ missing`). Writes go through `TxnAs`: private constructor, insert and update only with `Owns` evidence (`invoice_rule_ofInvoice` is the matching lemma).
 
 Beta reading Acme's event:
 
@@ -289,8 +310,10 @@ No claim here is stronger than its evidence. There are no theorems over `DbState
 
 Pure domain functions, audited with `#print axioms` (no `sorry`, no `native_decide`):
 
-- `ingest_idem`, `ingest_already`, `ingest_new`, `hasEvent_snoc`: a log counts each `(tenant, eventId)` once.
+- `ingestChecked_fresh_iff`, `ingestChecked_replay_iff`, `ingestChecked_conflict_iff`: when the decision is fresh, replay, or conflict.
+- `ingest_idem`, `ingest_already`, `ingest_new`, `hasEvent_snoc`: a log counts each `(tenant, eventId)` once; a conflict leaves the log unchanged.
 - `rateLog_append`, `rateLog_ingest_idem`, `Line.rate_priced`: rating adds over concatenation and does not double-count a repeated ingest.
+- `usage_rule_ofEvent`, `usage_owns_iff`, `invoice_rule_ofInvoice`, `invoice_owns_iff`: `Policy.rule` / `Owns` agree with domain tenant ownership through the row mapping.
 - `mkDraft_balanced`, `mkDraft_ok`: a draft built by `mkDraft` is balanced.
 - `finalize_keeps_lines`, `pay_keeps_lines`, `void_keeps_lines`, `finalize_preserves_balanced`, `pay_preserves_balanced`, `void_preserves_balanced`: transitions keep lines, total, and the invariant.
 - `pay_next`, `void_next`: the only constructed moves out of `finalized` are to `paid` and `void`.
@@ -312,18 +335,17 @@ Handlers take `Auth Tenant`, `EventId`, `Quantity`, `Instant`, `Money .usd`. The
 
 `tests/Tests/Billing.lean`, section `billing: ingest once, isolate tenants, freeze finalized invoices`:
 
-- `ingest 201`, `resend marked replay`, `same id, other quantity: still first quantity`, `concurrent ingest all 201`, `GET after race is the original quantity`.
+- `ingest 201`, `resend marked replay`, `same id, other quantity: 409`, `conflict body has no quantity`, `stored event unchanged after conflict`, `concurrent ingest all 201`, `GET after race is the original quantity`.
 - `3 × 10¢ = 30`, `same period replays`, `2 × 25¢ = 50`.
 - `pay while draft 409`, `lines unchanged at finalize`, `lines unchanged at pay`, `void after pay 409`.
 - `beta cannot read acme's event`, `other's event ≡ missing (status)`, `beta cannot read acme's invoice`, `other's invoice ≡ missing (body)`, `no auth 401`.
 
 ### Planned
 
-DESIGN.md §7.5, which needs LeanDB M15 (`DbState` with real content, execution that agrees with the meaning):
-
-- Restricted reads: a program over `S.As p` observes only rows `p`'s policy admits.
-- Write confinement: a transaction over `S.As p` leaves every other tenant's row unchanged.
-- Noninterference for every route, from the database layer's laws, with no per-endpoint isolation proof.
-- Coverage: `api!` refuses an unscoped program unless it is marked trusted, so the served routes and the proved routes are the same set.
+- **`scope` matching `rule`:** each `Policy` instance writes the two fields separately. `policy%` (DESIGN.md §7.5) or LeanDB view laws would make them the same declaration. Until then this is unproved.
+- Restricted reads: a program over `S.As p` observes only rows `p`'s policy admits (needs LeanDB M15).
+- Write confinement: a transaction over `S.As p` leaves every other tenant's row unchanged (M15).
+- Noninterference for every route, from the database layer's laws, with no per-endpoint isolation proof (M15).
+- Coverage: `api!` refuses an unscoped program unless it is marked trusted, so the served routes and the proved routes are the same set (M15).
 
 Until then, isolation and "exactly once" at SQL are type-enforced in these handlers, and tested, not proved about the running database.

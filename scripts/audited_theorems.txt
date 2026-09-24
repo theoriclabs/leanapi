@@ -183,6 +183,11 @@ LeanApi.Http.DbProblem LeanApi.WithHolder.not_blind
 LeanApi.Http.DbEndpoint LeanDb.Txn.denote_go_mapErr
 # Billing example: pure domain and mapping proofs (not over DbState)
 Billing.Domain Billing.ingest_idem
+Billing.Domain Billing.ingestChecked_fresh_iff
+Billing.Domain Billing.ingestChecked_replay_iff
+Billing.Domain Billing.ingestChecked_conflict_iff
+Billing.Domain Billing.storedEvent_none_iff
+Billing.Domain Billing.storedEvent_snoc
 Billing.Domain Billing.ingest_already
 Billing.Domain Billing.ingest_new
 Billing.Domain Billing.hasEvent_snoc
@@ -218,6 +223,9 @@ Billing.Domain Billing.UnitPrice.make_minor
 Billing.Domain Billing.mul_le_maxTotal
 Billing.Schema Billing.Schema.RowStatus.toDomain_ofStatus
 Billing.Schema Billing.Schema.tid_tref
+Billing.Schema Billing.Schema.tref_inj
+Billing.Schema Billing.Schema.tref_eq_iff
+Billing.Schema Billing.Schema.ref_beq_eq
 Billing.Schema Billing.Schema.iid_iref
 Billing.Schema Billing.Schema.LineRow.toLine_ofLine
 Billing.Schema Billing.Schema.InvoiceRow.toInvoice_ofInvoice
@@ -231,3 +239,7 @@ Billing.Schema Billing.Schema.money_roundtrip
 Billing.Schema Billing.Schema.unitPrice_roundtrip
 Billing.Api Billing.Api.owns_event
 Billing.Api Billing.Api.owns_invoice
+Billing.Policies Billing.Policies.usage_owns_iff
+Billing.Policies Billing.Policies.usage_rule_ofEvent
+Billing.Policies Billing.Policies.invoice_owns_iff
+Billing.Policies Billing.Policies.invoice_rule_ofInvoice

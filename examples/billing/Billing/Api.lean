@@ -77,18 +77,20 @@ inductive BillingError where
   | hidden
   | notDraft
   | notFinalized
+  | eventConflict
   | tooManyLines
   | totalOutOfRange
 
 instance : ToProblem BillingError where
   status
     | .hidden => ⟨404, by decide⟩
-    | .notDraft | .notFinalized => ⟨409, by decide⟩
+    | .notDraft | .notFinalized | .eventConflict => ⟨409, by decide⟩
     | .tooManyLines | .totalOutOfRange => ⟨422, by decide⟩
   detail
     | .hidden => none
     | .notDraft => some "invoice is not a draft"
     | .notFinalized => some "invoice is not finalized"
+    | .eventConflict => some "event id already used for a different event"
     | .tooManyLines => some "too many lines"
     | .totalOutOfRange => some "invoice total is out of range"
 
@@ -145,8 +147,10 @@ def viewOrHidden {σ} (p : Tenant) (s : Stored InvoiceRow) :
 
 /-! ## Endpoints -/
 
-/-- Report a usage event. Resending the same tenant and event id answers
-    as the first time did: the unique-index clash is a replay. -/
+/-- Report a usage event. The same tenant, event id, and payload is a
+    replay. The same id with different data is `eventConflict` (409):
+    the request is well-typed, but the id is already bound. The problem
+    body does not include the stored event. -/
 def ingestUsage (me : Auth Tenant) (body : Body UsageBody) :
     Tx BillingDb BillingError (Replayed (Created UsageView)) :=
   WriteAs.toTx fun {_σ} => do
@@ -161,8 +165,13 @@ def ingestUsage (me : Auth Tenant) (body : Body UsageBody) :
     | .error (.duplicate _ holder) =>
       match ← TxnAs.get UsageEventRow holder with
       | some row =>
-        match usageViewOf row.toStored with
-        | some v => pure (.replay { val := v, location := some loc })
+        match eventOf row.toStored with
+        | some stored =>
+          match ingestChecked [stored] e with
+          | .replay =>
+            pure (.replay { val := projectUsage stored, location := some loc })
+          | .conflict => TxnAs.throw .eventConflict
+          | .fresh => TxnAs.throw .hidden
         | none => TxnAs.throw .hidden
       | none => TxnAs.throw .hidden
     | .error (.missingRef _) => TxnAs.throw .hidden

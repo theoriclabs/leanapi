@@ -1,11 +1,12 @@
 /-
   Row-level policies and a write view for billing.
 
-  Who may see or change which rows is declared once per table (`Policy`),
-  default deny. Reads go through `PolicyView.ReadAs` or `Scoped` (the
-  policy is pushed into SQL). Writes go through `TxnAs`: private
-  constructor, insert/update only with `Owns` evidence, `Seen` handles
-  only for rows the actor's policy admits.
+Who may see or change which rows is declared once per table as a `Policy`
+  instance (`rule` plus SQL `scope`). The two fields are written to look
+  the same; that they *are* the same is not proved. Default deny. Reads go
+  through `PolicyView.ReadAs` or `Scoped`. Writes go through `TxnAs`:
+  private constructor, insert/update only with `Owns` evidence, `Seen`
+  handles only for rows the actor's policy admits.
 
   `Auth`'s constructor is still public (PolicyView README); once it is
   private, only authentication can supply the actor.
@@ -42,6 +43,31 @@ instance : Owns BillingDb Tenant UsageEventRow where
 instance : Owns BillingDb Tenant InvoiceRow where
   owns t v := v.tenant == tref t.id
   owns_eq _ _ := rfl
+
+/-- Domain ownership through the row mapping: `Policy.rule` (and `Owns`)
+    hold of a stored event iff the event's tenant is the actor. The SQL
+    `scope` field is written to look the same; that it *is* the same is
+    not proved (`policy%` / LeanDB view laws). -/
+theorem usage_owns_iff (p : Tenant) (e : UsageEvent) :
+    Owns.owns (s := BillingDb) p (UsageEventRow.ofEvent e) = true ↔ e.tenant = p.id := by
+  simp [Owns.owns, UsageEventRow.ofEvent, ref_beq_eq, tref_eq_iff]
+
+theorem usage_rule_ofEvent (p : Tenant) (id : LeanDb.Id UsageEventRow) (e : UsageEvent) :
+    Policy.rule (s := BillingDb) p ⟨id, UsageEventRow.ofEvent e⟩ = true ↔
+      e.tenant = p.id := by
+  rw [Owns.owns_eq (s := BillingDb) p ⟨id, UsageEventRow.ofEvent e⟩]
+  exact usage_owns_iff p e
+
+theorem invoice_owns_iff (p : Tenant) (inv : Invoice) :
+    Owns.owns (s := BillingDb) p (InvoiceRow.ofInvoice inv) = true ↔
+      inv.tenant = p.id := by
+  simp [Owns.owns, InvoiceRow.ofInvoice, ref_beq_eq, tref_eq_iff]
+
+theorem invoice_rule_ofInvoice (p : Tenant) (id : LeanDb.Id InvoiceRow) (inv : Invoice) :
+    Policy.rule (s := BillingDb) p ⟨id, InvoiceRow.ofInvoice inv⟩ = true ↔
+      inv.tenant = p.id := by
+  rw [Owns.owns_eq (s := BillingDb) p ⟨id, InvoiceRow.ofInvoice inv⟩]
+  exact invoice_owns_iff p inv
 
 /-! ## Scoped reads that can add filters (policy + predicate in SQL) -/
 

@@ -262,9 +262,29 @@ def sameEvent (a b : UsageEvent) : Bool :=
 def hasEvent (log : List UsageEvent) (e : UsageEvent) : Bool :=
   log.any (sameEvent e)
 
-/-- Add `e` to the log, or do nothing if it is already there. -/
+/-- The first stored event that collides with `e` on `(tenant, eventId)`. -/
+def storedEvent (log : List UsageEvent) (e : UsageEvent) : Option UsageEvent :=
+  log.find? (sameEvent e)
+
+/-- A colliding id with different payload is not a retry. -/
+inductive IngestDecision where
+  | fresh
+  | replay
+  | conflict
+  deriving DecidableEq, Repr
+
+/-- Same id and same payload → replay; same id, different payload →
+    conflict; otherwise the event is new. -/
+def ingestChecked (log : List UsageEvent) (e : UsageEvent) : IngestDecision :=
+  match storedEvent log e with
+  | none => .fresh
+  | some s => if s = e then .replay else .conflict
+
+/-- Add `e` only when the id is new. A conflict leaves the log as it is. -/
 def ingest (log : List UsageEvent) (e : UsageEvent) : List UsageEvent :=
-  if hasEvent log e then log else log ++ [e]
+  match ingestChecked log e with
+  | .fresh => log ++ [e]
+  | .replay | .conflict => log
 
 def Line.rate (price : UnitPrice .usd) (e : UsageEvent) : Line :=
   { eventId := e.eventId
@@ -332,23 +352,76 @@ theorem hasEvent_snoc (log : List UsageEvent) (e : UsageEvent) :
     hasEvent (log ++ [e]) e = true := by
   simp [hasEvent, List.any_append, sameEvent_self]
 
-/-- Ingesting the same event twice equals ingesting it once. -/
+theorem storedEvent_none_iff (log : List UsageEvent) (e : UsageEvent) :
+    storedEvent log e = none ↔ hasEvent log e = false := by
+  simp [storedEvent, hasEvent, List.find?_eq_none, List.any_eq_false, Bool.not_eq_true]
+
+theorem storedEvent_snoc (log : List UsageEvent) (e : UsageEvent)
+    (h : storedEvent log e = none) :
+    storedEvent (log ++ [e]) e = some e := by
+  unfold storedEvent at h ⊢
+  rw [List.find?_append, h]
+  simp [sameEvent_self]
+
+theorem ingestChecked_fresh_iff (log : List UsageEvent) (e : UsageEvent) :
+    ingestChecked log e = .fresh ↔ storedEvent log e = none := by
+  unfold ingestChecked
+  cases storedEvent log e with
+  | none => simp
+  | some s =>
+    by_cases heq : s = e
+    · subst heq; simp
+    · simp [heq]
+
+theorem ingestChecked_replay_iff (log : List UsageEvent) (e : UsageEvent) :
+    ingestChecked log e = .replay ↔ storedEvent log e = some e := by
+  unfold ingestChecked
+  cases storedEvent log e with
+  | none => simp
+  | some s =>
+    by_cases heq : s = e
+    · subst heq; simp
+    · simp [heq]
+
+theorem ingestChecked_conflict_iff (log : List UsageEvent) (e : UsageEvent) :
+    ingestChecked log e = .conflict ↔ ∃ s, storedEvent log e = some s ∧ s ≠ e := by
+  unfold ingestChecked
+  cases hse : storedEvent log e with
+  | none => simp
+  | some s =>
+    by_cases heq : s = e
+    · subst heq; simp
+    · simp [heq]
+
+/-- Ingesting the same event twice equals ingesting it once. A conflict
+    also leaves the log unchanged, so a second attempt stays a conflict. -/
 theorem ingest_idem (log : List UsageEvent) (e : UsageEvent) :
     ingest (ingest log e) e = ingest log e := by
-  unfold ingest
-  cases h : hasEvent log e
-  · have : hasEvent (log ++ [e]) e = true := hasEvent_snoc log e
+  simp only [ingest]
+  cases h : ingestChecked log e with
+  | fresh =>
+    have hs : storedEvent log e = none := (ingestChecked_fresh_iff log e).mp h
+    have : ingestChecked (log ++ [e]) e = .replay :=
+      (ingestChecked_replay_iff (log ++ [e]) e).mpr (storedEvent_snoc log e hs)
     simp [this]
-  · simp [h]
+  | replay => simp [h]
+  | conflict => simp [h]
 
-/-- Folding `ingest` over a list that already contains `e` leaves it. -/
+/-- Folding `ingest` over a list that already contains this id leaves it. -/
 theorem ingest_already (log : List UsageEvent) (e : UsageEvent)
     (h : hasEvent log e = true) : ingest log e = log := by
-  simp [ingest, h]
+  have : storedEvent log e ≠ none := by
+    intro hs; exact Bool.false_ne_true ((storedEvent_none_iff log e).mp hs ▸ h)
+  simp only [ingest]
+  cases hc : ingestChecked log e with
+  | fresh => exact (this ((ingestChecked_fresh_iff log e).mp hc)).elim
+  | replay | conflict => rfl
 
 theorem ingest_new (log : List UsageEvent) (e : UsageEvent)
     (h : hasEvent log e = false) : ingest log e = log ++ [e] := by
-  simp [ingest, h]
+  have : ingestChecked log e = .fresh :=
+    (ingestChecked_fresh_iff log e).mpr ((storedEvent_none_iff log e).mpr h)
+  simp [ingest, this]
 
 /-! ## Rating adds over concatenation -/
 

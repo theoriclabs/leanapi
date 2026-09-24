@@ -76,8 +76,13 @@ def run : TestM Unit := do
     checkEq "resend same location" (r2.header? "location") (r1.header? "location")
 
     let r3 ← postJson svc "/usage" (usageBody "evt_1" 9) acme
-    checkEq "same id, other quantity: still first quantity" (jnat r3 "quantity") (some 3)
-    checkEq "same id, other quantity: replay" (r3.header? "idempotent-replayed") (some "true")
+    checkEq "same id, other quantity: 409" r3.status 409
+    checkEq "same id, other quantity: not a replay" (r3.header? "idempotent-replayed") none
+    checkEq "conflict detail"
+      (jstr r3 "detail") (some "event id already used for a different event")
+    checkEq "conflict body has no quantity" (jnat r3 "quantity") none
+    checkEq "stored event unchanged after conflict"
+      (jnat (← get svc "/usage/evt_1" acme) "quantity") (some 3)
 
     checkEq "beta cannot read acme's event" (← get svc "/usage/evt_1" beta).status 404
     checkEq "acme can read own event" (← get svc "/usage/evt_1" acme).status 200

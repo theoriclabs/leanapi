@@ -140,6 +140,18 @@ theorem tid_tref (t : TenantId) : tid (tref t) = t := by
   cases t with
   | mk n h => simp [tid, tref, Int64.toNatClampNeg_ofNat_of_lt h]
 
+theorem tref_inj {a b : TenantId} (h : tref a = tref b) : a = b := by
+  have := congrArg tid h
+  simpa [tid_tref] using this
+
+theorem tref_eq_iff (a b : TenantId) : tref a = tref b ↔ a = b :=
+  ⟨tref_inj, fun h => h ▸ rfl⟩
+
+/-- `Id`'s `BEq` is on `toInt64`, not the derived lawful instance. -/
+theorem ref_beq_eq {α} (a b : LeanDb.Id α) : (a == b) = true ↔ a = b := by
+  cases a; cases b
+  simp [BEq.beq]
+
 theorem iid_iref (i : InvoiceId) : iid (iref i) = i := by
   cases i with
   | mk n h => simp [iid, iref, Int64.toNatClampNeg_ofNat_of_lt h]
