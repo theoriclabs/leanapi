@@ -403,4 +403,4 @@ These LeanDB bugs are independent of the new language:
 
   The app keeps one end-to-end HTTP test; LeanDB owns the execution-equals-meaning test.
 
-The staging is in [PLAN.md](../PLAN.md), milestones M13–M16.
+The staging is in [PLAN.md](../PLAN.md), milestones M13–M16; the LeanAPI tasks are [LAPI-01…09](../tickets/README.md).

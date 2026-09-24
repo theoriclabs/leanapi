@@ -476,6 +476,8 @@ The exactness law is stated per failure constructor: each failure is reported ex
 
 ### M16: LeanAPI on LeanDB programs
 
+Tickets: [tickets/README.md](tickets/README.md), LAPI-01 (adopting the M13 release) and LAPI-02…09.
+
 - **Endpoints.** In `LeanApi.Http.Endpoint`, `Reads` becomes LeanDB's `Read s` and `Writes` becomes `Txn s ε`. A `Txn`'s failure type is the endpoint's, answered through `ToProblem` with every write discarded. `Handler`'s laws (`step_safe`, `Preserved`, `Isolated`) are restated over `denote`, and `Api.toSys` is over `DbState`.
 - **Default `ToProblem` instances for database failures:** `duplicate` 409 with the holder's `Location`, `stale` 412 with the current `ETag`, `gone` 404, `restricted` 409, `missingRef` 422.
 - **Runtime.** Each request runs its program in one LeanDB transaction; `Env` stays as it is.
