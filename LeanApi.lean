@@ -18,4 +18,5 @@ import LeanApi.Http.Multipart
 import LeanApi.Http.Typed
 import LeanApi.Http.Endpoint
 import LeanApi.Http.DbEndpoint
+import LeanApi.Http.DbProblem
 import LeanApi.Props

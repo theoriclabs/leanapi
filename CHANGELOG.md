@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased: problem defaults for LeanDB failures (LAPI-03)
+
+- `LeanApi.Http.DbProblem`: `ToProblem` for LeanDB's five write failure types, with typed statuses (409/412/404/422) and no payload by default.
+- The opt-in wrappers `WithHolder`, `WithCurrent` and `WithReferrers` reveal the holder, the current row or the referrers, and their types say so.
+- `ToProblem.Blind`: the defaults are proved blind to payloads. `WithHolder.not_blind` proves the wrapper is not.
+
 ## Unreleased: endpoints over LeanDB programs (LAPI-02)
 
 - `LeanApi.Http.DbEndpoint`: a handler may end in `Read s ρ`. Its meaning is `Read.denote` over `DbState s`, so `Api.step_safe`, `Api.inductive_of` and `Api.noninterference` apply to `DbApi.toApi`. `DbHandler` builds the program the runtime runs, with `prog_denote`.

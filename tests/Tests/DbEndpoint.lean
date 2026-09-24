@@ -119,11 +119,31 @@ def join (me : Auth Me) (b : Body NewMember) : Tx App JoinError (Created MemberV
   if n > 3 then Txn.throw .limit
   pure ⟨⟨row.id.toInt64.toInt, row.val.name⟩, s!"/members/{row.id.toInt64.toInt}"⟩
 
+/-! ### LeanDB's failure types answered directly (LAPI-03 defaults) -/
+
+structure Signup where
+  name : String
+  team : Nat
+
+instance : FromBody Signup := FromBody.record (Signup.mk <$> Fields.req "name" <*> Fields.req "team")
+
+/-- Unauthenticated signup that exposes LeanDB's own failure type. -/
+def signup (b : Body Signup) : Tx App (InsertError Member) (Created MemberView) := fun _ => do
+  let row ← Txn.orAbort (Txn.insert Member (checkedMember ⟨b.val.name, ⟨Int64.ofNat b.val.team⟩⟩)) fun e => e
+  pure ⟨⟨row.id.toInt64.toInt, row.val.name⟩, s!"/members/{row.id.toInt64.toInt}"⟩
+
+/-- Remove a team: `.gone` → 404, `.restricted` → 409 without saying by what. -/
+def dropTeam (id : Path Nat) : Tx App (DeleteError App Team) NoContent := fun _ => do
+  let _ ← Txn.orAbort (Txn.delete Team ⟨Int64.ofNat id.val⟩) fun e => e
+  pure ⟨⟩
+
 def api : DbApi App := dbapi! [
   .get "/members/{id}" getMember,
   .get "/team" myTeam,
   .get "/names" nameTaken,
-  .post "/members" join
+  .post "/members" join,
+  .post "/signup" signup,
+  .delete "/teams/{id}" dropTeam
 ]
 
 /-! ## Compile time -/
@@ -154,16 +174,20 @@ theorem api_step_safe (env : Env) (r : Req) (st : DbState App) (hm : r.method.Sa
 /-- An invariant preserved by `join`'s transaction holds in every reachable
     state: reads carry no obligation. -/
 theorem api_inductive (I : DbState App → Prop)
-    (hjoin : ∀ (me : Auth Me) (b : Body NewMember) st, I st → I (Txn.denote (join me b Unit) st).2) :
+    (hjoin : ∀ (me : Auth Me) (b : Body NewMember) st, I st → I (Txn.denote (join me b Unit) st).2)
+    (hsignup : ∀ (b : Body Signup) st, I st → I (Txn.denote (signup b Unit) st).2)
+    (hdrop : ∀ (i : Nat) st, I st → I (Txn.denote (dropTeam ⟨i⟩ Unit) st).2) :
     Props.Inductive (api.toApi.toSys I) I :=
   Api.inductive_of _ (fun _ h => h) (by
     intro e he
     simp only [DbApi.toApi, api, List.map, List.mem_cons, List.not_mem_nil, or_false] at he
-    rcases he with rfl | rfl | rfl | rfl
+    rcases he with rfl | rfl | rfl | rfl | rfl | rfl
     · exact fun _ _ => trivial
     · exact fun _ => trivial
     · exact fun _ => trivial
-    · exact fun me b => hjoin ⟨me⟩ b)
+    · exact fun me b => hjoin ⟨me⟩ b
+    · exact fun b => hsignup b
+    · exact fun i => hdrop i)
 
 /-- What a member may see: which session and member rows authenticate,
     and every member row of their team. -/
@@ -348,6 +372,44 @@ def run : TestM Unit := do
       (Read.denote (Read.count (Query.from Member (s := App))) st1)
       ((Read.denote (Read.count (Query.from Member (s := App))) st0) + 1)
 
+    -- LAPI-03: LeanDB's failures answered by the defaults.
+    let su := fun (nm : String) (team : Nat) => request svc "POST" "/signup"
+      [("Content-Type", "application/json")] (Json.mkObj [("name", .str nm), ("team", Json.num team)]).compress
+    let r ← su "ada" 1
+    checkEq "duplicate → 409" r.status 409
+    checkEq "no Location on a clash" (r.header? "location") none
+    check "no holder id in the body" ((r.body.splitOn s!"{ada.id.toInt64.toInt}").length == 1)
+    check "detail names the index" ((r.body.splitOn "name").length > 1)
+    let r ← su "newbie" 999
+    checkEq "missing team → 422" r.status 422
+    check "missing ref names the field" ((r.body.splitOn "body.team").length > 1)
+    checkEq "signup ok → 201" (← su "newbie" 1).status 201
+    checkEq "delete referenced team → 409" (← request svc "DELETE" "/teams/1").status 409
+    let r ← request svc "DELETE" "/teams/1"
+    check "restricted does not say by what" ((r.body.splitOn "member").length == 1)
+    checkEq "delete missing team → 404" (← request svc "DELETE" "/teams/999").status 404
+    let _ ← must (← DbM.run w (insert Team ⟨"empty"⟩)) "empty team"
+    let empty := ((← must (← DbM.run w (Read.exec (s := App)
+      (Read.all (Query.from Team (s := App))))) "teams").getLast?.map (·.id.toInt64.toInt)).getD 0
+    checkEq "delete unreferenced team → 204" (← request svc "DELETE" s!"/teams/{empty}").status 204
+
+    -- Two worlds that differ only in *who* holds the key answer the same.
+    let other ← freshPath "db-endpoint-other"
+    let w2 ← must (← openDb other (IsSchema.specs App)) "open other"
+    let _ ← must (← DbM.run w2 do
+      let t ← insert Team ⟨"x"⟩
+      let _ ← insert Member ⟨"filler1", t.id⟩
+      let _ ← insert Member ⟨"filler2", t.id⟩
+      let _ ← insert Member ⟨"ada", t.id⟩
+      pure ()) "seed other"
+    let rd2 ← DbConns.open other (IsSchema.specs App) 1
+    let svc2 := api.service rd2 (log := fun _ => pure ())
+    let r1 ← su "ada" 1
+    let r2 ← request svc2 "POST" "/signup" [("Content-Type", "application/json")]
+      (Json.mkObj [("name", .str "ada"), ("team", Json.num 1)]).compress
+    checkEq "clash bodies identical across holders" (r1.status, r1.body) (r2.status, r2.body)
+    rd2.close
+
     -- Faults answer without effect, logged with the request id.
     let before ← must (← DbM.run w (DbState.load (s := App))) "before faults"
     let count := fun st => Read.denote (Read.count (Query.from Member (s := App))) st
@@ -372,5 +434,37 @@ def run : TestM Unit := do
     let after ← must (← DbM.run w (DbState.load (s := App))) "after faults"
     checkEq "faults wrote nothing" (count after) (count before)
     rd.close
+
+/-! ## LAPI-03: the defaults ignore payloads; the wrappers do not -/
+
+/-- With the defaults, the answer to a clash cannot depend on the holder:
+    the isolation obligation never needs the holder in the caller's view. -/
+example : ToProblem.Blind (InsertError.SameButHolder (α := Member)) := InsertError.blind_holder
+
+instance : LocationOf Member := ⟨fun id => s!"/members/{id.toInt64.toInt}"⟩
+
+-- With `WithHolder`, the same proof does not go through: it is stuck at the
+-- payload, two different holders.
+/-- error: Tactic `rfl` failed: The left-hand side
+  ToProblem.problem { val := InsertError.duplicate ix✝ holder✝¹ }
+is not definitionally equal to the right-hand side
+  ToProblem.problem { val := InsertError.duplicate ix✝ holder✝ }
+
+case duplicate.duplicate
+holder✝¹ : LeanDb.Id Member
+ix✝ : Unique Member
+holder✝ : LeanDb.Id Member
+⊢ ToProblem.problem { val := InsertError.duplicate ix✝ holder✝¹ } =
+    ToProblem.problem { val := InsertError.duplicate ix✝ holder✝ } -/
+#guard_msgs (error) in
+example : ToProblem.Blind (fun e₁ e₂ : WithHolder (InsertError Member) =>
+    InsertError.SameButHolder e₁.val e₂.val) := by
+  intro ⟨e₁⟩ ⟨e₂⟩ h
+  cases e₁ <;> cases e₂ <;> simp_all [InsertError.SameButHolder] <;> subst_vars <;> rfl
+
+/-- And it is false outright: two holders at different places. -/
+example : ¬ ToProblem.Blind (fun e₁ e₂ : WithHolder (InsertError Member) =>
+    InsertError.SameButHolder e₁.val e₂.val) :=
+  WithHolder.not_blind Member.Unique.byName ⟨1⟩ ⟨2⟩ (by decide)
 
 end Tests.DbEndpoint

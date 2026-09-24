@@ -46,3 +46,13 @@ An endpoint using them states it in its signature, and the isolation obligation 
 ## Compatibility
 
 Additive. Endpoints that map failures with `orAbort` are unaffected.
+
+## Status (2026-09-23): done on LeanDB M14b (`d33d067`)
+
+Branch `lapi-02-read-effects` (stacked). `LeanApi/Http/DbProblem.lean`:
+- Default `ToProblem` for `InsertError`, `UpdateError`, `SetError`, `AppendError` and `DeleteError`, with the statuses in the table above. No payload: a clash names the index's columns, a missing ref names the field (`body.<field>`), and `restricted` says "still referenced" without saying by what.
+- The wrappers `WithHolder` (`location`), `WithCurrent` (`current`, `etag`) and `WithReferrers` (`referrers`) carry their payload in the problem object.
+- `ToProblem.Blind same` states the isolation obligation at the level of the problem object. The defaults are proved blind to every payload (`InsertError.blind_holder`, `UpdateError.blind_payload`, `DeleteError.blind_referrers`). `WithHolder.not_blind` proves the wrapper is not, and a `#guard_msgs` test pins the stuck proof at the payload.
+- Tests (`tests/Tests/DbEndpoint.lean`): `signup : Body Signup → Tx App (InsertError Member) (Created MemberView)` answers 409 on a duplicate with no `Location` and no holder id, and 422 naming `body.team` on a missing team. `DELETE /teams/{id}` answers 409 without naming the referrer, 404 when missing and 204 otherwise. Two databases where different rows hold the key give byte-identical 409s.
+
+Deviation: the criterion "`Api.noninterference` goes through with the defaults for a view that hides other users" is met by the `Blind` theorems, not by an API-level proof. At `d33d067` every `DbState` is empty in the logic (see LAPI-02), so an API-level isolation proof would be vacuous. `Blind` is stated over `Problem` values, which do not depend on `DbState`, so it holds with real content today.

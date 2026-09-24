@@ -174,3 +174,8 @@ LeanApi.Http.DbEndpoint LeanApi.DbApi.prog_denote
 Tests.DbEndpoint Tests.DbEndpoint.api_step_safe
 Tests.DbEndpoint Tests.DbEndpoint.api_inductive
 Tests.DbEndpoint Tests.DbEndpoint.getMember_isolated
+LeanApi.Http.DbProblem LeanApi.InsertError.blind_holder
+LeanApi.Http.DbProblem LeanApi.UpdateError.blind_payload
+LeanApi.Http.DbProblem LeanApi.DeleteError.blind_referrers
+LeanApi.Http.DbProblem LeanApi.WithHolder.not_blind
+LeanApi.Http.DbEndpoint LeanDb.Txn.denote_go_mapErr
