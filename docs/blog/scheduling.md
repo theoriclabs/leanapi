@@ -39,7 +39,7 @@ schema% Calendar := PersonRow, AvailabilityRow, BookingRow
 
 `BookingRow` stores host and invitee on the row, so the access rule is single-table (the current LeanDB envelope: no child-list filters, no `Option (Ref _)`).
 
-Who may see a booking's details is a policy. Its `rule` is proved equal to the domain's `visibleTo` through the row mapping (`bookingPolicy_rule_eq_visibleTo`). The SQL `scope` is the same predicate written again:
+Who may see a booking's details is a policy. Its `rule` is proved equal to the domain's `visibleTo` through the row mapping for rows whose person ids are non-negative, which covers every id LeanDB issues (`bookingPolicy_rule_eq_visibleTo`). With no condition at all, a row the policy admits is visible in the domain (`bookingPolicy_rule_implies_visibleTo`). The SQL `scope` is the same predicate written again:
 
 <!-- check: excerpt examples/scheduling/Scheduling/Policies.lean -->
 ```lean

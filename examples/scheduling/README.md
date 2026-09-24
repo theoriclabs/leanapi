@@ -28,7 +28,7 @@ Three tables: `PersonRow` (handle + token digest), `AvailabilityRow` (host, slot
 
 **Free/busy is a projection**, not a filter in the handler. `ProjRead` (private constructor) returns `List BusyInterval`. Titles, notes and invitees cannot be named in that type. The SQL still `SELECT`s the entity — LeanDB has no column-restricted SELECT yet — and maps in Lean. The handler cannot observe the hidden fields; pushing the projection into SQL is planned with DESIGN.md §7.5.
 
-**Details and cancel** go through `Policy Calendar PersonId BookingRow` (host or invitee) and a write view `TxnAs`: delete only a row already read through the view. `rule` equals `visibleTo` through `reconstruct` (`bookingPolicy_rule_eq_visibleTo`); `WritePolicy.admits` equals “you are the invitee” through `ofBooking`. The SQL `scope` is written again and is not proved to match `rule`. `PersonRow` has no policy: default deny.
+**Details and cancel** go through `Policy Calendar PersonId BookingRow` (host or invitee) and a write view `TxnAs`: delete only a row already read through the view. `rule` equals `visibleTo` through `reconstruct` for non-negative person ids, which covers every id LeanDB issues (`bookingPolicy_rule_eq_visibleTo`), and implies it unconditionally (`bookingPolicy_rule_implies_visibleTo`); `WritePolicy.admits` equals “you are the invitee” through `ofBooking`. The SQL `scope` is written again and is not proved to match `rule`. `PersonRow` has no policy: default deny.
 
 Read policies reuse `PolicyView.Policy` (`import PolicyView.Policy`, unchanged). Writes and the projection are in this example: `WritePolicy`, `TxnAs`, `ProjRead`. `Auth`'s constructor is private, so `forAuth` acts for the authenticated caller and no one else.
 
