@@ -182,7 +182,7 @@ def inbound (me : Auth Who) (body : Body InboundBody) (now : Now) :
         match ← TxAs.get UserRow (uref body.val.requester) with
         | none => TxAs.throw .unknownRequester
         | some u =>
-          if decide (u.val.role = .customer) then
+          if decide (u.val.role = .customer) && u.val.org == oref who.org then
             let draft := openFromEmail (TicketId.ofNat! 0) who.org (uid u.id) body.val.subject
               body.val.messageId (Instant.ofNow now)
             match ← TxAs.insert? TicketRow (TicketRow.checked draft) .forbidden with
