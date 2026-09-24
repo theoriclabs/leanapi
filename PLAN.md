@@ -441,8 +441,19 @@ Independent of the new language, and worth shipping first. Each gets a regressio
 
 - **Pure database state.** `DbState` holds, per table, the AUTOINCREMENT counter and the rows in id order, with child lists. Also `DbState.WF`: every row decodes, satisfies its invariant, and every constraint holds.
 - **Queries.** `Query ts` holds a `Pred`, typed order keys ending in the id, and a `Window`; `Agg` is `rows`, `count`, `exists` or `first`. The meaning extends `selectSpec`. The SQL pushes the window and aggregate only for exact plans.
-- **Writes.** `WriteOp` (`insert`, `update`, `append`, `patch`, `delete`) with `denote : DbState → Except DbError (β × DbState)`. It models id assignment, CAS with `IS` semantics, list replacement or growth, unique/foreign-key/restrict/cascade, enum checks and invariants, and which error comes first.
-- **Programs.** `Prog` is a free monad. `Reads := Prog ReadOp` has no write constructor; `Txn` has reads and writes. `Reads` executes in one deferred transaction; `Txn` under `BEGIN IMMEDIATE`, with a SAVEPOINT per write.
+- **Typed schema symbols.** Unique indexes become declarations (`unique User.byName := name`), generating:
+  - `Unique α`, with a `Key` type per index;
+  - `ForeignKey α` from `Ref` fields, `ListField α`, `ReferencedBy s α`;
+  - `Checked α`, a value with its invariant.
+- **Reads.** `get`, `lookup`, `first`, `all`, `page`, `count`, `exists`, typed by result (`Option (Stored α)`, `List`, `Page`, `Nat`, `Bool`), with no failure channel. Typed joins follow declared foreign keys.
+- **Writes, each with its own failure type derived from the schema** (QUERIES.md §3.3):
+  - `insert` fails with `InsertError`; `update` (compare-and-swap) with `UpdateError`, including `stale current`.
+  - `set`/`patch` on rows read in the transaction fail with `SetError α fs`: no `stale`, and only the constraints over the written fields `fs`.
+  - `append` fails with `AppendError`, `delete` with `DeleteError` naming who references the row.
+  - Writes take `Checked α`, built at runtime by `check` or from a proof by `Checked.of`.
+- **Meaning.** Each write's meaning is `DbState → Except E (β × DbState)`. It models id assignment, compare-and-swap with `IS` semantics, list growth, unique/reference/restrict/cascade and enum checks, and the declared order in which failures are reported.
+- **Programs.** `Read s α` has no write constructor and no failure; `Txn s ε α` declares its failure type and is all or nothing (`throw`, `orAbort`, `orElse`). `Current α` handles cannot leave their transaction. `Read` executes in one deferred transaction; `Txn` under `BEGIN IMMEDIATE`, with a SAVEPOINT per write, and constraints checked explicitly in the declared order.
+- **Faults.** `DbFault` (locking, I/O, corruption, schema mismatch) is outside every program type: the request aborts with no effect.
 - **Surface syntax.** The lambda form of `select` elaborates to a `Query` and is refused when it cannot be planned exactly where exactness matters (windows, counts).
 - **The execution-equals-meaning harness.** Random well-formed `DbState`s and random `Query`/`WriteOp`/`Prog` values run against SQLite and against `denote`; results and final states are compared. It ships in LeanDB and runs in its CI.
 
@@ -459,11 +470,14 @@ Proved in LeanDB and audited as LeanAPI's theorems are:
 - **Write algebra:** fresh ids; CAS succeeds exactly when the stored row equals `old`; `get` after `insert` or `delete`.
 - **Programs:** `run p = denote p` for `Reads` and `Txn`, by induction from the per-operation trusted step.
 
+The exactness law is stated per failure constructor: each failure is reported exactly when its condition holds, and the reported one is the first in the declared order.
+
 **Exit:** all laws proved, with no `sorry` and only the standard axioms. The trusted base of LeanDB is exactly: per-operation execution equals meaning on well-formed states (checked by the M14 harness), and SQLite's semantics.
 
 ### M16: LeanAPI on LeanDB programs
 
-- **Endpoints.** `Reads`/`Writes` in `LeanApi.Http.Endpoint` become LeanDB `Reads`/`Txn` over a schema. `Handler`'s laws (`step_safe`, `Preserved`, `Isolated`) are restated over `denote`. `Api.toSys` is over `DbState`.
+- **Endpoints.** In `LeanApi.Http.Endpoint`, `Reads` becomes LeanDB's `Read s` and `Writes` becomes `Txn s ε`. A `Txn`'s failure type is the endpoint's, answered through `ToProblem` with every write discarded. `Handler`'s laws (`step_safe`, `Preserved`, `Isolated`) are restated over `denote`, and `Api.toSys` is over `DbState`.
+- **Default `ToProblem` instances for database failures:** `duplicate` 409 with the holder's `Location`, `stale` 412 with the current `ETag`, `gone` 404, `restricted` 409, `missingRef` 422.
 - **Runtime.** Each request runs its program in one LeanDB transaction; `Env` stays as it is.
 - **Proof carry-over.** A framework theorem: for a well-formed state, the running service's answer and new state equal `Api.step`'s. Every API theorem therefore holds of production, relative to LeanDB's trusted step.
 - **Isolation.** `SameView` is defined from scoped queries. Restricted logical reads (every query issued for `p` is scoped to `p`) are proved on the `Pred` values.

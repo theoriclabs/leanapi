@@ -75,11 +75,212 @@ Ranked, with concrete failures where they exist.
 7. **Footprints cover read filters only.** They are not attached to query values, and writes have none.
 8. **No projections or aggregates** beyond count/exists. This is performance only; it doesn't affect meaning.
 
-## 3. The language
+## 3. The interface
 
-All of it is data, in LeanDB. Names reuse what exists (`Pred`, `Footprint`, `Entity`, `Stored`, `Id`, `RowsOf`). The sketches give shape, not a final API.
+**The design rule:** an operation's type says exactly what it answers and exactly how it can fail. There is nothing else to handle, and nothing in the type that cannot happen.
 
-### 3.1 Database state
+- **Reads answer `Option` or the value.** On a well-formed database they cannot fail, so they have no error channel at all.
+- **Every write has its own failure type,** derived from the schema: which unique index clashed, which reference is missing, who still references the row, and the current row when a compare-and-swap loses.
+- **Failures that can't happen are absent from the type.** A table without unique indexes has no `duplicate` failure. Invalid values can't reach a write, because writes take checked values. A row read inside the same transaction can't be stale.
+- **Infrastructure faults are not failures of the program.** A lock timeout, an I/O error or a corrupt file is outside every program's type (§3.8).
+
+The sketches give shape, not final names.
+
+### 3.1 Declaring a schema: the failures come from it
+
+```lean
+structure User where
+  name  : UserName
+  email : Email
+  team  : Ref Team
+  deriving LeanDb.Entity
+
+unique User.byName  := name
+unique User.byEmail := email
+```
+
+From these declarations LeanDB generates typed symbols. Today unique indexes are string lists (`IndexSpec`); they become declarations.
+
+| Generated | Meaning | For `User` |
+|---|---|---|
+| `Unique User` | one constructor per unique index | `byName`, `byEmail` |
+| `Unique.Key : Unique α → Type` | the key's type, computed from the index | `byName ↦ UserName`, `byEmail ↦ Email` |
+| `ForeignKey User` | one constructor per `Ref` field, with its target entity | `team` (target `Team`) |
+| `ListField User` | one constructor per child list | (none) |
+| `ReferencedBy s User` | every foreign key in schema `s` that points at `User` | e.g. `Membership.user` |
+| `Checked User` | a `User` that satisfies its invariant: `{u : User // User.Invariant u}` | built by `User.check` |
+
+`Field α` (typed column symbols) already exists; it types filters and ordering keys.
+
+### 3.2 Reads: answer the value or `none`, never fail
+
+| Operation | Type | Answers |
+|---|---|---|
+| `get id` | `Read s (Option (Stored α))` | the row with that id, or `none` |
+| `lookup ix key` | `Read s (Option (Stored α))`, where `key : ix.Key` | the row holding that unique key, or `none` |
+| `first q` | `Read s (Option (Stored α))` | the first row in the query's order, or `none` |
+| `all q` | `Read s (List (Stored α))` | every matching row, in order |
+| `page q p` | `Read s (Page (Stored α))` | one page and the total, from the same snapshot |
+| `count q` | `Read s Nat` | how many rows match |
+| `exists q` | `Read s Bool` | whether any row matches |
+
+A **query** is typed by the rows it returns:
+
+```lean
+def openTickets (me : Id User) : Query s Ticket :=
+  .from Ticket |>.where (·.assignee == some me && ·.status == .open) |>.orderBy (.desc .created)
+
+def withTeam (q : Query s User) : Query s (Stored User × Stored Team) :=
+  q.join .team          -- follows the `team` foreign key; the result type says so
+```
+
+- `where` takes a Lean predicate over the row. It is elaborated to a `Pred` and refused when it cannot be planned exactly, so what SQL filters is what the predicate says.
+- `orderBy` takes typed field symbols (`.created : Field Ticket`), and every order ends with the id.
+- `join` follows a declared foreign key, so the pair type in the result is determined by the schema.
+
+### 3.3 Writes: each with its own success value and its own failures
+
+| Operation | Type | Use it when |
+|---|---|---|
+| `insert v` | `Txn s ε (Except (InsertError α) (Stored α))` | creating a row |
+| `update old new` | `Txn s ε (Except (UpdateError α) (Stored α))` | changing a row read *before* this transaction (the client sent its revision): compare-and-swap |
+| `set row new` | `Txn s ε (Except (SetError α .all) (Current α))` | replacing a row read *in* this transaction |
+| `patch row { f := v, … }` | `Txn s ε (Except (SetError α fs) (Current α))`, where `fs` is the set of fields written | changing some fields of a row read in this transaction |
+| `append old new` | `Txn s ε (Except (AppendError α) (Stored α))` | growing child lists (a move log) |
+| `delete id` | `Txn s ε (Except (DeleteError s α) (Stored α))` | removing a row; answers the deleted row |
+
+`v` and `new` are `Checked α`, so an invariant can never fail at a write. A `Checked α` is built one of two ways:
+- at runtime, by `α.check v : Except (InvalidFields α) (Checked α)`, a domain failure that names the failing fields;
+- from a proof, by `Checked.of v h`, when the domain has already proved the invariant (for example with `preserves`). No check runs.
+
+The failure types:
+
+```lean
+inductive InsertError (α) [Entity α] where
+  | duplicate (ix : Unique α) (holder : Id α)   -- the row that already holds that key
+  | missingRef (fk : ForeignKey α)              -- the referenced row does not exist
+
+inductive UpdateError (α) [Entity α] where
+  | stale (current : Stored α)                  -- changed since `old`; here is what it is now
+  | gone                                        -- deleted since `old`
+  | duplicate (ix : Unique α) (holder : Id α)
+  | missingRef (fk : ForeignKey α)
+
+/-- Failures of writing the fields `fs` of a row read in this transaction.
+    No `stale`: nothing else can change the row before the transaction ends. -/
+inductive SetError (α) [Entity α] (fs : Fields α) where
+  | gone                                                          -- this transaction deleted it
+  | duplicate (ix : Unique.Touching fs) (holder : Id α)           -- only indexes over written fields
+  | missingRef (fk : ForeignKey.Within fs)                        -- only references among written fields
+
+inductive AppendError (α) [Entity α] where
+  | stale (current : Stored α)
+  | gone
+  | notAppend (list : ListField α)              -- that list would shrink or change, not grow
+
+inductive DeleteError (s) (α) [Entity α] where
+  | gone
+  | restricted (by : ReferencedBy s α) (rows : Nat)   -- still referenced, by these rows
+```
+
+Every constructor carries what the caller needs: the holder of a clashing key (for a `409` with a `Location`), the current row of a lost compare-and-swap (for a `412` with the current `ETag`), which reference is missing, who blocks a delete.
+
+**The failures of a write depend on what it writes.** `patch` records the written fields in its type (`fs`, computed from the `{ f := v, … }` literal). `Unique.Touching fs` has a constructor only for unique indexes over a written field, and `ForeignKey.Within fs` only for references among the written fields. Writing a game's `moves` and `rev` can't clash on a unique key or break a reference, and its type says so. Writing `resigned := some p` can break a reference, and its type says that too.
+
+**Absent failures are absent types.**
+- If `α` declares no unique index, `Unique α` has no constructors, so `duplicate` cannot be built and a `match` need not mention it (Lean checks this). The same holds for `missingRef` with no `Ref` fields, `notAppend` with no child lists, and `restricted` when nothing references `α`.
+- When a failure type is empty altogether, `insertNew v : Txn s ε (Stored α)` needs no handling. It requires `[IsEmpty (InsertError α)]`, which is found automatically.
+
+**Schema changes surface at every write site.** Adding `unique User.byEmail` adds a constructor to `Unique User`. Every exhaustive `match` on `InsertError User` then stops compiling until the new failure is handled. A new constraint cannot be silently forgotten in some handler.
+
+### 3.4 Rows read in this transaction
+
+Inside a `Txn`, reads answer `Current α` rather than `Stored α`. A `Current α` is a row this transaction has seen. Since a transaction is serializable, nothing else can change the row before it ends. That is why `set` and `patch` (on a `Current α`) have no `stale`, while `update` (on a `Stored α` from outside) does.
+
+- `Current α` coerces to `Stored α`.
+- It cannot leave its transaction. `Txn` is indexed by a transaction variable, and `Txn.run` takes a program that works for every such variable, as the `ST` monad does. So a `Current α` from one request cannot reach the next one.
+- **The one failure types cannot rule out is `gone`.** If this transaction deleted the row, a later write through its handle answers `gone`. Ruling that out statically would need linear types (a handle consumed by `delete`), which Lean does not have. So `SetError` keeps `gone`, and it arises in exactly that case. A program that never deletes the row handles it in one line.
+
+### 3.5 Programs: failures are declared
+
+```lean
+Read s α        -- reads only; one snapshot; total on a well-formed database
+Txn s ε α       -- reads and writes; may abort with ε; all or nothing
+```
+
+- `Read s α` embeds into `Txn s ε α`.
+- `throw (e : ε) : Txn s ε α` aborts, discarding every write of the transaction.
+- `op.orAbort f`, with `f : E → ε`, turns an operation's failure into the program's. Because `f` is a function on `E`, handling is exhaustive by construction.
+- `op.orElse g` recovers instead (for example, on `duplicate`, return the existing holder).
+
+The program's declared `ε` is its failure type. At the API it is the endpoint's failure type, with `ToProblem ε` giving each constructor a typed 4xx/5xx status.
+
+### 3.6 Examples
+
+**Register: a clash on the name becomes a typed domain failure.**
+
+```lean
+def register (u : Body Register) : Txn Accounts RegisterError (Created UserView) := do
+  let row ← insert (← User.check u.val |>.orAbort .invalid) |>.orAbort fun
+    | .duplicate .byName _ => .nameTaken
+  return ⟨UserView.of row⟩
+```
+
+`User` has one unique index and no references, so the `match` above is exhaustive. Add `unique User.byEmail`, and this line stops compiling until an `.emailTaken` is chosen.
+
+**Read a game: `none` is the only non-answer.**
+
+```lean
+def readGame (me : Auth PlayerId) (id : Path GameId) : Read Games (Except GameError (Versioned GameView)) := do
+  match ← first (Game.visibleTo me.val |>.where (·.id == id.val)) with
+  | some g => return .ok g.versioned
+  | none   => return .error .hidden
+```
+
+**Play a move: the only stale case is the one the client can cause.**
+
+```lean
+def playMove (me : Auth PlayerId) (rev : IfMatchRequired Revision) (mv : Body MoveBody) (id : Path GameId) :
+    Txn Games GameError (Versioned GameView) := do
+  let some g ← first (Game.visibleTo me.val |>.where (·.id == id.val)) | throw .hidden
+  let g' ← PrivateGames.playMove me.val rev.val mv.val.cell g.val |>.orAbort .domain
+  let row ← patch g { moves := g'.moves, rev := g'.rev } |>.orAbort fun
+    | .gone => .hidden      -- only if this program had deleted `g`; it didn't, but the type can't know
+  return row.versioned
+```
+
+- The client's revision is checked by the domain: `playMove` refuses a stale revision with its own typed failure.
+- The database write is a `patch` on a row read in this transaction. It writes `moves` and `rev`, which no unique index covers and which are not references. So the only failure left in its type is `gone`.
+- The new values need no runtime check. `Valid.preserved_playMove` already proves that `g'` satisfies `Game`'s invariant, so the `Checked` evidence comes from the proof (`Checked.of`) rather than from `Game.check`.
+
+**Delete a note: who blocks it is in the type.**
+
+```lean
+def deleteNote (me : Auth User) (id : Path NoteId) : Txn Notes NoteError NoContent := do
+  let some n ← first (Note.ownedBy me.val |>.where (·.id == id.val)) | throw .notFound
+  let _ ← delete n.id |>.orAbort fun
+    | .gone => .notFound
+    | .restricted (.comment) k => .hasComments k
+  return {}
+```
+
+### 3.7 Meaning
+
+- `Read.denote : Read s α → DbState s → α`. It is total, and needs no error type, on a well-formed state.
+- `Txn.denote : Txn s ε α → DbState s → Except ε α × DbState s`. An abort returns the original state.
+- **Each failure constructor is produced exactly when its condition holds in the meaning.** For example, `insert` answers `.duplicate ix h` exactly when the row `h` already holds `ix.keyOf v`. This is a law, stated per constructor, and it is what makes the error types trustworthy: a handler's `match` covers exactly the situations that occur.
+- Where several failures apply, the meaning fixes which is reported (index declaration order, then foreign keys in field order), and execution reports the same one. Execution checks constraints explicitly and in that order, inside the transaction, rather than relying on which constraint SQLite happens to trip first.
+
+### 3.8 Faults are not failures
+
+Execution can also stop for reasons outside the program: the database is locked beyond the timeout, an I/O error, a corrupt file, a schema mismatch found at startup, a poisoned connection. These are `DbFault`s.
+
+- They are not part of `Read` or `Txn` types, because the meaning never produces them.
+- A fault aborts the whole request with no effect (it is one transaction), and the runtime answers `503`.
+- The trusted step is stated accordingly: *if execution completes, its result and new state are the meaning's.*
+- A row that fails to decode would also be a fault. On a well-formed state it cannot happen (§3.9), so if it ever does, it signals a broken assumption (a raw-SQL edit, a bad migration), and the runtime logs it loudly.
+
+### 3.9 Database state and well-formedness
 
 ```lean
 /-- A table's contents: the AUTOINCREMENT counter, and rows by id (in id order). -/
@@ -88,87 +289,23 @@ structure Table (α : Type) [Entity α] where
   rows : List (Stored α)            -- sorted by id; ids < next; child lists attached
 
 /-- The whole database, one table per entity of the schema. -/
-structure DbState (schema : Schema) where
-  tables : (t : schema.Tables) → Table t.ty
+structure DbState (s : Schema) where
+  tables : (t : s.Tables) → Table t.ty
 
-/-- Every row decodes, satisfies its invariant, and every constraint of the
-    schema holds (unique indexes, foreign keys, enum checks). -/
-def DbState.WF (s : DbState schema) : Prop
+/-- Every row decodes and is `Checked`, and every constraint holds:
+    unique keys, references, enum checks. -/
+def DbState.WF (st : DbState s) : Prop
 ```
 
-Production state is abstracted to `DbState` by reading every table in id order, which is `fetchAll`'s order. Everything below is defined on `DbState`.
+Production state is abstracted to `DbState` by reading every table in id order, which is `fetchAll`'s order. Every write preserves `WF` (a law, §3.10). An empty database is well-formed, and a migration must establish it. So `WF` is an invariant of every reachable state, which is what makes reads total and decode failures impossible.
 
-### 3.2 Queries
+### 3.10 Compilation
 
-```lean
-/-- A total order: typed keys, then ids (so results are deterministic). -/
-inductive Key (ts : List Type) where
-  | asc  {τ} [LawfulSqlOrd τ] (c : Pred.Col ts τ)
-  | desc {τ} [LawfulSqlOrd τ] (c : Pred.Col ts τ)
+- **Reads.** WHERE is `render pred.approx`; ORDER BY is the keys, then the ids. LIMIT/OFFSET and COUNT/EXISTS are pushed into SQL only when the plan is exact (`approx = pred`); otherwise they run in Lean after the filter. `lookup ix key` uses the unique index.
+- **Writes.** Constraints are checked explicitly, in the meaning's order, inside the transaction: `lookup` for each unique index, an existence check for each reference, a count per referencing key for `delete`. Then the statement runs, so the reported failure is the meaning's. `update` is a compare-and-swap on the parent columns (`IS` semantics); on no match, a `get` distinguishes `stale current` from `gone`.
+- **Programs.** A `Read` runs in one deferred transaction on a reader connection. A `Txn` runs under `BEGIN IMMEDIATE`, with a SAVEPOINT around each write so a failed write that the program recovers from (`orElse`) leaves nothing behind. An abort rolls back everything.
 
-structure Query (ts : List Type) where
-  pred : Pred ts
-  order : List (Key ts) := []
-  window : Window := {}             -- offset, limit
-
-/-- What a query answers. -/
-inductive Agg (ts : List Type) : Type → Type 1 where
-  | rows : Agg ts (Array (Rows ts))
-  | count : Agg ts Nat
-  | exists : Agg ts Bool
-  | first : Agg ts (Option (Rows ts))
-```
-
-**Meaning:** `window (sortBy keys-then-ids (filter pred.denote (gather s)))`, followed by the aggregate (`id`, `size`, `!isEmpty`, `head?`). This is `selectSpec` with order, window and aggregate added, and it reuses `finishRows`.
-
-**Compilation:**
-- WHERE is `render pred.approx`; ORDER BY is the keys, then the ids.
-- **LIMIT/OFFSET and COUNT/EXISTS are pushed into SQL only when the plan has no residual**, and the query is a single table or a pushed join. Otherwise they run in Lean after the filter. This fixes gap 3 by construction.
-- The query *is* its `Pred`, as in `selectP`, so a plan can no longer disagree with a lambda. The lambda form becomes surface syntax elaborated into a `Query`, rejected if it cannot be planned exactly (no silent `opaque` in positions that would change the meaning of a pushed window or count).
-
-### 3.3 Writes
-
-```lean
-inductive WriteOp : Type → Type 1 where
-  | insert [Entity α] (v : α) : WriteOp (Id α)
-  | update [Entity α] (old : Stored α) (new : α) : WriteOp Unit         -- CAS on old's parent columns
-  | append [Entity α] (old : Stored α) (new : α) : WriteOp Unit         -- lists only grow
-  | patch  [Entity α] (id : Id α) (sets : Patch α) (guard : Pred [α]) : WriteOp PatchResult
-  | delete [Entity α] (id : Id α) : WriteOp Unit
-```
-
-**Meaning:** `WriteOp.denote : DbState → Except DbError (β × DbState)`. It models what SQLite and LeanDB do:
-- `insert` assigns `next` and increments it; ids are never reused.
-- `update` and `append` fail with `.stale` unless the stored parent columns equal `old`'s, using `IS` semantics.
-- A unique-index clash is `.duplicate`, a missing reference is `.missingRef`, and deleting a referenced row is `.restricted`. Child rows cascade.
-- A failed invariant or enum check is an error, not a stored row.
-- When several constraints fail, the error LeanDB reports first is the one the meaning reports.
-
-### 3.4 Programs: read-only by type
-
-```lean
-inductive Prog (Op : Type → Type 1) (α : Type) where
-  | pure (a : α)
-  | bind (op : Op β) (k : β → Prog Op α)
-  | abort (e : DbError)
-
-inductive ReadOp : Type → Type 1 where
-  | query [RowsOf ts] (q : Query ts) (a : Agg ts β) : ReadOp β
-  | get [Entity α] (id : Id α) : ReadOp (Option (Stored α))
-
-abbrev Reads := Prog ReadOp                    -- no write constructor exists
-abbrev Txn   := Prog (fun β => ReadOp β ⊕ WriteOp β)
-```
-
-A later query can depend on an earlier result (`bind`), so this is a free monad, not an applicative plan. `Reads` has no way to write, so read-only is a property of the type, which is what `Api.step_safe` needs.
-
-**Meaning:** `Reads.denote : DbState → Except DbError α` and `Txn.denote : DbState → Except DbError (α × DbState)`. They run in sequence, reads see earlier writes, and an `abort` or error discards every write: all or nothing.
-
-**Execution:**
-- A `Reads` program runs in one deferred read transaction on a reader connection, so it sees one snapshot.
-- A `Txn` runs under `BEGIN IMMEDIATE`, with a SAVEPOINT around each write. A failed write rolls back to its SAVEPOINT; an abort rolls back the transaction.
-
-### 3.5 Laws: proved once, in LeanDB
+### 3.11 Laws: proved once, in LeanDB
 
 | Law | Statement | Status now |
 |---|---|---|
@@ -178,28 +315,40 @@ A later query can depend on an earlier result (`bind`), so this is a free monad,
 | Codecs | `fromCol (toCol v) = .ok v`; order preservation for `LawfulSqlOrd` | to add as fields of `ColCodec`/`SqlOrd`; bound or remove `SqlOrd Nat` |
 | Frame (reads) | a query's meaning depends only on the tables in its footprint | to prove |
 | Frame (writes) | a write changes only its own table, its children, and cascades | to prove |
-| Well-formedness | every `WriteOp` that succeeds preserves `WF` | to prove; makes decode and invariant failures unreachable |
-| Write algebra | fresh ids; CAS succeeds iff the row equals `old`; `get` after `delete` is `none`; … | to prove |
+| Well-formedness | every write that succeeds preserves `WF` | to prove; makes reads total and decode failures unreachable |
+| Failure exactness | each failure constructor is produced exactly when its condition holds (`insert` answers `.duplicate ix h` iff `h` holds `ix.keyOf v`; `update` answers `.stale c` iff the row exists and differs from `old`, with `c` the current row; …), and the reported one is the first in the declared order | to prove, per constructor |
+| Write algebra | fresh ids; compare-and-swap succeeds iff the row equals `old`; `get` after `insert`/`delete`; `set` on a `Current` row never `stale` | to prove |
 | Programs | `run p = denote p` by induction, from the per-operation fact below | to prove |
 
 **Trusted, and differential-tested once in LeanDB:**
-- On a well-formed state, each operation's execution equals its meaning. Random `DbState`s and random `Query`/`WriteOp` values are run against SQLite and against `denote`, and compared. This replaces every per-app differential test.
+- On a well-formed state, each operation's execution, when it completes, equals its meaning: the same answer, the same failure constructor with the same payload, the same new state. Random `DbState`s and random reads and writes are run against SQLite and against `denote`, and compared. This replaces every per-app differential test.
 - SQLite executes the SQL that `render` produces with standard semantics, and is serializable under one writer.
 
 ## 4. Carrying proofs to the API
 
-In LeanAPI, `Reads` and `Writes` become the LeanDB program types:
+In LeanAPI, an endpoint's effect becomes a LeanDB program over the app's schema:
 
 ```lean
--- LeanApi.Http.Endpoint, over a LeanDB schema instead of an in-memory σ
-def Reads (schema) (α) := LeanDb.Reads α
-def Writes (schema) (α) := LeanDb.Txn α
+def readGame (me : Auth PlayerId) (id : Path GameId) : Read Games (Except GameError (Versioned GameView))
+def playMove (me : Auth PlayerId) (rev : IfMatchRequired Revision) (mv : Body MoveBody) (id : Path GameId) :
+    Txn Games GameError (Versioned GameView)
 ```
 
-- **The pure meaning of an endpoint** is `Env → Req → DbState schema → Res × DbState schema`, using `denote`. `Api.toSys` is a `Props.Sys` over `DbState`.
-- **The `Handler` laws are restated over `denote`.** Every existing API theorem keeps its shape: `Api.step_safe` (no write constructor), `Api.inductive_of` (`Preserved I` for a `Txn` means its meaning preserves `I`), and `Api.noninterference`.
-- **Production runs the same value through LeanDB**, in one transaction per request.
-- **The carry-over theorem:** by `run = denote` (proved by induction from the per-operation trusted step), every API theorem about `Api.toSys` holds of the running service, for requests that reach the handler, on well-formed states. Well-formedness is itself an invariant, by the write-algebra law.
+- **A `Read` endpoint** answers its `Except ε α` as today: `α` through `ToResponse`, `ε` through `ToProblem`. It cannot write, by type, so `Api.step_safe` holds as now.
+- **A `Txn s ε α` endpoint** either commits and answers `α`, or aborts with `ε`, which is answered through `ToProblem ε` with every write discarded. So the endpoint's failure type *is* the program's failure type.
+- **LeanAPI gives default `ToProblem` instances for the database failures,** with typed statuses:
+  - `InsertError`: `duplicate` is 409 with `Location` of the holder; `missingRef` is 422.
+  - `UpdateError`: `stale` is 412 with the current `ETag`; `gone` is 404; `duplicate` is 409.
+  - `DeleteError`: `gone` is 404; `restricted` is 409, naming what references the row.
+
+  An endpoint can expose them directly (`Txn s (InsertError User) …`) or map them to its own domain failures with `orAbort`.
+- **The pure meaning of an endpoint** is `Env → Req → DbState s → Res × DbState s`, from `denote`. `Api.toSys` is a `Props.Sys` over `DbState`.
+- **The `Handler` laws are restated over `denote`,** and every existing API theorem keeps its shape:
+  - `Api.step_safe`: `Read` has no write constructor.
+  - `Api.inductive_of`: `Preserved I` for a `Txn` means its meaning preserves `I`.
+  - `Api.noninterference`: unchanged.
+- **Production runs the same value through LeanDB,** in one transaction per request. A `DbFault` aborts the request with no effect and answers 503.
+- **The carry-over theorem.** From `run = denote`, which is proved by induction from the per-operation trusted step: when a request completes, the running service's answer and new state are `Api.step`'s, on well-formed states. Well-formedness is itself an invariant, by the well-formedness law. So every API theorem about `Api.toSys` holds of production, relative to LeanDB's trusted step.
 
 **Isolation gets two things from values:**
 - **Cheaper proofs.** Frame lemmas mean a query whose predicate is scoped to `p` (it implies `visible p`) returns the same rows in any two states that agree on `p`'s rows. `SameView` can then be *defined* from the scoped queries rather than written by hand.
@@ -216,8 +365,8 @@ def Writes (schema) (α) := LeanDb.Txn α
 | Own writes | reads inside a `Txn` see its earlier writes, in the meaning and in SQLite |
 | Partial failure | a SAVEPOINT around each write; all-or-nothing per request |
 | Concurrency | one writer (SQLite plus the runtime's single writer), so executions are serializable; the pure meaning is sequential |
-| Constraint violations | modeled in `WriteOp.denote` with the error LeanDB reports |
-| Undecodable rows | excluded by `WF`, and `WF` is preserved by every write; migrations must establish it |
+| Constraint violations | typed per operation and derived from the schema (§3.3); checked explicitly in the declared order, so execution reports the meaning's failure |
+| Undecodable rows | excluded by `WF`, which every write preserves and migrations must establish; if one ever appears it is a `DbFault` (§3.8), not a failure in any program type |
 | Numeric range | codecs carry their range; `Nat` columns are bounded (or `SqlOrd Nat` is removed) |
 | Connections | a public read snapshot; readers locked per connection; no writer connection handed out as a reader |
 | Migrations | a migration is a function `DbState s → DbState s'` that must establish `WF` and carry declared invariants (later) |
@@ -236,7 +385,16 @@ These LeanDB bugs are independent of the new language:
 
 ## 7. What changes in private-games
 
-- **`gamesApi` is written over the LeanDB schema** (`Storage/Schema.lean`) with `Reads`/`Txn` values. For example, `readGame` becomes one `Query [GameRow]` with `pred := visiblePred me ∧ id = gid`.
+- **`gamesApi` is written over the LeanDB schema** (`Storage/Schema.lean`) with `Read`/`Txn` programs, as in §3.6. For example, `readGame` becomes one `first` over `GameRow`, scoped by `visibleTo me` and the id.
+- **Idempotency becomes an ordinary typed write.** The receipts table declares `unique ReceiptRow.byKey := (actor, op, key)`. Recording a receipt is an `insert`, and its `duplicate .byKey holder` failure *is* the replay:
+
+  ```lean
+  insert receipt |>.orElse fun
+    | .duplicate .byKey h => replayOrRefuse h      -- same fingerprint: replay; otherwise 422
+    | .missingRef .actor  => throw .hidden         -- the actor was deleted
+  ```
+
+  The unique index, the error type and the retry logic are the same thing, and the exhaustive match keeps them in step.
 - **The theorems carry over.** GET safety, `api_allValid`, `api_uniqueIds` and `api_noninterference` are re-established on `DbState`; `Model.World` becomes redundant.
 - **Deleted:**
   - `Model/` (after its remaining theorems move: keyed replay, `movesGrow`, trace isolation);
