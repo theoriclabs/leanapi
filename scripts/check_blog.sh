@@ -59,14 +59,10 @@ def header_to_example(src, name):
             binders.append(rest[k:j + 1]); k = j + 1
         else: break
     if k >= len(rest) or rest[k] != ":": return None
-    ty = rest[k + 1:]
-    depth, cut = 0, None
-    for idx, c in enumerate(ty):
-        if c in opens: depth += 1
-        elif c in closes: depth -= 1
-        elif depth == 0 and ty[idx:idx + 2] == ":=": cut = idx; break
-    ty = (ty if cut is None else ty[:cut]).strip()
-    stmt = f"∀ {' '.join(binders)}, {ty}" if binders else ty
+    # The block has no body, so the rest is the whole type. It may contain
+    # `:=` of its own (`let (a, s) := …` in a statement).
+    ty = rest[k + 1:].strip()
+    stmt = f"∀ {' '.join(binders)}, ({ty})" if binders else ty
     tries = " | ".join(f"exact @{name}" + " _" * n for n in range(4))
     return f"example : {stmt} := by\n  first | {tries}"
 

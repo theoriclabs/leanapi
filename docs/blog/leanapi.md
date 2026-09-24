@@ -5,7 +5,8 @@ import PrivateGames.Api
 import PrivateGames.ApiProofs
 import PrivateGames.ApiIsolation
 import PrivateGames.Storage.Schema
-open LeanApi LeanApi.Props PrivateGames PrivateGames.Api PrivateGames.Storage
+import PrivateGames.DbApi
+open LeanDb LeanApi LeanApi.Props PrivateGames PrivateGames.Api PrivateGames.Storage
 -->
 <!--
 Every `lean` block below is checked by `scripts/check_blog.sh`, as marked just
@@ -13,8 +14,12 @@ above it:
 - `excerpt <file>`: the block appears verbatim in that file of the repository;
 - `signature <name>`: the block is the exact statement of that declaration;
 - `compile`: the block builds on its own.
-Several blocks describe code that does not exist yet (tickets LAPI-02…08), so
-the check fails until that work is done. It must pass before this is published.
+The code blocks match the LeanDB-backed API (`PrivateGames/DbApi.lean`, which
+LAPI-08 moves to `Api.lean`). Four theorem statements describe proofs that do
+not exist yet: `api_noninterference` and `api_restricted_reads` (LAPI-07),
+`api_keyed_replay_after` (LAPI-08) and `DbApi.serve_eq_step` (LAPI-06). They
+wait on LeanDB M15, which gives `DbState` real content in proofs. The check
+fails until then. It must pass before this is published.
 -->
 
 # LeanAPI
@@ -39,10 +44,10 @@ I'll show two such properties with a small example, and then how the proofs reac
 
 An endpoint is a plain function. Its type tells you what the request does:
 
-<!-- check: signature PrivateGames.Api.playMove -->
+<!-- check: signature PrivateGames.DbApi.playMove -->
 ```lean
-def playMove (me : Auth PlayerId) (rev : IfMatchRequired ETagRev) (mv : Body MoveBody) (id : Path GameId)
-    (key : KeyHeader) : Txn Games GameError (Replayed (Versioned GameView))
+def playMove (me : Auth PlayerId) (rev : IfMatchRequired ETagRev) (body : Body MoveBody) (id : Path GameId)
+    (key : KeyHeader) : Tx Games GameError (Replayed (Versioned GameView))
 ```
 
 Read the signature:
@@ -50,7 +55,7 @@ Read the signature:
 - they must send the revision of the game they saw (`If-Match`);
 - the body is decoded and validated as a move;
 - the game id comes from the path, and a retry key from a header;
-- it is a database transaction (`Txn`) over the `Games` schema: it commits or rolls back as a whole;
+- it is a database transaction (`Tx`) over the `Games` schema: it commits or rolls back as a whole;
 - it answers the updated game with its `ETag`, possibly replayed from an earlier identical request, or fails with one of the cases of `GameError`.
 
 There is no request object, response object or SQL in the body. A `GET` endpoint whose handler can write doesn't compile.
@@ -66,35 +71,40 @@ The rule, as it appears in the code:
 def visible (p : PlayerId) (g : Game) : Bool := g.isParticipant p
 ```
 
-The same rule, as a database query:
+The same rule, as a database query, and the one game a player may read:
 
-<!-- check: excerpt examples/private-games/PrivateGames/Api.lean -->
+<!-- check: excerpt examples/private-games/PrivateGames/DbApi.lean -->
 ```lean
 /-- The games `p` plays in. -/
-def GameRow.visibleTo (p : PlayerId) : Query Games GameRow :=
-  .from GameRow |>.where fun g => g.val.x == pref p || g.val.o == pref p
+def GameRow.visibleTo (p : PlayerId) : LeanDb.Query Games [GameRow] (Stored GameRow) :=
+  (LeanDb.Query.from GameRow).where' fun g => g.val.x == pref p || g.val.o == pref p
+
+/-- The game with id `gid`, if `p` plays in it. -/
+def visibleGame (p : PlayerId) (gid : GameId) : Read Games (Option (Stored GameRow)) :=
+  Read.first ((GameRow.visibleTo p).where' fun g => g.id == gidRef gid)
 ```
 
 One endpoint, and the table of all five:
 
-<!-- check: excerpt examples/private-games/PrivateGames/Api.lean -->
+<!-- check: excerpt examples/private-games/PrivateGames/DbApi.lean -->
 ```lean
 /-- One of my games. Someone else's game is indistinguishable from a missing one. -/
 def readGame (me : Auth PlayerId) (id : Path GameId) :
     Read Games (Except GameError (Versioned GameView)) := do
-  match ← first (GameRow.visibleTo me.val |>.where (·.id == gidRef id.val)) with
-  | some g => return .ok g.versioned
-  | none   => return .error .hidden
+  match ← visibleGame me.val id.val with
+  | some g => return .ok (versioned g)
+  | none => return .error .hidden
 ```
 
-<!-- check: excerpt examples/private-games/PrivateGames/Api.lean -->
+<!-- check: excerpt examples/private-games/PrivateGames/DbApi.lean -->
 ```lean
-def gamesApi : Api (DbState Games) := api! [
+def gamesApi : DbApi Games := dbapi! [
   .post "/games"                       openGame,
   .get  "/games"                       listGames,
   .get  "/games/{id:nat}"              readGame,
   .post "/games/{id:nat}/moves"        playMove,
-  .post "/games/{id:nat}/resignation"  resign ]
+  .post "/games/{id:nat}/resignation"  resign
+]
 ```
 
 Reading `readGame`:
@@ -158,31 +168,37 @@ theorem step_safe (api : Api σ) (env : Env) (r : Req) (s : σ) (hm : r.method.S
 
 A player makes a move and the network drops the response, so the client retries with the same `Idempotency-Key`. If the server applied the move twice, the game would be corrupted.
 
-The key is claimed before anything is decided, in the same transaction as the move:
+The receipt is looked up by its key in the same transaction as the move:
 
-<!-- check: excerpt examples/private-games/PrivateGames/Api.lean -->
+<!-- check: excerpt examples/private-games/PrivateGames/DbApi.lean -->
 ```lean
-/-- The first request with a key decides; later ones replay its answer. -/
-def keyed [ToResponse α] (me : PlayerId) (key : Option IdemKey) (op : Op) (fp : String)
-    (decide : Txn Games GameError α) : Txn Games GameError (Replayed α) := do
-  let some key := key | return .fresh (← decide)
-  match ← insert (ReceiptRow.claim me op key.val fp) with
-  | .ok claim => do
-    let answer ← decide
-    let res := ToResponse.toRes answer
-    let _ ← patch claim { status := res.status, body := ReceiptRow.encode res } |>.orAbort fun
-      | .gone => .hidden
-    return .fresh answer
-  | .error (.duplicate .byKey held) => replay held fp
-  | .error (.missingRef .actor) => throw .hidden
+def keyed [ToResponse α] (me : PlayerId) (k? : Option Keyed)
+    (decide : Txn σ Games GameError (Bool × α)) : Txn σ Games GameError (Replayed α) :=
+  match k? with
+  | none => do let (_, a) ← decide; pure (.fresh a)
+  | some k => do
+    match ← Txn.liftRead (Read.lookup ReceiptRow ReceiptRow.Unique.byKey (pref me, k.op, k.key)) with
+    | some rc =>
+      if rc.val.fingerprint == k.fingerprint then pure (.replay (receiptOfRow rc.val))
+      else Txn.throw .keyReused
+    | none =>
+      let (wrote, a) ← decide
+      if wrote then
+        let res := ToResponse.toRes a
+        let _ ← Txn.orAbort (Txn.insert ReceiptRow (Checked.of
+            { actor := pref me, op := k.op, key := k.key, fingerprint := k.fingerprint,
+              status := res.status, body := rowBody res } trivial)) fun
+          | .duplicate .. => GameError.keyReused
+          | .missingRef _ => GameError.hidden
+      pure (.fresh a)
 ```
 
-The receipts table has a unique index on (player, operation, key). So:
-- the first request claims the key, decides, and records its answer;
-- a retry's claim clashes on that index, and the clash *is* the replay: `replay` answers what was recorded, or refuses if the retry's body differs;
-- if the move is refused, the transaction rolls back, claim included, so a corrected retry can go through.
+The receipts table has a unique index on (player, operation, key), so looking a receipt up by it gives one receipt or none. So:
+- the first request finds none and decides. `decide` also says whether it wrote; if it did, its answer is recorded together with the change (a request that changes nothing, such as resigning twice, records nothing);
+- a retry finds the receipt and replays its answer, or is refused if its body differs (`keyReused`);
+- if the move is refused, the transaction rolls back and nothing is recorded, so a corrected retry can go through.
 
-`insert` can fail only in the ways its type lists, and the `match` must handle each one. The unique index and the foreign key to the player are declared in the schema, and the failure cases come from them. Add another unique index to receipts, and this `match` stops compiling until the new case is handled.
+The lookup and the insert are one transaction, and LeanDB runs write transactions one at a time (`BEGIN IMMEDIATE`). So two copies of the same request can't both find no receipt.
 
 The theorem:
 
@@ -196,6 +212,19 @@ theorem api_keyed_replay_after (env env' : Env) (r : Req) (rest : List (Env × R
 ```
 
 In words: once a keyed request has committed, sending it again, after any other requests from anyone, answers exactly what it answered the first time, marked as a replay, and changes nothing.
+
+### Failures have types too
+
+Writes can fail only in the ways their types list, and those come from the schema. Opening a game inserts a row:
+
+<!-- check: excerpt examples/private-games/PrivateGames/DbApi.lean -->
+```lean
+        let row ← Txn.orAbort (Txn.insert GameRow (GameRow.checkedOpen h hb.1 hb.2)) fun
+          | .missingRef _ => GameError.unknownOpponent
+          | .duplicate ix _ => nomatch ix
+```
+
+A game refers to its players, so the insert can fail with `missingRef`. Games have no unique index, so `duplicate` would need an index that doesn't exist, and `nomatch ix` says so. Add a unique index to games, and this stops compiling until the clash is handled. `GameRow.checkedOpen h …` is the evidence that the new game is valid, from the domain's proof about opening a game. Without it, `insert` doesn't type-check.
 
 ## Writing your own properties
 
@@ -235,9 +264,9 @@ The same machinery covers the games. **Every stored game is valid** and **game i
 
 All of this is about `gamesApi`, the API as written. The step that makes it about production:
 
-<!-- check: signature LeanApi.Api.serve_eq_step -->
+<!-- check: signature LeanApi.DbApi.serve_eq_step -->
 ```lean
-theorem Api.serve_eq_step (api : Api (DbState s)) (hexec : ExecutesAsMeaning s)
+theorem DbApi.serve_eq_step (api : DbApi s) (hexec : ExecutesAsMeaning s)
     (hwf : st.WF) (hdone : Completes api env r st) :
     api.served env r st = api.step env r st
 ```

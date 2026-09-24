@@ -210,7 +210,7 @@ instance {α : Type} [Entity α] [HasUnique α] [HasForeignKey α] [ToJson α] [
 structure WithReferrers (ε : Type) where
   val : ε
 
-instance {s α : Type} [Entity α] [h : HasReferencedBy s α] [Repr (ReferencedBy s α)] :
+instance {s α : Type} [Entity α] [h : HasReferencedBy s α] [Repr (ReferencedBy.Restricting s α)] :
     ToProblem (WithReferrers (DeleteError s α)) where
   status e := ToProblem.status e.val
   detail e := ToProblem.detail e.val

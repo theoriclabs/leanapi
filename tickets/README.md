@@ -21,6 +21,14 @@ These are the LeanAPI side of the LeanDB work in [docs/QUERIES.md](../docs/QUERI
 | [LAPI-08](LAPI-08-move-model-theorems-and-retire-the-model.md) | Move the remaining model theorems; retire `Model/`, the native service and the app differential test | P1 | L | LAPI-07 | open |
 | [LAPI-09](LAPI-09-docs-after-the-move.md) | README, design docs, evidence and the blog post after the move | P2 | S | LAPI-08 | open |
 
+## Follow-ups from the review of LAPI-02…05 ([2026-09-23](../docs/reviews/2026-09-23-review-lapi-02-05-m14.md))
+
+| ID | Title | Pri | Size | Depends on | Status |
+| --- | --- | --- | --- | --- | --- |
+| [LAPI-10](LAPI-10-framework-computed-retry-fingerprints.md) | Retry fingerprints computed by the framework, not written by hand | P1 | M | none | open |
+| [LAPI-11](LAPI-11-database-endpoints-read-like-the-rest.md) | Endpoints over LeanDB read like the rest: one `api!`, no `fun _ =>`, no name clash | P2 | M | LAPI-02 | open |
+| [LAPI-12](LAPI-12-private-games-no-runtime-checks-a-type-can-carry.md) | private-games: no runtime checks where a type can carry the fact | P2 | S | LeanDB: reads return invariant evidence (part 2); easier after LAPI-08 | open |
+
 ```mermaid
 flowchart LR
     DB13["LeanDB M13"] --> L1["LAPI-01"]
@@ -35,8 +43,14 @@ flowchart LR
     L6 --> L7
     L7 --> L8["LAPI-08"]
     L8 --> L9["LAPI-09"]
+    L2 --> L11["LAPI-11"]
+    L11 --> L6
+    L8 -.-> L12["LAPI-12"]
+    L10["LAPI-10"] -.-> L8
 ```
 
-**Finding (2026-09-23):** at LeanDB `64c768e` and still at M14b `d33d067`, `DbState` has no logical content (`DbState.get` is `implemented_by` with an empty-table body), so every theorem over `DbState` is trivially true. See LAPI-02's status. LeanDB M15 must fix this before LAPI-06/07.
+**Pin (2026-09-23):** LeanDB M14c `afe4544`. LAPI-02…05 build and pass on it; the only change needed was `WithReferrers` taking `ReferencedBy.Restricting` (M14c's restrict/cascade split).
+
+**Finding (2026-09-23):** at LeanDB `64c768e`, M14b `d33d067` and still at M14c `afe4544`, `DbState` has no logical content (`DbState.get` is `implemented_by` with an empty-table body), so every theorem over `DbState` is trivially true. The compiled `get`/`set` disagree with those bodies, so `native_decide` can prove `False` about a `DbState` (a three-line proof; the axiom audit rejects it because it lists the native axiom). See LAPI-02's status. LeanDB M15 must fix this before LAPI-06/07.
 
 LAPI-01 can start as soon as LeanDB tags its M13 release. LAPI-02 and LAPI-04 can start against LeanDB's M14 branch before it is released, pinned by commit.

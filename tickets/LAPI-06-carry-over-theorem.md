@@ -9,13 +9,15 @@ Every API theorem is about `Api.step`, the pure meaning. For those theorems to b
 
 ## Proposal
 
-**The framework theorem**, for any `api : Api (DbState s)`:
+**The framework theorem**, for any `api : DbApi s` (a plain `Api (DbState s)` has no programs to run, only their meaning):
 
 ```lean
-theorem Api.serve_eq_step (hexec : LeanDb.ExecutesAsMeaning s)   -- LeanDB's trusted step, as a named hypothesis
-    (hwf : st.WF) (hdone : completes (serveDb api) req st) :
-    runResult (serveDb api) req st = api.step env req st
+theorem DbApi.serve_eq_step (api : DbApi s) (hexec : ExecutesAsMeaning s)   -- LeanDB's trusted step, as a named hypothesis
+    (hwf : st.WF) (hdone : Completes api env r st) :
+    api.served env r st = api.step env r st
 ```
+
+`DbApi.step` is `api.toApi.step`, so `gamesApi.step` reads as in the blog. `DbApi.served` runs each endpoint's `prog` (`DbProg.exec`) and `Completes` says it met no `DbFault`.
 
 In words: on a well-formed database, when a request completes (no `DbFault`), the running service answers and leaves the database exactly as `Api.step` says.
 
@@ -29,7 +31,7 @@ In words: on a well-formed database, when a request completes (no `DbFault`), th
 
 ## Acceptance criteria
 
-- `Api.serve_eq_step` proved with no `sorry`, audited, with `ExecutesAsMeaning` as a hypothesis. Its statement is the blog post's (checked by `scripts/check_blog.sh`).
+- `DbApi.serve_eq_step` proved with no `sorry`, audited, with `ExecutesAsMeaning` as a hypothesis. Its statement is the blog post's (checked by `scripts/check_blog.sh`).
 - `Api.wf_invariant`: `WF` holds in every reachable state of any LeanDB-backed typed API.
 - **Corollaries** stated for production, each from the corresponding `Api` theorem and `serve_eq_step`: GET never changes the database; invariants hold of the running database; `noninterference` holds of running responses.
 - EVIDENCE.md's trusted base updated as above; `gen_evidence.sh --check` passes.
