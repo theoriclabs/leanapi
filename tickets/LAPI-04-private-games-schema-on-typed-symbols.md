@@ -34,7 +34,7 @@ That is what lets `gamesApi` (LAPI-05) have exact failure types, and lets the in
 ## Acceptance criteria
 
 - The three unique indexes are `unique` declarations; `Unique PlayerRow`, `Unique TokenRow` and `Unique ReceiptRow` each have exactly one constructor, with key types `String`, `String` and `(Ref PlayerRow × String × String)`.
-- `InsertError GameRow` has no `duplicate` constructor, because `GameRow` declares no unique index. A `#check`/`nomatch` test pins this.
+- `InsertError GameRow`'s `duplicate` case cannot be built, because `Unique GameRow` is empty (`GameRow` declares no unique index). A test pins it: a `match` on `InsertError GameRow` that omits `duplicate` compiles.
 - `Checked GameRow` values for `openGame`, `playMove` and `resign` are built from the domain proofs; `Valid.check` is not called on those paths.
 - The schema fingerprint is unchanged, or the migration is recorded. The DDL of the unique indexes must be identical.
 
