@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased: license
+
+- **LeanAPI is now under the Business Source License 1.1** (`LICENSE`), from version 0.6.0. Each version converts to the MIT License four years after it is published. Production use is free for organizations with 100 or fewer people and US $100 million or less in annual revenue, unless the use is a Competing Service (see `LICENSE`). Versions up to v0.5.0 remain under the MIT License.
+
 ## Unreleased: private-games over LeanDB programs (LAPI-05)
 
 - `PrivateGames.DbApi.gamesApi`: the five game routes as LeanDB `Read`/`Tx` programs over `DbState Games`. New and changed games are `Checked` from the domain proofs.
