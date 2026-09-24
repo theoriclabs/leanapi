@@ -22,6 +22,15 @@ PrivateGames.Spike.Effects PrivateGames.Spike.Effects.reads_visible
 PrivateGames.Storage.Schema PrivateGames.Storage.nat_roundtrip
 PrivateGames.Storage.Schema PrivateGames.Storage.cell_roundtrip
 PrivateGames.Storage.Schema PrivateGames.Storage.timeControl_roundtrip
+PrivateGames.Storage.Schema PrivateGames.Storage.GameRow.invariant_iff
+PrivateGames.Storage.Schema PrivateGames.Storage.GameRow.Invariant_iff
+PrivateGames.Storage.Schema PrivateGames.Storage.GameRow.valid_id_irrel
+PrivateGames.Storage.Schema PrivateGames.Storage.GameRow.ofGame_invariant
+PrivateGames.Storage.Schema PrivateGames.Storage.GameRow.toGame_ofGame
+PrivateGames.Storage.Schema PrivateGames.Storage.decide_participants
+PrivateGames.Storage.Schema PrivateGames.PlayerId.make_lt
+PrivateGames.Storage.Schema PrivateGames.Storage.pid_lt
+PrivateGames.Storage.Schema PrivateGames.Storage.pid_pref
 # M6: private-games service (the model of the exported proved routes)
 PrivateGames.Model.Isolation PrivateGames.Model.step_noninterference
 PrivateGames.Model.Isolation PrivateGames.Model.step_noninterference_caller

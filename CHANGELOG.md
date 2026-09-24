@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased: private-games schema on typed symbols (LAPI-04)
+
+- LeanDB pinned at the M14 part A commit (`64c768e`, branch `ldb-m14-typed`).
+- Unique indexes are `unique%` declarations: `PlayerRow.byName`, `TokenRow.byDigest`, `ReceiptRow.byKey` (key type `Ref PlayerRow × String × String`). `schema% Games` lists the four tables and generates `ReferencedBy Games PlayerRow`. `Unique GameRow` is empty.
+- `GameRow`'s LeanDB invariant is `Valid` through the row mapping (`GameRow.invariant_iff`). LeanDB checks it on every read and write, so the repository's `guardLoad`/`guardWrite` calls are gone.
+- `GameRow.checked`, `checkedOpen`, `checkedStep` build `Checked GameRow` from `Valid.preserved_openGame` and `decide_valid`, with `toGame_ofGame` for the round trip. They are ready for M14b's typed writes; until then the repository's `insert`/`update` still pass through LeanDB's runtime check.
+- **Migration.** The index names (`uq_player_row_name` → `uq_player_row_byName`, …) and the recorded invariant change the fingerprint. `Runtime.open` moves a v1 instance (fingerprint `3475301517420757831`) forward with LeanDB's `migrate`: three index renames and an invariant restamp, all non-destructive. A test builds a v1 file and opens it.
+
 ## Unreleased: LeanDB M13 (LAPI-01)
 
 - LeanDB pinned at the M13 fixes (`bdd0e4c`, LDB-17…24) by commit, until LeanDB tags the release.

@@ -102,8 +102,10 @@ register_property "Domain" "Non-participants are refused for every command"
   proved by PrivateGames.decide_nonparticipant
 register_property "Domain" "Opening a game yields a valid game"
   proved by PrivateGames.Valid.preserved_openGame
-register_property "Domain" "The runtime check `Valid.check` (run on every load and before every write) agrees with the proved `Valid`"
-  proved by PrivateGames.Valid.check_iff, LeanApi.Props.StoredInvariant.guardWrite_ok, LeanApi.Props.StoredInvariant.guardLoad_ok
+register_property "Domain" "LeanDB's `GameRow` invariant (checked on every read and every write, LDB-16) is exactly `Valid` of the mapped game, for any id"
+  proved by PrivateGames.Storage.GameRow.invariant_iff, PrivateGames.Storage.GameRow.Invariant_iff, PrivateGames.Storage.GameRow.valid_id_irrel, PrivateGames.Valid.holdsB_iff
+register_property "Domain" "Rows written for new and changed games are `Checked` from the domain proofs (`preserved_openGame`, `decide_valid`), with no runtime check; the row mapping round-trips on them"
+  proved by PrivateGames.Storage.GameRow.ofGame_invariant, PrivateGames.Storage.GameRow.toGame_ofGame, PrivateGames.Storage.decide_participants, PrivateGames.PlayerId.make_lt, PrivateGames.Storage.pid_lt
 register_invariant "Domain" "Every stored game is `Valid`, in every reachable model world"
   by PrivateGames.Model.allValid touches "games"
 register_invariant "Domain" "Game ids are unique, in every reachable model world (with the strengthening: every id is below `nextGame`)"
@@ -114,7 +116,7 @@ register_property "Domain" "Availability: a participant's read of their visible 
   proved by PrivateGames.Model.read_available, PrivateGames.Model.gameRes_status, PrivateGames.Model.reads_own_enabled shape "enabled"
 register_property "Domain" "Stored values round-trip (`Cell`, `TimeControl`, `Nat` below 2^63)"
   proved by PrivateGames.Storage.cell_roundtrip, PrivateGames.Storage.timeControl_roundtrip, PrivateGames.Storage.nat_roundtrip
-register_property "Domain" "A stored game that is not `Valid` is a typed error (500 without detail), never a crash"
+register_property "Domain" "LeanDB refuses to store a game that is not `Valid`; one written behind its back (raw SQL) is a typed error (500 without detail), never a crash"
   checked at "\"stored row that fails validation\""
 
 register_property "Domain" "Typed API (`PrivateGames/Api.lean`): GET and HEAD requests never change the state. Free for every typed API: each GET endpoint carries the proof, checked when it is built"

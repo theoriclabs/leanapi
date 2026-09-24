@@ -16,7 +16,7 @@ rev = "v0.1.0"
 [[require]]
 name = "leandb"
 git = "https://github.com/theoriclabs/LeanDB"
-rev = "bdd0e4c73aedbad2c932d6bc590af66181aec589"
+rev = "64c768e6612b73fcc035725acc634b52c684bc0b"
 
 [[lean_lib]]
 name = "LeanApi"

@@ -208,10 +208,16 @@ def run : TestM Unit := do
     let (_, s1) ← signup svc "s1"
     let (s2Id, _) ← signup svc "s2"
     let gid := (jnat (← openGame svc s1 s2Id) "id").getD 0
-    let _ ← LeanDb.DbM.run env.rt.writeConn do
+    -- LeanDB refuses the write itself (the `GameRow` invariant, LDB-16) …
+    let refused ← LeanDb.DbM.run env.rt.writeConn do
       match ← LeanDb.get (gidRef ⟨gid⟩) with
-      | some s => let _ ← LeanDb.update s { s.val with rev := 7 }; pure ()
-      | none => pure ()
+      | some s => let _ ← LeanDb.update s { s.val with rev := 7 }; pure true
+      | none => pure false
+    check "LeanDB refuses to store an invalid game"
+      (match refused with | .error (.invariant ..) => true | _ => false)
+    -- … so corruption can only come from outside LeanDB: raw SQL.
+    let _ ← LeanDb.DbM.run env.rt.writeConn (LeanDb.untrackedSqlite fun db =>
+      db.exec s!"UPDATE game_row SET rev = 7 WHERE id = {gid}")
     let r ← get svc s!"/games/{gid}" [bearer s1]
     checkEq "invalid stored game → 500, not a crash" r.status 500
     check "no internal detail" (!r.body.contains "Valid")
@@ -235,5 +241,73 @@ def run : TestM Unit := do
     checkEq "retry marked as replay" (retry.header? "idempotent-replayed") (some "true")
     checkEq "applied once" ((← get svc2 s!"/games/{gid}" [bearer t1]).header? "etag") (some "\"1\"")
     rt2.close
+
+  section_ "LAPI-04: typed schema symbols" do
+    let e ← freshEnv "typed-schema"
+    let (holderId, _) ← signup e.svc "holder"
+    -- a duplicate name is refused by the declared unique index
+    let dup ← LeanDb.DbM.run e.rt.writeConn
+      (LeanDb.insert PlayerRow { name := "holder", passwordHash := "x" })
+    check "duplicate player name → .duplicate"
+      (match dup with | .error (.duplicate "player_row" _) => true | _ => false)
+    -- the typed lookup finds the holder by the same key
+    let held ← LeanDb.DbM.run e.rt.writeConn
+      (LeanDb.Read.exec (s := Games) (LeanDb.Read.lookup PlayerRow PlayerRow.Unique.byName "holder"))
+    checkEq "lookup byName → holder's id"
+      (held.toOption.bind (·.map (pid ·.id |>.n))) (some holderId)
+    -- a token for a player that does not exist
+    let orphan ← LeanDb.DbM.run e.rt.writeConn
+      (LeanDb.insert TokenRow { digest := "orphan", player := ⟨Int64.ofNat 999999⟩ })
+    check "token for a missing player → .missingRef"
+      (match orphan with | .error (.missingRef _) => true | _ => false)
+    e.rt.close
+
+  section_ "LAPI-04: a v1 instance migrates on open" do
+    let dir : System.FilePath := ".lake/test-db"
+    let path := dir / "v1.sqlite"
+    for ext in ["", "-wal", "-shm"] do
+      let f : System.FilePath := path.toString ++ ext
+      if ← f.pathExists then IO.FS.removeFile f
+    checkEq "schemaV1 is the deployed v1 fingerprint"
+      (LeanDb.fingerprint schemaV1) schemaV1Fingerprint
+    -- an instance as the v1 code created it, with a player and a game
+    match ← LeanDb.openDb path schemaV1 with
+    | .error err => check s!"open v1: {err}" false
+    | .ok c =>
+      let seeded ← LeanDb.DbM.run c do
+        let a ← LeanDb.insert PlayerRow { name := "v1a", passwordHash := "h" }
+        let b ← LeanDb.insert PlayerRow { name := "v1b", passwordHash := "h" }
+        let _ ← LeanDb.insert GameRow (GameRow.ofGame (Game.opened ⟨0⟩ (pid a.id) (pid b.id) TimeControl.default))
+        pure ()
+      check "v1 seeded" seeded.isOk
+    let rt ← Runtime.open path 1
+    let info ← LeanDb.instanceInfo path
+    checkEq "migrated to the current fingerprint"
+      (info.bind (·.1)) (some (LeanDb.fingerprint schema))
+    let games ← rt.repo.listVisible ⟨1⟩ 0 10
+    checkEq "v1 game still readable" (games.toOption.map (·.2)) (some 1)
+    let dup ← rt.repo.createPlayer "v1a" "h"
+    check "renamed unique index still enforced" (!dup.isOk)
+    rt.close
+    -- reopening a migrated instance is a no-op
+    let rt ← Runtime.open path 1
+    checkEq "reopen keeps the fingerprint"
+      ((← LeanDb.instanceInfo path).bind (·.1)) (some (LeanDb.fingerprint schema))
+    rt.close
+
+/-! Compile-time pins for LAPI-04. -/
+
+/-- `GameRow` declares no unique index: `Unique GameRow` is empty, so no
+    insert of a game can fail as a duplicate. -/
+example (u : LeanDb.Unique GameRow) : False := nomatch u
+example (u : LeanDb.Unique PlayerRow) : u = PlayerRow.Unique.byName := by cases u; rfl
+example (u : LeanDb.Unique TokenRow) : u = TokenRow.Unique.byDigest := by cases u; rfl
+example (u : LeanDb.Unique ReceiptRow) : u = ReceiptRow.Unique.byKey := by cases u; rfl
+example : LeanDb.Unique.Key (α := PlayerRow) PlayerRow.Unique.byName = String := rfl
+example : LeanDb.Unique.Key (α := TokenRow) TokenRow.Unique.byDigest = String := rfl
+example : LeanDb.Unique.Key (α := ReceiptRow) ReceiptRow.Unique.byKey =
+    (LeanDb.Ref PlayerRow × String × String) := rfl
+/-- Everything that references a player, per the schema. -/
+example (r : LeanDb.ReferencedBy Games PlayerRow) : True := by cases r <;> trivial
 
 end Tests.Games

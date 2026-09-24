@@ -55,14 +55,10 @@ structure PlayerRow where
   passwordHash : String
   deriving Repr, LeanDb.Entity
 
-instance : LeanDb.Indexes PlayerRow := ⟨#[{ unique := true, columns := #["name"] }]⟩
-
 structure TokenRow where
   digest : String
   player : Ref PlayerRow
   deriving Repr, LeanDb.Entity
-
-instance : LeanDb.Indexes TokenRow := ⟨#[{ unique := true, columns := #["digest"] }]⟩
 
 structure MoveRow where
   cell : Cell
@@ -75,7 +71,29 @@ structure GameRow where
   resigned : Option (Ref PlayerRow)
   rev : Nat
   moves : List MoveRow
-  deriving Repr, LeanDb.Entity
+  deriving Repr
+
+/-! ## Row ↔ domain -/
+
+def pid (r : Ref PlayerRow) : PlayerId := ⟨r.toInt64.toNatClampNeg⟩
+def pref (p : PlayerId) : Ref PlayerRow := ⟨Int64.ofNat p.n⟩
+
+def GameRow.toGame (id : LeanDb.Id GameRow) (r : GameRow) : Game :=
+  { id := ⟨id.toInt64.toNatClampNeg⟩, x := pid r.x, o := pid r.o, timeControl := r.minutes,
+    moves := r.moves.map (·.cell), resigned := r.resigned.map pid, rev := r.rev }
+
+def GameRow.ofGame (g : Game) : GameRow :=
+  { x := pref g.x, o := pref g.o, minutes := g.timeControl, resigned := g.resigned.map pref,
+    rev := g.rev, moves := g.moves.map (⟨·⟩) }
+
+/-- The stored game invariant is the domain's `Valid`, through the row
+    mapping (LAPI-04). LeanDB checks it on every read and every write
+    (LDB-16), which replaces the repository's own `guardLoad`/`guardWrite`.
+    The id is irrelevant (`GameRow.valid_id_irrel`). -/
+@[leandb_invariant]
+def GameRow.invariant (r : GameRow) : Bool := Valid.holdsB (r.toGame ⟨0⟩)
+
+deriving instance LeanDb.Entity for GameRow
 
 instance : LeanDb.Indexes GameRow :=
   ⟨#[{ columns := #["x"] }, { columns := #["o"] }]⟩
@@ -92,29 +110,166 @@ structure ReceiptRow where
   body : String
   deriving Repr, LeanDb.Entity
 
-instance : LeanDb.Indexes ReceiptRow :=
-  ⟨#[{ unique := true, columns := #["actor", "op", "key"] }]⟩
+/-! ## Unique indexes and the schema (LeanDB M14 typed symbols)
+
+Each `unique%` generates a constructor of `Unique α` whose key type is
+the indexed columns' types, and the SQLite unique index. Non-unique
+indexes (`GameRow`'s) stay `Indexes` entries: they never appear in a
+failure type. `GameRow` declares no unique index, so `Unique GameRow` is
+empty and a duplicate insert of a game cannot be stated. -/
+
+unique% PlayerRow.byName := name
+unique% TokenRow.byDigest := digest
+unique% ReceiptRow.byKey := (actor, op, key)
+
+schema% Games := PlayerRow, TokenRow, GameRow, ReceiptRow
 
 def schema : List TableSpec :=
   orderSpecs (Entity.specs PlayerRow ++ Entity.specs TokenRow ++ Entity.specs GameRow ++ Entity.specs ReceiptRow)
 
-/-! ## Row ↔ domain -/
+/-! ## Migration from the v1 schema
 
-def pid (r : Ref PlayerRow) : PlayerId := ⟨r.toInt64.toNatClampNeg⟩
-def pref (p : PlayerId) : Ref PlayerRow := ⟨Int64.ofNat p.n⟩
+Before LAPI-04 the unique indexes were unnamed (`uq_player_row_name`, …)
+and `game_row` declared no invariant. Declaring them renames the three
+unique indexes (same columns) and records the invariant, so the
+fingerprint moves. `schemaV1` is that schema, reconstructed; a test pins
+its fingerprint to the one deployed instances carry. The move is
+non-destructive: add and drop index, restamp invariant. -/
 
-def GameRow.toGame (id : LeanDb.Id GameRow) (r : GameRow) : Game :=
-  { id := ⟨id.toInt64.toNatClampNeg⟩, x := pid r.x, o := pid r.o, timeControl := r.minutes,
-    moves := r.moves.map (·.cell), resigned := r.resigned.map pid, rev := r.rev }
+def schemaV1 : List TableSpec :=
+  schema.map fun t =>
+    { t with «invariant» := none, indexes := t.indexes.map ({ · with name := none }) }
 
-def GameRow.ofGame (g : Game) : GameRow :=
-  { x := pref g.x, o := pref g.o, minutes := g.timeControl, resigned := g.resigned.map pref,
-    rev := g.rev, moves := g.moves.map (⟨·⟩) }
+/-- The fingerprint every pre-LAPI-04 instance carries. -/
+def schemaV1Fingerprint : String := "3475301517420757831"
 
-/-- Reconstruction re-validates: a stored game that is not `Valid` is a
-    typed error, never a crash and never a game. -/
-def reconstruct (s : Stored GameRow) : Except String Game :=
-  let g := s.val.toGame s.id
-  Valid.stored.guardLoad s!"stored game {g.id}" g
+/-! ## The invariant, proved against the domain -/
+
+/-- `Valid` does not look at the id. -/
+theorem GameRow.valid_id_irrel (r : GameRow) (i j : LeanDb.Id GameRow) :
+    Valid (r.toGame i) ↔ Valid (r.toGame j) :=
+  ⟨fun h => ⟨h.1, h.2, h.3, h.4, h.5, h.6⟩, fun h => ⟨h.1, h.2, h.3, h.4, h.5, h.6⟩⟩
+
+/-- LeanDB's check on a row is exactly `Valid` of the game it maps to. -/
+theorem GameRow.invariant_iff (r : GameRow) (i : LeanDb.Id GameRow) :
+    GameRow.invariant r = true ↔ Valid (r.toGame i) :=
+  (Valid.holdsB_iff _).trans (GameRow.valid_id_irrel r _ i)
+
+/-- LeanDB's `Invariant GameRow` is the same statement. -/
+theorem GameRow.Invariant_iff (r : GameRow) (i : LeanDb.Id GameRow) :
+    LeanDb.Invariant GameRow r ↔ Valid (r.toGame i) := by
+  show GameRow.invariant r = true ↔ _
+  exact GameRow.invariant_iff r i
+
+/-! ## `Checked GameRow` from domain proofs
+
+A player id round-trips through a `Ref` only below 2^63, and `Valid`'s
+`distinct` field needs that. Every player id in a game comes either from
+a stored row (`pid`, always in range: `pid_lt`) or from `PlayerId.make`
+(in range by its check: `PlayerId.make_lt`), so the bound is discharged
+by proof on every real path, not checked at runtime. -/
+
+/-- Both participants are ids a `Ref` can carry. -/
+def _root_.PrivateGames.Game.Bounded (g : Game) : Prop := g.x.n < 2^63 ∧ g.o.n < 2^63
+
+theorem pid_lt (r : Ref PlayerRow) : (pid r).n < 2^63 := by
+  have := r.toInt64.toNatClampNeg_lt; simp [pid]; omega
+
+theorem pid_pref {p : PlayerId} (h : p.n < 2^63) : pid (pref p) = p := by
+  cases p; simp [pid, pref, Int64.toNatClampNeg_ofNat_of_lt h]
+
+theorem _root_.PrivateGames.PlayerId.make_lt {n : Nat} {p : PlayerId}
+    (h : PlayerId.make n = .ok p) : p.n < 2^63 := by
+  unfold PlayerId.make at h; split at h <;> simp_all; cases h; simp_all
+
+theorem GameRow.toGame_bounded (r : GameRow) (i : LeanDb.Id GameRow) : (r.toGame i).Bounded :=
+  ⟨pid_lt _, pid_lt _⟩
+
+private theorem cells_roundtrip (ms : List Cell) :
+    (ms.map (fun c => (⟨c⟩ : MoveRow))).map (·.cell) = ms := by
+  induction ms <;> simp_all
+
+private theorem cell_comp : (fun x : MoveRow => x.cell) ∘ (fun c => (⟨c⟩ : MoveRow)) = id := rfl
+
+/-- A valid game with in-range participants stores as a row satisfying
+    the invariant. -/
+theorem GameRow.ofGame_invariant (g : Game) (hv : Valid g) (hb : g.Bounded) :
+    LeanDb.Invariant GameRow (GameRow.ofGame g) := by
+  rw [GameRow.Invariant_iff _ ⟨0⟩]
+  have hx := pid_pref hb.1
+  have ho := pid_pref hb.2
+  have hres : (g.resigned.map pref).map pid = g.resigned := by
+    cases hr : g.resigned with
+    | none => rfl
+    | some p =>
+      rcases hv.resignedBy p hr with rfl | rfl
+      · simp [hx]
+      · simp [ho]
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩ <;>
+    simp only [GameRow.toGame, GameRow.ofGame, hx, ho, hres, cells_roundtrip]
+  · exact hv.distinct
+  · exact hv.nodup
+  · exact hv.history
+  · exact hv.length
+  · exact hv.rev
+  · exact hv.resignedBy
+
+/-- The row mapping is a section on valid, in-range games. -/
+theorem GameRow.toGame_ofGame (g : Game) (hv : Valid g) (hb : g.Bounded) (hid : g.id.n < 2^63) :
+    (GameRow.ofGame g).toGame ⟨Int64.ofNat g.id.n⟩ = g := by
+  have hx := pid_pref hb.1
+  have ho := pid_pref hb.2
+  have hres : (g.resigned.map pref).map pid = g.resigned := by
+    cases hr : g.resigned with
+    | none => rfl
+    | some p =>
+      rcases hv.resignedBy p hr with rfl | rfl
+      · simp [hx]
+      · simp [ho]
+  cases g
+  simp_all [GameRow.toGame, GameRow.ofGame, cell_comp, Int64.toNatClampNeg_ofNat_of_lt hid]
+
+/-- A checked row from a valid, in-range game. No runtime check. -/
+def GameRow.checked (g : Game) (hv : Valid g) (hb : g.Bounded) : Checked GameRow :=
+  Checked.of (GameRow.ofGame g) (GameRow.ofGame_invariant g hv hb)
+
+/-- Opening a game: validity from `Valid.preserved_openGame`. -/
+def GameRow.checkedOpen {id : GameId} {p o : PlayerId} {tc : TimeControl} {g : Game}
+    (h : openGame id p o tc = .ok g) (hp : p.n < 2^63) (ho : o.n < 2^63) : Checked GameRow :=
+  GameRow.checked g (Valid.preserved_openGame id p o tc g h) (by
+    unfold openGame at h; split at h <;> simp_all; cases h; exact ⟨hp, ho⟩)
+
+theorem decide_participants {p : PlayerId} {g g' : Game} {cmd : Command}
+    (h : PrivateGames.decide p g cmd = .ok g') : g'.x = g.x ∧ g'.o = g.o := by
+  cases cmd with
+  | play e c =>
+    simp only [PrivateGames.decide, playMove] at h
+    split at h; · simp at h
+    split at h; · simp at h
+    split at h; · simp at h
+    split at h; · simp at h
+    split at h; · simp at h
+    cases h; exact ⟨rfl, rfl⟩
+  | resign =>
+    simp only [PrivateGames.decide, resign] at h
+    split at h; · simp at h
+    split at h; · cases h; exact ⟨rfl, rfl⟩
+    split at h; · simp at h
+    cases h; exact ⟨rfl, rfl⟩
+
+/-- A move or a resignation on a stored game: validity from
+    `decide_valid` on the stored row's invariant, and the participants
+    (hence the bound) carried over from the row. -/
+def GameRow.checkedStep {p : PlayerId} {cmd : Command} {g' : Game} (s : Stored GameRow)
+    (hs : LeanDb.Invariant GameRow s.val)
+    (h : PrivateGames.decide p (s.val.toGame s.id) cmd = .ok g') : Checked GameRow :=
+  GameRow.checked g' (decide_valid ((GameRow.Invariant_iff _ s.id).mp hs) h) (by
+    obtain ⟨hx, ho⟩ := decide_participants h
+    have := GameRow.toGame_bounded s.val s.id
+    exact ⟨hx ▸ this.1, ho ▸ this.2⟩)
+
+/-- The game a stored row maps to. LeanDB refuses a row that fails the
+    invariant before it gets here (`.invariant`, 500 without detail). -/
+def reconstruct (s : Stored GameRow) : Game := s.val.toGame s.id
 
 end PrivateGames.Storage

@@ -5,7 +5,9 @@
     participant policy conjoined (`x = actor OR o = actor`), so the query
     itself never returns a row the actor cannot see. The Lean-side
     predicate (`visible`) is re-checked on the decoded row as well.
-  * Loads re-validate (`reconstruct`); invalid rows are `.corrupt`.
+  * Loads and writes are checked against `Valid` by LeanDB itself (the
+    `GameRow` invariant, LDB-16): a row that fails is refused with
+    `.invariant`, surfaced here as `.corrupt`.
   * Commits are compare-and-swap on the stored row (LeanDB `update`), inside
     one `BEGIN IMMEDIATE` transaction that also re-checks authority against
     the row being replaced and writes the retry receipt. A stale revision is
@@ -76,6 +78,7 @@ private def dbErr : DbError → RepoError
   | .stale .. => .conflict
   | .notFound .. => .notFound
   | .duplicate .. => .conflict
+  | .invariant t n => .corrupt s!"{t}: {n}"
   | e => .db (toString e)
 
 /-- Load a visible game inside the current transaction (the id and the policy
@@ -86,9 +89,8 @@ def loadVisibleDb (p : PlayerId) (gid : GameId) : DbM (Except RepoError (Option 
   match rows[0]? with
   | none => return .ok none
   | some s =>
-    match reconstruct s with
-    | .error w => return .error (.corrupt w)
-    | .ok g => return if visible p g then .ok (some (s, g)) else .ok none
+    let g := reconstruct s
+    return if visible p g then .ok (some (s, g)) else .ok none
 
 def receiptDb (p : PlayerId) (op key : String) : DbM (Option (Stored ReceiptRow)) := do
   let pred : Pred [ReceiptRow] :=
@@ -132,11 +134,9 @@ def commitDb (p : PlayerId) (w : Write) (keyed : Option Keyed) (build : Game →
     -- (2) write
     let written ← match w with
       | .insertGame g =>
-        if let .error why := Valid.stored.guardWrite g then pure (Except.error (RepoError.corrupt why)) else
         let s ← insert GameRow (GameRow.ofGame g)
-        pure (.ok { g with id := ⟨s.id.toInt64.toNatClampNeg⟩ })
+        pure (Except.ok { g with id := ⟨s.id.toInt64.toNatClampNeg⟩ })
       | .updateGame old new =>
-        if let .error why := Valid.stored.guardWrite new then pure (.error (RepoError.corrupt why)) else
         -- authority and revision re-checked against the row being replaced,
         -- under the write lock (BEGIN IMMEDIATE)
         match ← loadVisibleDb p old.id with
@@ -185,9 +185,21 @@ private def flatten : Except RepoError (Except RepoError α) → Except RepoErro
   | .ok r => r
   | .error e => .error e
 
+/-- An instance created before LAPI-04 carries `schemaV1`'s fingerprint.
+    Move it to `schema`: rename the three unique indexes (same columns) and
+    record the `game_row` invariant. Non-destructive, one transaction.
+    Any other fingerprint is left for `openDb` to accept or refuse. -/
+def migrateV1 (path : System.FilePath) : IO Unit := do
+  let some (some fp, _) ← instanceInfo path | return
+  unless fp == schemaV1Fingerprint do return
+  match ← LeanDb.migrate path schema (apply := true) with
+  | .ok _ => pure ()
+  | .error e => throw (IO.userError s!"migrate {path} from the v1 schema: {e}")
+
 /-- Open `path` with one write connection (on a dedicated writer thread)
     and `readers` read-only connections (round-robin on reader threads). -/
 def Runtime.open (path : System.FilePath) (readers : Nat := 4) (queue : Nat := 1024) : IO Runtime := do
+  migrateV1 path
   let writeConn ← match ← openDb path schema with
     | .ok c => pure c
     | .error e => throw (IO.userError s!"open {path}: {e}")
@@ -219,9 +231,7 @@ def Runtime.repo (rt : Runtime) : Repo where
       let total ← countP (visiblePred p)
       let rows ← fetchFiltered GameRow (visiblePred p) (window := { limit := some lim, offset := off })
       let games := rows.toList.map reconstruct
-      match games.mapM id with
-      | .ok gs => return .ok (gs.filter (visible p), total)
-      | .error w => return .error (.corrupt w))
+      return .ok (games.filter (visible p), total))
   receipt p op key := do
     return (← readOn rt (receiptDb p op key)).map (·.map fun r => receiptOfRow r.val)
   commit p w keyed build := do
