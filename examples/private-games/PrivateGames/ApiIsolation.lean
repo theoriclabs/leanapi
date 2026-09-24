@@ -52,27 +52,27 @@ theorem keyed_answer [ToResponse α] {p : PlayerId} {w₁ w₂ : World} (h : Sam
   · revert hd
     cases decide w₁ <;> cases decide w₂ <;> simp [Decided.result] <;> intros <;> subst_vars <;> rfl
 
-theorem openGame_answer {p : PlayerId} {w₁ w₂ : World} (h : SameView p w₁ w₂)
+theorem openGame_answer {me : Auth PlayerId} {w₁ w₂ : World} (h : SameView me.val w₁ w₂)
     (body : Body OpenBody) (key : KeyHeader) :
-    (openGame ⟨p⟩ body key w₁).2 = (openGame ⟨p⟩ body key w₂).2 := by
+    (openGame me body key w₁).2 = (openGame me body key w₂).2 := by
   apply keyed_answer h
   simp only [h.players, h.nextGame]
   split
   · rfl
   · split <;> rfl
 
-theorem playMove_answer {p : PlayerId} {w₁ w₂ : World} (h : SameView p w₁ w₂)
+theorem playMove_answer {me : Auth PlayerId} {w₁ w₂ : World} (h : SameView me.val w₁ w₂)
     (rev : IfMatchRequired ETagRev) (body : Body MoveBody) (id : Path GameId) (key : KeyHeader) :
-    (playMove ⟨p⟩ rev body id key w₁).2 = (playMove ⟨p⟩ rev body id key w₂).2 := by
+    (playMove me rev body id key w₁).2 = (playMove me rev body id key w₂).2 := by
   apply keyed_answer h
   simp only [h.games]
   split
   · rfl
   · split <;> rfl
 
-theorem resign_answer {p : PlayerId} {w₁ w₂ : World} (h : SameView p w₁ w₂)
+theorem resign_answer {me : Auth PlayerId} {w₁ w₂ : World} (h : SameView me.val w₁ w₂)
     (id : Path GameId) (key : KeyHeader) :
-    (resign ⟨p⟩ id key w₁).2 = (resign ⟨p⟩ id key w₂).2 := by
+    (resign me id key w₁).2 = (resign me id key w₂).2 := by
   apply keyed_answer h
   simp only [h.games]
   split

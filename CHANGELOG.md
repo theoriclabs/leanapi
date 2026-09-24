@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased: only authentication makes an `Auth`
+
+- `Auth α` has a private constructor. Application code can no longer write `⟨otherUser⟩ : Auth UserId`, so a handler, and a row-policy view built from `me` (`ReadAs.forAuth`), acts for the caller the request authenticated. Pinned with `#guard_msgs` in `tests/Tests/Endpoint.lean`.
+- Lean 4 has no friend modules, so `DbEndpoint` makes its `Auth` through `LeanApi.Internal.authOf`. `scripts/check_private_escapes.sh` (in CI) refuses any use of `LeanApi.Internal` outside `LeanApi/` and `tests/`.
+- **Proof obligation change:** the `Preserved` and `Isolated` obligations of an `Auth α → β` handler quantify over `a : Auth α` (with `V.same a.val`) instead of `a : α` with `f ⟨a⟩`. Proofs receive the actor and never construct one. Existing proofs replace `⟨me⟩` by `me`; private-games' `openGame_answer`, `playMove_answer` and `resign_answer` now take `me : Auth PlayerId` with `SameView me.val`.
+- CI also checks the three example posts (`docs/blog/{helpdesk,billing,scheduling}.md`) against the code.
+
+## Unreleased: three examples of business rules enforced across boundaries
+
+- `examples/helpdesk`, `examples/billing`, `examples/scheduling`: multi-tenant help desk (internal notes never reach customers), usage-based billing (each event billed once; finalized invoices never change), Calendly-style booking (no double booking; free/busy reveals only intervals). Each has a checked blog post in `docs/blog/`.
+- `examples/policy-view`: the row-level policy prototype (DESIGN §7.5) the examples build on. `scripts/check_blog.sh --post PATH` checks any post.
+
 ## Unreleased: license
 
 - **LeanAPI is now under the Business Source License 1.1** (`LICENSE`), from version 0.6.0. Each version converts to the MIT License four years after it is published. Production use is free for organizations with 100 or fewer people and US $100 million or less in annual revenue, unless the use is a Competing Service (see `LICENSE`). Versions up to v0.5.0 remain under the MIT License.

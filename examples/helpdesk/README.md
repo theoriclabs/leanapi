@@ -93,8 +93,8 @@ filters the ticket id in Lean, because `PolicyView.ReadAs` has no
 example adds them in the same pattern: private constructor, default deny,
 every insert/update decides `WritePolicy.admit`. `TxAs` is indexed by `Who`,
 not `Actor`, because `Actor.mk` is module-private in PolicyView. Entry is
-`TxAs.forAuth` from the request's `Auth`. Forging `Auth` is the same
-framework caveat PolicyView documents.
+`TxAs.forAuth` from the request's `Auth`, whose constructor is private:
+only authentication makes one.
 
 **Closed tickets.** `mayPost` / `mayAdvance` are domain checks on the ticket
 the view already returned. Status is not a column on the message, so the

@@ -44,3 +44,7 @@ jobs:
         run: ./scripts/check_readme.sh
       - name: EVIDENCE.md claim tables match the property registry
         run: ./scripts/gen_evidence.sh --check
+      - name: Only authentication makes an Auth (no framework internals outside LeanApi/)
+        run: ./scripts/check_private_escapes.sh
+      - name: Example posts are checked against the code
+        run: for p in helpdesk billing scheduling; do ./scripts/check_blog.sh --post docs/blog/$p.md; done

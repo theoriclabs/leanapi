@@ -30,7 +30,7 @@ Three tables: `PersonRow` (handle + token digest), `AvailabilityRow` (host, slot
 
 **Details and cancel** go through `Policy Calendar PersonId BookingRow` (host or invitee) and a write view `TxnAs`: delete only a row already read through the view. `rule` equals `visibleTo` through `reconstruct` (`bookingPolicy_rule_eq_visibleTo`); `WritePolicy.admits` equals “you are the invitee” through `ofBooking`. The SQL `scope` is written again and is not proved to match `rule`. `PersonRow` has no policy: default deny.
 
-Read policies reuse `PolicyView.Policy` (`import PolicyView.Policy`, unchanged). Writes and the projection are in this example: `WritePolicy`, `TxnAs`, `ProjRead`. `Auth`'s constructor is still public, so `TxAs.forAuth` trusts its caller — the same caveat as `ReadAs.forAuth`.
+Read policies reuse `PolicyView.Policy` (`import PolicyView.Policy`, unchanged). Writes and the projection are in this example: `WritePolicy`, `TxnAs`, `ProjRead`. `Auth`'s constructor is private, so `forAuth` acts for the authenticated caller and no one else.
 
 Proofs are about **pure domain functions** (`aligned_slots_disjoint`, `retitle_preserves_freeBusy`, `cancel_frees`, …). At the pinned LeanDB, `DbState` is empty in proofs, so nothing is claimed as a theorem over the running database.
 

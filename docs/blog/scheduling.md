@@ -236,6 +236,7 @@ About pure functions, not `DbState`:
 - `GET` cannot use `publish` or `book` (`#guard_msgs` on `.get … publish`)
 - `ProjRead` / `ReadAs` / `TxnAs` constructors are private (`sneakyBusy`, `sneakyRead`, `sneakyWrite`)
 - `Actor` cannot be forged (`spoof`)
+- An `Auth` for someone else: its constructor is private, so only authentication makes one (`#guard_msgs` in `tests/Tests/Endpoint.lean`; CI's `check_private_escapes.sh` keeps the framework's one internal constructor out of application code)
 - no `Policy` for `PersonRow` (`sneakyPeople`)
 - `InsertError BookingRow` must handle `.duplicate .bySlot`; `nomatch` on that index is refused
 - `Slot`, `Title`, `PersonId` are smart constructors shared by HTTP and columns; unaligned starts never reach `book`

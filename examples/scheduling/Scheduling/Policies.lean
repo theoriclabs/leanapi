@@ -100,8 +100,8 @@ def scopedGet (α : Type) [Entity α] {s P : Type} [IsSchema s] [Policy s P α]
 
 Parameterized by the actor value, not `PolicyView.Actor` (that constructor
 lives in `PolicyView.Policy`). The private constructor still stops an
-unscoped `Txn` being wrapped in. `Auth`'s constructor is public today, so
-`forAuth` trusts its caller — the same caveat as `ReadAs.forAuth`. -/
+unscoped `Txn` being wrapped in. `Auth`'s constructor is private, so
+`forAuth` acts for the authenticated caller and no one else. -/
 
 structure TxnAs (σ : Type) (s : Type) [IsSchema s] {P : Type} (p : P)
     (ε : Type) (α : Type) : Type 1 where

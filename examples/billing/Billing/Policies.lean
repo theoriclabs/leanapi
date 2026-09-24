@@ -8,8 +8,8 @@ Who may see or change which rows is declared once per table as a `Policy`
   private constructor, insert/update only with `Owns` evidence, `Seen`
   handles only for rows the actor's policy admits.
 
-  `Auth`'s constructor is still public (PolicyView README); once it is
-  private, only authentication can supply the actor.
+  `Auth`'s constructor is private, so only authentication supplies the
+  actor.
 -/
 import PolicyView.Policy
 import Billing.Schema

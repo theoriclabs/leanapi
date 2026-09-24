@@ -199,7 +199,7 @@ theorem api_inductive (I : DbState App → Prop)
     · exact fun _ _ => trivial
     · exact fun _ => trivial
     · exact fun _ => trivial
-    · exact fun me b => hjoin ⟨me⟩ b
+    · exact fun me b => hjoin me b
     · exact fun b => hsignup b
     · exact fun i => hdrop i)
 
@@ -242,8 +242,8 @@ theorem getMember_isolated (p : Me) (env : Env) (r : Req) {s₁ s₂ : DbState A
     have hb : ∀ (st : DbState App) (k : Option (Stored Member) → Read App (Except NotFound MemberView)),
         Read.denote (Read.get Member ⟨Int64.ofNat a⟩ >>= k) st =
           Read.denote (k (Read.denote (Read.get Member ⟨Int64.ofNat a⟩) st)) st := fun _ _ => rfl
-    show ToResponse.toRes (Read.denote (getMember ⟨who⟩ ⟨a⟩) s₁) =
-      ToResponse.toRes (Read.denote (getMember ⟨who⟩ ⟨a⟩) s₂)
+    show ToResponse.toRes (Read.denote (getMember who ⟨a⟩) s₁) =
+      ToResponse.toRes (Read.denote (getMember who ⟨a⟩) s₂)
     unfold getMember
     rw [hb, hb]
     revert h

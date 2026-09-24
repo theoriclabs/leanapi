@@ -285,9 +285,8 @@ error: failed to synthesize instance of type class
 
 `TxAs.mk` is private too: an unscoped `Txn` cannot be put in the write
 view (`#guard_msgs` `sneakyWrite` in the test file). `Actor.mk` is private
-in PolicyView, so a program cannot act as someone else that way. `Auth`'s
-constructor is still public in the framework; that is the same caveat
-PolicyView documents, not a help-desk proof.
+in PolicyView, and `Auth`'s constructor is private in the framework, so a
+program cannot act as someone else: only authentication makes an `Auth`.
 
 <!-- check: compile -->
 ```lean
@@ -343,6 +342,7 @@ The compiler refuses:
 - an unscoped `Read` inside `ReadAs`, a forged `Actor`, a read of `OrgRow`
   (`#guard_msgs` in `Helpdesk/Policies.lean`);
 - an unscoped `Txn` inside `TxAs` (`sneakyWrite`);
+- an `Auth` for someone else: its constructor is private, so only authentication makes one (`#guard_msgs` in `tests/Tests/Endpoint.lean`; CI's `check_private_escapes.sh` keeps the framework's one internal constructor out of application code);
 - a `Checked MessageRow` that fails `Message.ok` (customer internal notes
   have no `checkedCustomer` path).
 

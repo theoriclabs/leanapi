@@ -55,10 +55,9 @@ def getSql (α : Type) [Entity α] [Policy s P α] (p : P) (id : LeanDb.Id α) :
 end ReadAs
 
 /-- Bridge for `DbApi` handlers today: the scoped program for the request's
-    authenticated actor, as the `Read` a handler returns. Caveat: `Auth`'s
-    constructor is still public (`LeanApi/Http/Endpoint.lean`), so today an
-    app could forge an `Auth`; once it is private, only authentication can
-    supply `me`. -/
+    authenticated actor, as the `Read` a handler returns. `Auth`'s
+    constructor is private (`LeanApi/Http/Endpoint.lean`), so only
+    authentication supplies `me`: an application cannot forge one. -/
 def ReadAs.forAuth {s : Type} [IsSchema s] {P α : Type} (me : LeanApi.Auth P)
     (prog : (a : Actor P) → ReadAs s a α) : Read s α :=
   (prog ⟨me.val⟩).prog

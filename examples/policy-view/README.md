@@ -37,5 +37,4 @@ player 1 lists: [game 1 (1 vs 2)]
   - new and changed rows admitted by the policy, by proof or by a decided check with a typed failure.
 - **Proofs.** The theorems of DESIGN §7.5 (restricted reads, frame, write confinement) need LeanDB M15. At the pinned LeanDB, `DbState` has no content in proofs, so any theorem over `DbState` is vacuous (docs/reviews/2026-09-23-review-lapi-02-05-m14.md, H1).
 - **`first`, `page`, `count`.** These need the policy's query to be exact, which `policy%` would check when a policy is declared. The prototype uses `Read.all`.
-- **`Auth`'s constructor is public today,** so `ReadAs.forAuth` trusts its caller. Making it private is a framework change.
 - **Policies that read other tables** (membership, sharing) are open. Store what a policy needs on the row itself, so every policy is single-table.

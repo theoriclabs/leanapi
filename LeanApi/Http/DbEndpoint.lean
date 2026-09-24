@@ -31,6 +31,7 @@ namespace LeanApi
 
 open Lean LeanDb
 
+
 /-! ## The meaning of a read program -/
 
 instance {s : Type} [IsSchema s] [ToResponse ρ] : Handler (DbState s) (Read s ρ) where
@@ -349,13 +350,13 @@ instance {s : Type} [IsSchema s] {β : Type u} [A : AuthenticatesDb s α] [V : V
     [H : Handler (DbState s) β] [D : DbHandler s β] : DbHandler s (Auth α → β) where
   prog f env r i :=
     DbProg.bindRead (A.authProg env r) fun
-      | .ok who => D.prog (f ⟨who⟩) env r i
+      | .ok who => D.prog (f (Internal.authOf who)) env r i
       | .error .missing => DbProg.ret (unauthorized A.challenge)
       | .error (.invalid _) => DbProg.ret (unauthorized A.challenge "invalid credentials")
   errorsProg := D.errorsProg
   prog_denote f env r st i := by
     show DbProg.denote (DbProg.bindRead _ _) st = (match Read.denote (A.authProg env r) st with
-      | .ok who => H.step (f ⟨who⟩) env r st i
+      | .ok who => H.step (f (Internal.authOf who)) env r st i
       | .error .missing => (unauthorized A.challenge, st)
       | .error (.invalid _) => (unauthorized A.challenge "invalid credentials", st))
     rw [DbProg.denote_bindRead]

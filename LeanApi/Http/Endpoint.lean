@@ -140,9 +140,29 @@ structure IfMatch (α : Type) where
 structure IfMatchRequired (α : Type) where
   val : α
 
-/-- The authenticated actor, of the type the scheme produces. -/
+/-- The authenticated actor, of the type the scheme produces.
+
+    The constructor is private: an `Auth α` is made only by authentication
+    (the `FromRequest` and `Handler` instances below, and `DbEndpoint`'s
+    through `Internal.authOf`). Application code cannot write
+    `⟨otherUser⟩ : Auth UserId`, so a handler, or a row-policy view built
+    from `me`, acts for the caller the request authenticated and no one else.
+    `scripts/check_private_escapes.sh` (CI) refuses any use of
+    `LeanApi.Internal` outside `LeanApi/` and `tests/`. -/
 structure Auth (α : Type) where
+  private mk ::
   val : α
+
+/-! Framework internals. Lean 4 has no friend modules, so the framework's
+    other files reach private constructors through this namespace, and CI
+    (`scripts/check_private_escapes.sh`) refuses its use anywhere else. -/
+namespace Internal
+
+/-- An `Auth` for an actor that authentication has produced. For the
+    framework's authentication paths only (`DbEndpoint`). -/
+def authOf (who : α) : Auth α := ⟨who⟩
+
+end Internal
 
 /-- A fresh random token (24 bytes of the request's entropy, base64url):
     randomness as an input. -/
@@ -656,10 +676,12 @@ instance {β : Type u} [A : Authenticates σ α] [V : ViewOf σ α] [H : Handler
     · exact H.step_safe hs _ env r s _
     · rfl
     · rfl
-  Preserved I f := ∀ a, H.Preserved I (f ⟨a⟩)
+  -- The obligations quantify over `Auth α` values: a proof receives the
+  -- actor and never constructs one (the constructor is private).
+  Preserved I f := ∀ a : Auth α, H.Preserved I (f a)
   step_preserved I f hp env r s i hs := by
     split
-    · exact H.step_preserved I _ (hp _) env r s _ hs
+    · exact H.step_preserved I _ (hp ⟨_⟩) env r s _ hs
     · exact hs
     · exact hs
   ErrStable R := H.ErrStable R
@@ -667,11 +689,11 @@ instance {β : Type u} [A : Authenticates σ α] [V : ViewOf σ α] [H : Handler
   Isolated R f :=
     (∀ env r s₁ s₂, R env r s₁ s₂ → A.authenticate s₁ env r = A.authenticate s₂ env r) ∧
     (∀ env r s₁ s₂ a, R env r s₁ s₂ → A.authenticate s₁ env r = .ok a → V.same a s₁ s₂) ∧
-    ∀ a, H.Isolated (fun env r s₁ s₂ => R env r s₁ s₂ ∧ V.same a s₁ s₂) (f ⟨a⟩)
+    ∀ a : Auth α, H.Isolated (fun env r s₁ s₂ => R env r s₁ s₂ ∧ V.same a.val s₁ s₂) (f a)
   step_isolated R f hI env r s₁ s₂ i h := by
     rw [← hI.1 env r s₁ s₂ h]
     cases ha : A.authenticate s₁ env r with
-    | ok a => exact H.step_isolated _ _ (hI.2.2 a) env r s₁ s₂ _ ⟨h, hI.2.1 env r s₁ s₂ a h ha⟩
+    | ok a => exact H.step_isolated _ _ (hI.2.2 ⟨a⟩) env r s₁ s₂ _ ⟨h, hI.2.1 env r s₁ s₂ a h ha⟩
     | error e => cases e <;> rfl
 
 instance [ToResponse ρ] : Handler σ (Reads σ ρ) where

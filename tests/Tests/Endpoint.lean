@@ -35,6 +35,15 @@ example : Api Nat := api! [.get "/counter/{a}/{b}" peekAt]
 #guard_msgs (error) in
 example : Api Nat := api! [.get "/counter/{a}" peekAt, .get "/counter/{b}" peekAt]
 
+-- Only authentication makes an `Auth`: application code cannot act as someone else.
+/-- error: Invalid `⟨...⟩` notation: Constructor for `LeanApi.Auth` is marked as private -/
+#guard_msgs (error) in
+example : Auth Nat := ⟨42⟩
+
+/-- error: Unknown constant `LeanApi.Auth.mk` -/
+#guard_msgs (error) in
+example : Auth Nat := Auth.mk 42
+
 /-- An error status is 4xx/5xx by type: a 200 "error" does not typecheck. -/
 example : ∀ s : ErrorStatus, s.1 ≠ 200 := fun s h => by have := s.2.1; omega
 
