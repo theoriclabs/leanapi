@@ -1,6 +1,6 @@
 name = "leanapi"
 version = "0.6.0"
-defaultTargets = ["LeanApi"]
+defaultTargets = ["LeanApi", "PolicyView"]
 
 # Crypto dependency (M2), pinned by tag.
 [[require]]
@@ -50,3 +50,14 @@ globs = ["Tests.+"]
 name = "leanapi_tests"
 srcDir = "tests"
 root = "Main"
+
+# Prototype of DESIGN.md §7.5: row-level policies as a LeanDB view.
+[[lean_lib]]
+name = "PolicyView"
+srcDir = "examples/policy-view"
+globs = ["PolicyView.+"]
+
+[[lean_exe]]
+name = "policyview"
+srcDir = "examples/policy-view"
+root = "PolicyViewMain"

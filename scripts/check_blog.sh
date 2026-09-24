@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Blog check: every ```lean block in docs/blog/leanapi.md is checked as the
+# Blog check: every ```lean block in a blog post (default docs/blog/leanapi.md)
+# is checked as the
 # `<!-- check: … -->` line directly above it says:
 #
 #   excerpt <path>      the block appears verbatim (up to whitespace) in <path>
@@ -11,12 +12,21 @@
 # `blog-check prelude` comment at the top of the post. A ```lean block without
 # a marker is an error: every example must be checked.
 #
-#   ./scripts/check_blog.sh            check (exit 1 on any failure)
-#   ./scripts/check_blog.sh --verbose  also print Lean's output per failing block
+#   ./scripts/check_blog.sh                      check (exit 1 on any failure)
+#   ./scripts/check_blog.sh --verbose            also print Lean's output per failing block
+#   ./scripts/check_blog.sh --post PATH [...]    check another post
 set -euo pipefail
 cd "$(dirname "$0")/.."
 post=docs/blog/leanapi.md
-verbose=${1:-}
+verbose=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --post) post="${2:?--post needs a path}"; shift 2;;
+    --verbose) verbose=--verbose; shift;;
+    *) echo "unknown argument: $1" >&2; exit 2;;
+  esac
+done
+[ -f "$post" ] || { echo "no such post: $post" >&2; exit 2; }
 work=$(mktemp -d -t blogcheck)
 python3 - "$post" "$work" <<'PY'
 import json, re, sys
