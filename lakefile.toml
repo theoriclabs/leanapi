@@ -1,6 +1,6 @@
 name = "leanapi"
 version = "0.6.0"
-defaultTargets = ["LeanApi", "PolicyView"]
+defaultTargets = ["LeanApi", "PolicyView", "Helpdesk"]
 
 # Crypto dependency (M2), pinned by tag.
 [[require]]
@@ -61,3 +61,14 @@ globs = ["PolicyView.+"]
 name = "policyview"
 srcDir = "examples/policy-view"
 root = "PolicyViewMain"
+
+# Multi-tenant help desk: row-level policy with two kinds of actor.
+[[lean_lib]]
+name = "Helpdesk"
+srcDir = "examples/helpdesk"
+globs = ["Helpdesk.+"]
+
+[[lean_exe]]
+name = "helpdesk"
+srcDir = "examples/helpdesk"
+root = "HelpdeskMain"
