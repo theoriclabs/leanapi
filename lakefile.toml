@@ -1,6 +1,6 @@
 name = "leanapi"
 version = "0.6.0"
-defaultTargets = ["LeanApi", "PolicyView", "Helpdesk", "Billing"]
+defaultTargets = ["LeanApi", "PolicyView", "Helpdesk", "Billing", "Scheduling"]
 
 # Crypto dependency (M2), pinned by tag.
 [[require]]
@@ -82,3 +82,14 @@ globs = ["Billing.+"]
 name = "billing"
 srcDir = "examples/billing"
 root = "BillingMain"
+
+# Calendly-style booking: no double-booking, free/busy is a projection.
+[[lean_lib]]
+name = "Scheduling"
+srcDir = "examples/scheduling"
+globs = ["Scheduling.+"]
+
+[[lean_exe]]
+name = "scheduling"
+srcDir = "examples/scheduling"
+root = "SchedulingMain"

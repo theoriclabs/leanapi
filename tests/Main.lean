@@ -13,6 +13,7 @@ import Tests.DbEndpoint
 import Tests.Idempotency
 import Tests.Helpdesk
 import Tests.Billing
+import Tests.Scheduling
 
 open LeanApi.Test
 
@@ -31,6 +32,7 @@ def main : IO UInt32 := do
     Tests.Idempotency.run
     Tests.HelpdeskHttp.run
     Tests.Billing.run
+    Tests.Schedule.run
     : TestM Unit).run {}
   IO.println s!"\n{r.passed} passed, {r.failed.length} failed"
   return if r.failed.isEmpty then 0 else 1
