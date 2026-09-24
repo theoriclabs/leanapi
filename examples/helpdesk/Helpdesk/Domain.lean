@@ -57,6 +57,9 @@ def UserId.ofNat! (n : Nat) : UserId :=
 def TicketId.ofNat! (n : Nat) : TicketId :=
   if h : n < 2^63 then ⟨n, h⟩ else ⟨0, by decide⟩
 
+def MessageId.ofNat! (n : Nat) : MessageId :=
+  if h : n < 2^63 then ⟨n, h⟩ else ⟨0, by decide⟩
+
 instance : ToString OrgId := ⟨fun o => toString o.n⟩
 instance : ToString UserId := ⟨fun u => toString u.n⟩
 instance : ToString TicketId := ⟨fun t => toString t.n⟩
