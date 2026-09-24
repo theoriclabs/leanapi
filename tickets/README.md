@@ -27,8 +27,8 @@ These are the LeanAPI side of the LeanDB work in [docs/QUERIES.md](../docs/QUERI
 | --- | --- | --- | --- | --- | --- |
 | [LAPI-10](LAPI-10-framework-computed-retry-fingerprints.md) | Retry fingerprints computed by the framework, not written by hand | P1 | M | none | done |
 | [LAPI-11](LAPI-11-database-endpoints-read-like-the-rest.md) | Endpoints over LeanDB read like the rest: one `api!`, no `fun _ =>`, no name clash | P2 | M | LAPI-02 | done |
-| [LAPI-12](LAPI-12-private-games-no-runtime-checks-a-type-can-carry.md) | private-games: no runtime checks where a type can carry the fact | P2 | S | LeanDB: reads return invariant evidence (part 2); easier after LAPI-08 | part 1 done; part 2 waits for LeanDB `Valid α` reads (in progress on `ldb-m15-state`) |
-| [LAPI-13](LAPI-13-handler-types-say-the-game-is-visible.md) | Handler types say the game is visible to the caller: `GameView me` | P1 | M | LAPI-12 part 1; LeanDB: reads return filter evidence (final form) | open |
+| [LAPI-12](LAPI-12-private-games-no-runtime-checks-a-type-can-carry.md) | private-games: no runtime checks where a type can carry the fact | P2 | S | LeanDB: reads return invariant evidence (part 2); easier after LAPI-08 | done (part 2 on LeanDB M15-pre `79cfbcc`) |
+| [LAPI-13](LAPI-13-handler-types-say-the-game-is-visible.md) | Handler types say the game is visible to the caller: `GameView me` | P1 | M | LAPI-12 part 1; LeanDB: reads return filter evidence (final form) | open; mostly subsumed by DESIGN §7.5 views (LeanDB M16), whose rows carry the policy's evidence |
 
 ```mermaid
 flowchart LR
@@ -51,8 +51,8 @@ flowchart LR
     L10["LAPI-10"] -.-> L8
 ```
 
-**Pin (2026-09-23):** LeanDB M14c `afe4544`. LAPI-02…05 build and pass on it; the only change needed was `WithReferrers` taking `ReferencedBy.Restricting` (M14c's restrict/cascade split).
+**Pin (2026-09-24):** LeanDB M15-pre `79cfbcc` (`ldb-m15-state`): a lawful `DbState` and reads that return `Valid` rows. Migration: `Txn` and `Tx` take the schema instance, reads and `Txn.update` use `Valid α`, view code states `IsSchema.Has`; private-games' `writeStep` lost its runtime check (LAPI-12 part 2). Earlier: **Pin (2026-09-23):** LeanDB M14c `afe4544`. LAPI-02…05 build and pass on it; the only change needed was `WithReferrers` taking `ReferencedBy.Restricting` (M14c's restrict/cascade split).
 
-**Finding (2026-09-23):** at LeanDB `64c768e`, M14b `d33d067` and still at M14c `afe4544`, `DbState` has no logical content (`DbState.get` is `implemented_by` with an empty-table body), so every theorem over `DbState` is trivially true. The compiled `get`/`set` disagree with those bodies, so `native_decide` can prove `False` about a `DbState` (a three-line proof; the axiom audit rejects it because it lists the native axiom). See LAPI-02's status. LeanDB M15 must fix this before LAPI-06/07.
+**Finding (2026-09-23), fixed in LeanDB M15-pre (`79cfbcc`, pinned 2026-09-24):** at LeanDB `64c768e`, M14b `d33d067` and still at M14c `afe4544`, `DbState` has no logical content (`DbState.get` is `implemented_by` with an empty-table body), so every theorem over `DbState` is trivially true. The compiled `get`/`set` disagree with those bodies, so `native_decide` can prove `False` about a `DbState` (a three-line proof; the axiom audit rejects it because it lists the native axiom). See LAPI-02's status. LeanDB M15 must fix this before LAPI-06/07.
 
 LAPI-01 can start as soon as LeanDB tags its M13 release. LAPI-02 and LAPI-04 can start against LeanDB's M14 branch before it is released, pinned by commit.

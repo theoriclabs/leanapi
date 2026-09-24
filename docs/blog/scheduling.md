@@ -13,7 +13,7 @@ exists in this tree. Theorems are about pure domain functions, not DbState.
 
 Two people must not occupy the same 30 minutes on one host's calendar. Anyone looking at that host should see busy intervals, not the meeting title, the notes, or who is coming. Those two rules are the product. They fail, in ordinary backends, in the gaps between the API, the handler, the query and the database: a unique index without a typed clash, a list endpoint that forgets to drop a column, a 403 that admits the booking exists.
 
-This post is a small Calendly-style service on LeanAPI and LeanDB. Each guarantee is either a theorem about a pure function, a compile error, a named test, or something still planned. Nothing about the running database is called a proof: at the pinned LeanDB, `DbState` is empty inside a proof.
+This post is a small Calendly-style service on LeanAPI and LeanDB. Each guarantee is either a theorem about a pure function, a compile error, a named test, or something still planned. Nothing about the running database is called a proof: that needs LeanDB M15 (the laws for such proofs, and the check that execution follows the meaning).
 
 ## How this usually goes wrong
 

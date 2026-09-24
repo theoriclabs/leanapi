@@ -132,7 +132,7 @@ Content-Type: application/problem+json
 {"detail":"event id already used for a different event","status":409,"title":"Conflict","type":"about:blank"}
 ```
 
-A reused id with a *different* quantity is not a silent replay of the first event. That would hide the sender's bug. LeanAPI's retry fingerprints (LAPI-10) refuse the same situation for HTTP keys; we do the same for the domain id. The status is **409**, not 422: the body is well-typed (422 is for values that fail their constructors), and the conflict is with stored state, like paying a draft. The problem text does not include the stored event — only that the id is taken. Test `same id, other quantity: 409`. GET after the conflict still returns 3 (`stored event unchanged after conflict`). Six concurrent posts of the *same* payload are all 201, at least one replay (`concurrent ingest all 201`). That is not a theorem about `DbState`: at this LeanDB pin, table contents are empty inside a proof, so a statement over the database would be vacuous.
+A reused id with a *different* quantity is not a silent replay of the first event. That would hide the sender's bug. LeanAPI's retry fingerprints (LAPI-10) refuse the same situation for HTTP keys; we do the same for the domain id. The status is **409**, not 422: the body is well-typed (422 is for values that fail their constructors), and the conflict is with stored state, like paying a draft. The problem text does not include the stored event — only that the id is taken. Test `same id, other quantity: 409`. GET after the conflict still returns 3 (`stored event unchanged after conflict`). Six concurrent posts of the *same* payload are all 201, at least one replay (`concurrent ingest all 201`). That is tested, not proved about the database: LeanDB's laws for such proofs, and the evidence that the running service follows its meaning, are still being built (LeanDB M15).
 
 ## The total is the sum of the lines
 
@@ -304,7 +304,7 @@ example (log : List UsageEvent) (e : UsageEvent) :
 
 ## What exactly is guaranteed
 
-No claim here is stronger than its evidence. There are no theorems over `DbState`, `Read.denote`, or `Txn.denote`. At LeanDB `afe4544`, those would be vacuous (review H1).
+No claim here is stronger than its evidence. There are no theorems over `DbState`, `Read.denote`, or `Txn.denote`. At the pinned LeanDB they would describe LeanDB's meaning of the database, not yet the running service, and the laws that make them practical are still LeanDB M15 work.
 
 ### Proved
 

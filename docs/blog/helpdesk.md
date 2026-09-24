@@ -8,8 +8,8 @@ open Helpdesk LeanDb LeanApi PolicyView
 -->
 <!--
 Every `lean` block is checked by `scripts/check_blog.sh`. Claims about the
-running service are type-checked or tested, never proved: at the pinned
-LeanDB, `DbState` is empty in proofs (review H1).
+running service are type-checked or tested, never proved: that needs
+LeanDB M15 (the laws for such proofs, and the check that execution follows the meaning).
 -->
 
 # A help desk that cannot leak an internal note
@@ -385,6 +385,6 @@ proofs, execution agreeing with meaning):
   lambda, or LeanDB view laws that the SQL is the policy. Today they are
   written twice.
 
-Until M15, the `DbState` statements would be vacuous. This example does
-not claim them. The running help desk applies `scope` in SQL and the type
+Until LeanDB M15, `DbState` statements could not be carried to the running
+service. This example does not claim them. The running help desk applies `scope` in SQL and the type
 of every handler; `rule` is proved to imply the domain function.

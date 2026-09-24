@@ -18,7 +18,8 @@ The code blocks match the LeanDB-backed API (`PrivateGames/DbApi.lean`, which
 LAPI-08 moves to `Api.lean`). Four theorem statements describe proofs that do
 not exist yet: `api_noninterference` and `api_restricted_reads` (LAPI-07),
 `api_keyed_replay_after` (LAPI-08) and `DbApi.serve_eq_step` (LAPI-06). They
-wait on LeanDB M15, which gives `DbState` real content in proofs. The check
+wait on LeanDB M15: `DbState` has real content in proofs since M15-pre; the laws
+and the check that execution follows the meaning (M15a, M15b) remain. The check
 fails until then. It must pass before this is published.
 -->
 
@@ -80,7 +81,7 @@ def GameRow.visibleTo (p : PlayerId) : Query Games [GameRow] (Stored GameRow) :=
   (Query.from GameRow).where' fun g => g.val.x == pref p || g.val.o == pref p
 
 /-- The game with id `gid`, if `p` plays in it. -/
-def visibleGame (p : PlayerId) (gid : GameId) : Read Games (Option (Stored GameRow)) :=
+def visibleGame (p : PlayerId) (gid : GameId) : Read Games (Option (LeanDb.Valid GameRow)) :=
   Read.first ((GameRow.visibleTo p).where' fun g => g.id == gidRef gid)
 ```
 

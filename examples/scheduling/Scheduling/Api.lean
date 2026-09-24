@@ -171,7 +171,9 @@ def readBooking (me : Auth PersonId) (id : Path BookingId) :
 def cancelBooking (me : Auth PersonId) (id : Path BookingId) :
     Tx Calendar ScheduleError NoContent :=
   TxAs.forAuth me fun _p => fun {_σ} => do
-    match ← TxnAs.deleteVisible BookingRow (bidRef id.val) with
+    let r : Option (Except (DeleteError Calendar BookingRow) (Stored BookingRow)) ←
+      TxnAs.deleteVisible BookingRow (bidRef id.val)
+    match r with
     | none => TxnAs.throw .hidden
     | some (.error .gone) => TxnAs.throw .hidden
     | some (.error (.restricted w _)) => nomatch w

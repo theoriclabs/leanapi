@@ -54,4 +54,8 @@
 - An opponent id ≥ 2^63 in a body still answers 422 naming `body.opponent` (a new test).
 - 432 tests pass (3 runs; the differential test included), the axiom audit passes (168), and EVIDENCE.md is regenerated (the `Checked` row now cites `Game.bounded`, `pid_pref`).
 
-**Part 2** (`writeStep`'s invariant re-check): not done. At the pinned LeanDB `afe4544`, `Read.get`/`first` return `Stored α`, with no evidence. LeanDB's uncommitted working tree (`ldb-m15-state`) already adds `Valid α` (a stored row with `Invariant α r.val`), returns it from `Read.get`/`lookup`, and makes `Current` carry `property`. Once that lands and is pinned, `writeStep` takes the evidence from the row and the `else Txn.throw .hidden` branch goes.
+**Part 2: done (2026-09-24),** on LeanDB M15-pre `79cfbcc` (`ldb-m15-state`), where reads return `Valid α`: a stored row together with the proof of its invariant.
+- `visibleGame` returns `LeanDb.Valid GameRow`.
+- `writeStep` takes that row and passes `s.property` to `GameRow.checkedStep`.
+- The `if hv : GameRow.invariant … else Txn.throw .hidden -- unreachable` branch is deleted.
+- 552 tests pass; the axiom audit passes (327 theorems).

@@ -32,7 +32,7 @@ Three tables: `PersonRow` (handle + token digest), `AvailabilityRow` (host, slot
 
 Read policies reuse `PolicyView.Policy` (`import PolicyView.Policy`, unchanged). Writes and the projection are in this example: `WritePolicy`, `TxnAs`, `ProjRead`. `Auth`'s constructor is private, so `forAuth` acts for the authenticated caller and no one else.
 
-Proofs are about **pure domain functions** (`aligned_slots_disjoint`, `retitle_preserves_freeBusy`, `cancel_frees`, …). At the pinned LeanDB, `DbState` is empty in proofs, so nothing is claimed as a theorem over the running database.
+Proofs are about **pure domain functions** (`aligned_slots_disjoint`, `retitle_preserves_freeBusy`, `cancel_frees`, …). Nothing is claimed as a theorem over the running database: that needs LeanDB M15 (the laws for such proofs, and the check that execution follows the meaning).
 
 ## What it guarantees
 

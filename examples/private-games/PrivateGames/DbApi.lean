@@ -45,7 +45,7 @@ def GameRow.visibleTo (p : PlayerId) : Query Games [GameRow] (Stored GameRow) :=
   (Query.from GameRow).where' fun g => g.val.x == pref p || g.val.o == pref p
 
 /-- The game with id `gid`, if `p` plays in it. -/
-def visibleGame (p : PlayerId) (gid : GameId) : Read Games (Option (Stored GameRow)) :=
+def visibleGame (p : PlayerId) (gid : GameId) : Read Games (Option (LeanDb.Valid GameRow)) :=
   Read.first ((GameRow.visibleTo p).where' fun g => g.id == gidRef gid)
 
 def versioned (s : Stored GameRow) : Versioned GameView := PrivateGames.Api.Game.versioned (reconstruct s)
@@ -113,7 +113,7 @@ def openGame (me : Auth PlayerId) (body : Body OpenBody) (key : Idempotency) :
 def listGames (me : Auth PlayerId) (q : QueryParams PageReq) : Read Games GamePage := do
   let page ← Read.page (GameRow.visibleTo me.val)
     { offset := (q.val.page - 1) * q.val.per, limit := some q.val.per }
-  pure ⟨page.items.map reconstruct, page.total, q.val.page, q.val.per⟩
+  pure ⟨page.items.map (reconstruct ·.toStored), page.total, q.val.page, q.val.per⟩
 
 /-- One of my games. Someone else's game is indistinguishable from a missing one. -/
 def readGame (me : Auth PlayerId) (id : Path GameId) :
@@ -122,17 +122,17 @@ def readGame (me : Auth PlayerId) (id : Path GameId) :
   | some g => return .ok (versioned g)
   | none => return .error .hidden
 
-/-- Write a decided transition of a stored game: validity of the new row
-    from `decide_valid`, the row read in this transaction replaced by
-    compare-and-swap. -/
-def writeStep (me : PlayerId) (cmd : Command) (s : Stored GameRow) {g' : Game}
-    (h : PrivateGames.decide me (reconstruct s) cmd = .ok g') : Txn σ Games GameError (Bool × Versioned GameView) :=
-  if hv : GameRow.invariant s.val = true then do
-    let _ ← Txn.orAbort (Txn.update GameRow s (GameRow.checkedStep s hv h)) fun
-      | .stale _ | .gone | .missingRef _ => GameError.hidden
-      | .duplicate ix _ => nomatch ix
-    pure (true, PrivateGames.Api.Game.versioned g')
-  else Txn.throw .hidden  -- unreachable: LeanDB refuses such a row when it is read
+/-- Write a decided transition of a stored game, replacing the row read in
+    this transaction by compare-and-swap. The new row is `Checked` from
+    `decide_valid`, applied to the proof the read row carries (`s.property`,
+    a `Valid` row from LeanDB): no runtime re-check (LAPI-12). -/
+def writeStep (me : PlayerId) (cmd : Command) (s : LeanDb.Valid GameRow) {g' : Game}
+    (h : PrivateGames.decide me (reconstruct s.toStored) cmd = .ok g') :
+    Txn σ Games GameError (Bool × Versioned GameView) := do
+  let _ ← Txn.orAbort (Txn.update GameRow s (GameRow.checkedStep s.toStored s.property h)) fun
+    | .stale _ | .gone | .missingRef _ => GameError.hidden
+    | .duplicate ix _ => nomatch ix
+  pure (true, PrivateGames.Api.Game.versioned g')
 
 /-- Play a move in one of my games, decided against revision `rev`. -/
 def playMove (me : Auth PlayerId) (rev : IfMatchRequired ETagRev) (body : Body MoveBody) (id : Path GameId)

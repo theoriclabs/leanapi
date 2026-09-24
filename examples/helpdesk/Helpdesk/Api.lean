@@ -115,7 +115,7 @@ instance helpdeskAuth : AuthenticatesDb HelpdeskDb Who :=
 def listTickets (me : Auth Who) : Read HelpdeskDb (List TicketView) :=
   ReadAs.forAuth me fun _ => do
     let rows ← ReadAs.all TicketRow
-    return rows.map fun s => ticketView (reconstructTicket s)
+    return rows.map fun s => ticketView (reconstructTicket s.toStored)
 
 /-- One ticket and its visible messages. Someone else's ticket is a 404. -/
 def readTicket (me : Auth Who) (id : Path TicketId) :
@@ -126,7 +126,7 @@ def readTicket (me : Auth Who) (id : Path TicketId) :
     | some s =>
       let t := reconstructTicket s
       let ms ← messagesOn a s.id
-      return .ok ⟨ticketView t, ms.map fun m => messageView (reconstructMessage m)⟩
+      return .ok ⟨ticketView t, ms.map fun m => messageView (reconstructMessage m.toStored)⟩
 
 /-- Reply on a ticket. Customers cannot post internal notes; nobody
     writes to a closed ticket. -/
@@ -216,7 +216,7 @@ def stack (log : String → IO Unit := IO.eprintln) : Stack :=
 
 /-! ## Seed (trusted, unscoped): two orgs and four people -/
 
-private def mustInsert (α : Type) [Entity α] [HasUnique α] [HasForeignKey α]
+private def mustInsert (α : Type) [Entity α] [HasUnique α] [HasForeignKey α] [IsSchema.Has HelpdeskDb α]
     (v : α) : {σ : Type} → Txn σ HelpdeskDb String (Stored α) := do
   match Checked.check v with
   | .error _ => Txn.throw "seed row fails its invariant"

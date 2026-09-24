@@ -71,17 +71,17 @@ theorem invoice_rule_ofInvoice (p : Tenant) (id : LeanDb.Id InvoiceRow) (inv : I
 
 /-! ## Scoped reads that can add filters (policy + predicate in SQL) -/
 
-def Scoped.all (α : Type) [Entity α] [Policy BillingDb Tenant α] (p : Tenant) :
-    Read BillingDb (List (Stored α)) :=
-  Read.all (Policy.scope (s := BillingDb) p)
+def Scoped.all (α : Type) [Entity α] [IsSchema.Has BillingDb α] [Policy BillingDb Tenant α] (p : Tenant) :
+    Read BillingDb (List (LeanDb.Valid α)) :=
+  Read.all (s := BillingDb) (Policy.scope (s := BillingDb) (α := α) p)
 
-def Scoped.get (α : Type) [Entity α] [Policy BillingDb Tenant α] (p : Tenant)
-    (id : LeanDb.Id α) : Read BillingDb (Option (Stored α)) :=
-  (·.head?) <$> Read.all ((Policy.scope (s := BillingDb) p).where' fun r => r.id == id)
+def Scoped.get (α : Type) [Entity α] [IsSchema.Has BillingDb α] [Policy BillingDb Tenant α] (p : Tenant)
+    (id : LeanDb.Id α) : Read BillingDb (Option (LeanDb.Valid α)) :=
+  (·.head?) <$> Read.all (s := BillingDb) ((Policy.scope (s := BillingDb) (α := α) p).where' fun r => r.id == id)
 
-def Scoped.where (α : Type) [Entity α] [Policy BillingDb Tenant α] (p : Tenant)
-    (pred : Stored α → Bool) : Read BillingDb (List (Stored α)) :=
-  Read.all ((Policy.scope (s := BillingDb) p).where' pred)
+def Scoped.where (α : Type) [Entity α] [IsSchema.Has BillingDb α] [Policy BillingDb Tenant α] (p : Tenant)
+    (pred : Stored α → Bool) : Read BillingDb (List (LeanDb.Valid α)) :=
+  Read.all (s := BillingDb) ((Policy.scope (s := BillingDb) (α := α) p).where' pred)
 
 /-! ## Write view: private constructor, owned rows only -/
 
@@ -95,6 +95,8 @@ variable {σ : Type} {P : Type} {p : P} {α : Type} [Entity α]
 def id (s : Seen σ p α) : LeanDb.Id α := s.cur.id
 def val (s : Seen σ p α) : α := s.cur.val
 def toStored (s : Seen σ p α) : Stored α := s.cur.toStored
+/-- The row with its invariant's proof, as LeanDB's `update` wants it. -/
+def toValid (s : Seen σ p α) : LeanDb.Valid α := s.cur
 end Seen
 
 /-- A transaction program over the database as `p` sees it. -/
@@ -112,14 +114,14 @@ instance : Monad (TxnAs σ s p ε) where
 def throw (e : ε) : TxnAs σ s p ε α := ⟨Txn.throw e⟩
 
 /-- Every visible row of `α`. No policy, no read. -/
-def all (α : Type) [Entity α] [Policy s P α] : TxnAs σ s p ε (List (Stored α)) :=
-  ⟨Txn.liftRead (Read.all (Policy.scope (s := s) p))⟩
+def all (α : Type) [Entity α] [IsSchema.Has s α] [Policy s P α] : TxnAs σ s p ε (List (LeanDb.Valid α)) :=
+  ⟨Txn.liftRead (Read.all (s := s) (Policy.scope (s := s) (α := α) p))⟩
 
 /-- The row with this id, if `p` may see it. Policy and id go to SQL. -/
-def get (α : Type) [Entity α] [Policy s P α] (id : LeanDb.Id α) :
+def get (α : Type) [Entity α] [IsSchema.Has s α] [Policy s P α] (id : LeanDb.Id α) :
     TxnAs σ s p ε (Option (Seen σ p α)) :=
   ⟨do
-    match ← Txn.liftRead (Read.all ((Policy.scope (s := s) p).where' fun r => r.id == id)) with
+    match ← Txn.liftRead (Read.all (s := s) ((Policy.scope (s := s) (α := α) p).where' fun r => r.id == id)) with
     | [] => pure none
     | s :: _ =>
       match ← Txn.get α s.id with
@@ -127,7 +129,7 @@ def get (α : Type) [Entity α] [Policy s P α] (id : LeanDb.Id α) :
       | some c => pure (some ⟨c⟩)⟩
 
 /-- Insert a row this actor owns (`WITH CHECK`). -/
-def insert (α : Type) [Entity α] [HasUnique α] [HasForeignKey α] [Policy s P α] [Owns s P α]
+def insert (α : Type) [Entity α] [HasUnique α] [HasForeignKey α] [IsSchema.Has s α] [Policy s P α] [Owns s P α]
     (v : Checked α) (_h : Owns.owns (s := s) p v.val = true) :
     TxnAs σ s p ε (Except (InsertError α) (Seen σ p α)) :=
   ⟨do
@@ -137,10 +139,10 @@ def insert (α : Type) [Entity α] [HasUnique α] [HasForeignKey α] [Policy s P
 
 /-- Replace a row this transaction read through the view, if the new
     value is still owned (`WITH CHECK`). -/
-def update (α : Type) [Entity α] [HasUnique α] [HasForeignKey α] [Policy s P α] [Owns s P α]
+def update (α : Type) [Entity α] [HasUnique α] [HasForeignKey α] [IsSchema.Has s α] [Policy s P α] [Owns s P α]
     (row : Seen σ p α) (new : Checked α) (_h : Owns.owns (s := s) p new.val = true) :
     TxnAs σ s p ε (Except (UpdateError α) (Stored α)) :=
-  ⟨Txn.update α row.toStored new⟩
+  ⟨Txn.update α row.toValid new⟩
 
 end TxnAs
 
@@ -196,14 +198,14 @@ are private to this module, so they have to be refused from outside. -/
 /-- error: failed to synthesize instance of type class
   Policy BillingDb Tenant TenantRow -/
 #guard_msgs (substring := true) in
-def sneakTenants (me : Actor Tenant) : ReadAs BillingDb me (List (Stored TenantRow)) :=
+def sneakTenants (me : Actor Tenant) : ReadAs BillingDb me (List (LeanDb.Valid TenantRow)) :=
   ReadAs.all TenantRow
 
 /-- error: Invalid `⟨...⟩` notation: Constructor for `PolicyView.Actor` is marked as private -/
 #guard_msgs (substring := true) in
 def spoofActor (id : LeanDb.Id InvoiceRow) :
     ReadAs BillingDb (⟨{ id := ⟨1⟩, unitPrice := ⟨0, by decide⟩ }⟩ : Actor Tenant)
-      (Option (Stored InvoiceRow)) :=
+      (Option (LeanDb.Valid InvoiceRow)) :=
   ReadAs.get InvoiceRow id
 
 end Billing.Policies

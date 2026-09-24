@@ -140,24 +140,24 @@ end LeanApi
 /-! ## Changing a transaction's failure type -/
 
 namespace LeanDb.Txn
-variable {σ s ε ε' : Type}
+variable {σ s ε ε' : Type} [IsSchema s]
 def mapErr (g : ε → ε') : {α : Type} → Txn σ s ε α → Txn σ s ε' α
   | _, .pure a => .pure a
   | _, .bind m f => .bind (mapErr g m) (fun a => mapErr g (f a))
   | _, .liftRead r => .liftRead r
-  | _, @Txn.get _ _ _ α i id => @Txn.get _ _ _ α i id
-  | _, @Txn.lookup _ _ _ α i1 i2 ix k => @Txn.lookup _ _ _ α i1 i2 ix k
+  | _, @Txn.get _ _ _ _ α i h id => @Txn.get _ _ _ _ α i h id
+  | _, @Txn.lookup _ _ _ _ α i1 i2 h ix k => @Txn.lookup _ _ _ _ α i1 i2 h ix k
   | _, .throw e => .throw (g e)
   | _, .orAbort m f => .orAbort (mapErr g m) (g ∘ f)
   | _, .orElse m h => .orElse (mapErr g m) (fun e => mapErr g (h e))
-  | _, @Txn.insert _ _ _ α a b c v => @Txn.insert _ _ _ α a b c v
-  | _, @Txn.update _ _ _ α a b c o n => @Txn.update _ _ _ α a b c o n
-  | _, @Txn.set _ _ _ α a b c r n => @Txn.set _ _ _ α a b c r n
-  | _, @Txn.patch _ _ _ α a b c r fs n => @Txn.patch _ _ _ α a b c r fs n
-  | _, @Txn.append _ _ _ α a b o n => @Txn.append _ _ _ α a b o n
-  | _, @Txn.delete _ _ _ α a b id => @Txn.delete _ _ _ α a b id
+  | _, @Txn.insert _ _ _ _ α a b c h v => @Txn.insert _ _ _ _ α a b c h v
+  | _, @Txn.update _ _ _ _ α a b c h o n => @Txn.update _ _ _ _ α a b c h o n
+  | _, @Txn.set _ _ _ _ α a b c h r n => @Txn.set _ _ _ _ α a b c h r n
+  | _, @Txn.patch _ _ _ _ α a b c h r fs n => @Txn.patch _ _ _ _ α a b c h r fs n
+  | _, @Txn.append _ _ _ _ α a b h o n => @Txn.append _ _ _ _ α a b h o n
+  | _, @Txn.delete _ _ _ _ α a b h id => @Txn.delete _ _ _ _ α a b h id
 
-theorem denote_go_mapErr [IsSchema s] (g : ε → ε') (st0 : DbState s) {α : Type} (p : Txn σ s ε α) :
+theorem denote_go_mapErr (g : ε → ε') (st0 : DbState s) {α : Type} (p : Txn σ s ε α) :
     ∀ st, denote.go st0 (mapErr g p) st =
       ((denote.go st0 p st).1.mapError g, (denote.go st0 p st).2) := by
   induction p with
@@ -190,7 +190,7 @@ open Lean LeanDb
 /-- A transaction program as a handler's result: all or nothing, failing
     with `ε`. Rank-2 in the transaction index, so `Current` rows cannot
     escape. The index is implicit: a handler's body is just `do …`. -/
-abbrev Tx (s ε ρ : Type) := {σ : Type} → Txn σ s ε ρ
+abbrev Tx (s : Type) [IsSchema s] (ε ρ : Type) := {σ : Type} → Txn σ s ε ρ
 
 /-- The meaning of a transaction handler: commit answers `ToResponse ρ`,
     abort answers `ToProblem ε` and restores the state (`Txn.denote`). -/

@@ -531,7 +531,7 @@ For private-games:
 - **Column-level rules**, such as password hashes that no scoped program may read: per-column projections in the view.
 - **Several kinds of actor** (players, administrators, service accounts): a view per role, `S.As (r : Role)`, with a policy per role.
 - **Beyond the database.** Caches, search indexes, queues and logs that hold copies of rows should carry the policy of the source (docs/BOUNDARIES.md §3.6–3.7).
-- **Dependency.** This needs LeanDB M15: a `DbState` with real content in proofs, and execution that agrees with the meaning (review D1–D10). Without them, every theorem above is vacuous or unsupported.
+- **Dependency.** This needs LeanDB M15: a `DbState` with real content in proofs (done in M15-pre, which LeanAPI pins since 2026-09-24), and execution that agrees with the meaning (review D1–D10). Without them, every theorem above is vacuous or unsupported.
 
 ## 8. Proof surface
 

@@ -192,7 +192,7 @@ def createInvoice (me : Auth Tenant) (body : Body InvoiceBody) :
     Tx BillingDb BillingError (Replayed (Created InvoiceView)) :=
   WriteAs.toTx fun {_σ} => do
     let rows ← TxnAs.all UsageEventRow
-    let events := rows.filterMap eventOf
+    let events := rows.filterMap (eventOf ·.toStored)
     match h : mkDraft me.val.id body.val.period me.val.unitPrice events with
     | .error msg => TxnAs.throw (mkDraftError msg)
     | .ok inv =>

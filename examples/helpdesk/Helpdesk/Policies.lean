@@ -57,7 +57,7 @@ def ticketGetSql (who : Who) (id : LeanDb.Id TicketRow) : String × Array Col :=
 /-- Messages of one ticket: the policy is in SQL (`ReadAs.all`); the ticket
     id is filtered in Lean. PolicyView.ReadAs has no `filter` yet. -/
 def messagesOn (me : Actor Who) (tid : LeanDb.Id TicketRow) :
-    ReadAs HelpdeskDb me (List (Stored MessageRow)) := do
+    ReadAs HelpdeskDb me (List (LeanDb.Valid MessageRow)) := do
   let ms ← ReadAs.all MessageRow
   return ms.filter (fun m => m.val.ticket == tid)
 
@@ -230,19 +230,19 @@ instance : Monad (TxAs s me ε) where
 
 def throw (e : ε) : TxAs s me ε α := ⟨Txn.throw e⟩
 
-def get (α : Type) [Entity α] [Policy s P α] (id : LeanDb.Id α) :
-    TxAs s me ε (Option (Stored α)) :=
-  ⟨(·.head?) <$> Txn.liftRead (Read.all ((Policy.scope (s := s) me).where' fun r => r.id == id))⟩
+def get (α : Type) [Entity α] [IsSchema.Has s α] [Policy s P α] (id : LeanDb.Id α) :
+    TxAs s me ε (Option (LeanDb.Valid α)) :=
+  ⟨(·.head?) <$> Txn.liftRead (Read.all (s := s) ((Policy.scope (s := s) (α := α) me).where' fun r => r.id == id))⟩
 
-def lookup (α : Type) [Entity α] [HasUnique α] [Policy s P α]
-    (ix : Unique α) (key : Unique.Key ix) : TxAs s me ε (Option (Stored α)) :=
+def lookup (α : Type) [Entity α] [HasUnique α] [IsSchema.Has s α] [Policy s P α]
+    (ix : Unique α) (key : Unique.Key ix) : TxAs s me ε (Option (LeanDb.Valid α)) :=
   ⟨do
     match ← Txn.liftRead (Read.lookup α ix key) with
     | none => pure none
     | some row =>
-      if Policy.rule (s := s) (P := P) (α := α) me row then pure (some row) else pure none⟩
+      if Policy.rule (s := s) (P := P) (α := α) me row.toStored then pure (some row) else pure none⟩
 
-def insert? (α : Type) [Entity α] [HasUnique α] [HasForeignKey α]
+def insert? (α : Type) [Entity α] [HasUnique α] [HasForeignKey α] [IsSchema.Has s α]
     [Policy s P α] [WritePolicy s P α] (row : Checked α) (denied : ε) :
     TxAs s me ε (Except (InsertError α) (Stored α)) :=
   ⟨do
@@ -250,18 +250,18 @@ def insert? (α : Type) [Entity α] [HasUnique α] [HasForeignKey α]
       (·.map Current.toStored) <$> Txn.insert α row
     else Txn.throw denied⟩
 
-def insert (α : Type) [Entity α] [HasUnique α] [HasForeignKey α]
+def insert (α : Type) [Entity α] [HasUnique α] [HasForeignKey α] [IsSchema.Has s α]
     [Policy s P α] [WritePolicy s P α] (row : Checked α) (denied : ε)
     (onInsert : InsertError α → ε) : TxAs s me ε (Stored α) := do
   match ← insert? α row denied with
   | .ok s => pure s
   | .error e => throw (onInsert e)
 
-def update (α : Type) [Entity α] [HasUnique α] [HasForeignKey α]
-    [Policy s P α] [WritePolicy s P α] (old : Stored α) (new : Checked α)
+def update (α : Type) [Entity α] [HasUnique α] [HasForeignKey α] [IsSchema.Has s α]
+    [Policy s P α] [WritePolicy s P α] (old : LeanDb.Valid α) (new : Checked α)
     (denied : ε) (onUpdate : UpdateError α → ε) : TxAs s me ε (Stored α) :=
   ⟨do
-    if Policy.rule (s := s) (P := P) (α := α) me old &&
+    if Policy.rule (s := s) (P := P) (α := α) me old.toStored &&
         WritePolicy.admit (s := s) (P := P) (α := α) me new.val then
       match ← Txn.update α old new with
       | .ok row => pure row
@@ -281,20 +281,20 @@ end TxAs
 /-- error: Invalid `⟨...⟩` notation: Constructor for `PolicyView.ReadAs` is marked as private -/
 #guard_msgs (substring := true) in
 def sneakyRead (me : Actor Who) (id : LeanDb.Id TicketRow) :
-    ReadAs HelpdeskDb me (Option (Stored TicketRow)) :=
+    ReadAs HelpdeskDb me (Option (LeanDb.Valid TicketRow)) :=
   ⟨Read.get TicketRow id⟩
 
 /-- error: failed to synthesize instance of type class
   Policy HelpdeskDb Who OrgRow -/
 #guard_msgs (substring := true) in
-def sneakyOrg (me : Actor Who) : ReadAs HelpdeskDb me (List (Stored OrgRow)) :=
+def sneakyOrg (me : Actor Who) : ReadAs HelpdeskDb me (List (LeanDb.Valid OrgRow)) :=
   ReadAs.all OrgRow
 
 /-- error: Invalid `⟨...⟩` notation: Constructor for `PolicyView.Actor` is marked as private -/
 #guard_msgs (substring := true) in
 def spoof (id : LeanDb.Id TicketRow) :
     ReadAs HelpdeskDb (⟨⟨UserId.ofNat! 1, OrgId.ofNat! 1, .agent⟩⟩ : Actor Who)
-      (Option (Stored TicketRow)) :=
+      (Option (LeanDb.Valid TicketRow)) :=
   ReadAs.get TicketRow id
 
 end Helpdesk

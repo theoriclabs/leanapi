@@ -35,6 +35,6 @@ player 1 lists: [game 1 (1 vs 2)]
 - **Writes.** There is no `TxAs`. A scoped write view needs:
   - update and delete only on rows read through the view;
   - new and changed rows admitted by the policy, by proof or by a decided check with a typed failure.
-- **Proofs.** The theorems of DESIGN §7.5 (restricted reads, frame, write confinement) need LeanDB M15. At the pinned LeanDB, `DbState` has no content in proofs, so any theorem over `DbState` is vacuous (docs/reviews/2026-09-23-review-lapi-02-05-m14.md, H1).
+- **Proofs.** The theorems of DESIGN §7.5 (restricted reads, frame, write confinement) need LeanDB M15. The pinned LeanDB (M15-pre) gives `DbState` real content in proofs; the laws these theorems need (frame, write preservation) and the check that execution follows the meaning are LeanDB M15a/M15b.
 - **`first`, `page`, `count`.** These need the policy's query to be exact, which `policy%` would check when a policy is declared. The prototype uses `Read.all`.
 - **Policies that read other tables** (membership, sharing) are open. Store what a policy needs on the row itself, so every policy is single-table.

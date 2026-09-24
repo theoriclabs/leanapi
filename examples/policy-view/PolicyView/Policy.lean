@@ -39,14 +39,16 @@ instance : Monad (ReadAs s me) where
   pure a := ⟨pure a⟩
   bind m f := ⟨m.prog >>= fun a => (f a).prog⟩
 
-/-- Every row of `α` that `me` may see. No policy for `α`, no read. -/
-def all (α : Type) [Entity α] [Policy s P α] : ReadAs s me (List (Stored α)) :=
-  ⟨Read.all (Policy.scope me.val)⟩
+/-- Every row of `α` that `me` may see, each with its invariant's proof
+    (`Valid`). No policy for `α`, no read. -/
+def all (α : Type) [Entity α] [IsSchema.Has s α] [Policy s P α] : ReadAs s me (List (Valid α)) :=
+  ⟨Read.all (s := s) (Policy.scope (s := s) (α := α) me.val)⟩
 
 /-- The row with this id, if `me` may see it: the policy and the id go to
     SQL together, so another player's row is never fetched. -/
-def get (α : Type) [Entity α] [Policy s P α] (id : LeanDb.Id α) : ReadAs s me (Option (Stored α)) :=
-  ⟨(·.head?) <$> Read.all ((Policy.scope (s := s) me.val).where' fun r => r.id == id)⟩
+def get (α : Type) [Entity α] [IsSchema.Has s α] [Policy s P α] (id : LeanDb.Id α) :
+    ReadAs s me (Option (Valid α)) :=
+  ⟨(·.head?) <$> Read.all (s := s) ((Policy.scope (s := s) (α := α) me.val).where' fun r => r.id == id)⟩
 
 /-- The SQL filter a scoped `get` sends (for display). -/
 def getSql (α : Type) [Entity α] [Policy s P α] (p : P) (id : LeanDb.Id α) : String × Array Col :=

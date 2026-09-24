@@ -11,12 +11,13 @@ rev = "v0.1.0"
 # Toolchain pinned to leanprover/lean4:v4.33.0 (see lean-toolchain), matching
 # LeanDB 0.4.0, leanhttp and leanws. Bump in lockstep.
 
-# Persistence (M4). Pinned by commit at LeanDB M14c (typed reads and
-# transactions, LAPI-02…05); move to the tag once LeanDB releases M14.
+# Persistence (M4). Pinned by commit at LeanDB M15-pre (`ldb-m15-state`:
+# a lawful DbState, reads that carry validity evidence); move to the tag
+# once LeanDB releases M15.
 [[require]]
 name = "leandb"
 git = "https://github.com/theoriclabs/LeanDB"
-rev = "afe45445371ee5cfab7ee82900cc7b0ce58d2551"
+rev = "79cfbcca1662c559f78743903c6bb9ad6098571b"
 
 [[lean_lib]]
 name = "LeanApi"

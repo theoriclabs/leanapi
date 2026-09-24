@@ -165,7 +165,7 @@ example : DbEndpoint App := .get "/members" join
 /-- error: Type mismatch
   Txn.get Member { toInt64 := 1 }
 has type
-  Txn ?m.3 ?m.4 ?m.5 (Option (Current ?m.3 Member))
+  Txn ?m.4 ?m.5 ?m.7 (Option (Current ?m.4 Member))
 but is expected to have type
   Txn σ✝ App Unit (Option (Current σ Member)) -/
 #guard_msgs (error) in
@@ -239,7 +239,7 @@ theorem getMember_isolated (p : Me) (env : Env) (r : Req) {s₁ s₂ : DbState A
   · -- the body reads one member row, and answers only for a teammate
     intro env r s₁ s₂ ⟨_, _, hw⟩
     have h := hw ⟨Int64.ofNat a⟩
-    have hb : ∀ (st : DbState App) (k : Option (Stored Member) → Read App (Except NotFound MemberView)),
+    have hb : ∀ (st : DbState App) (k : Option (LeanDb.Valid Member) → Read App (Except NotFound MemberView)),
         Read.denote (Read.get Member ⟨Int64.ofNat a⟩ >>= k) st =
           Read.denote (k (Read.denote (Read.get Member ⟨Int64.ofNat a⟩) st)) st := fun _ _ => rfl
     show ToResponse.toRes (Read.denote (getMember who ⟨a⟩) s₁) =

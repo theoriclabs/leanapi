@@ -7,7 +7,7 @@
   moves left are to paid or void.
 
   Theorems here are about these functions. They are not about the
-  database: at the pinned LeanDB, `DbState` is empty in proofs.
+  database: that needs LeanDB M15 (the laws for such proofs, and the check that execution follows the meaning).
 -/
 import LeanApi.Props.Stored
 

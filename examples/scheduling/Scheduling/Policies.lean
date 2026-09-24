@@ -81,7 +81,7 @@ def BookingRow.busyOf (host : PersonId) : LeanDb.Query Calendar [BookingRow] (St
   (LeanDb.Query.from BookingRow).where' fun r => r.val.host == pref host
 
 def ProjRead.busy (host : PersonId) : ProjRead Calendar BusyInterval :=
-  ⟨(·.map (Project.project (α := BookingRow))) <$> Read.all (BookingRow.busyOf host)⟩
+  ⟨(·.map fun v => Project.project (α := BookingRow) v.toStored) <$> Read.all (BookingRow.busyOf host)⟩
 
 def ProjRead.toRead {s : Type} [IsSchema s] {β : Type} (p : ProjRead s β) : Read s (List β) :=
   p.prog
@@ -92,9 +92,9 @@ def busySql (host : PersonId) : String × Array Col :=
 
 /-- The row with this id, if `p`'s read policy admits it. Policy and id go
     to SQL together. -/
-def scopedGet (α : Type) [Entity α] {s P : Type} [IsSchema s] [Policy s P α]
-    (p : P) (id : LeanDb.Id α) : Read s (Option (Stored α)) :=
-  (·.head?) <$> Read.all ((Policy.scope (s := s) p).where' fun r => r.id == id)
+def scopedGet (α : Type) [Entity α] {s P : Type} [IsSchema s] [IsSchema.Has s α] [Policy s P α]
+    (p : P) (id : LeanDb.Id α) : Read s (Option (LeanDb.Valid α)) :=
+  (·.head?) <$> Read.all (s := s) ((Policy.scope (s := s) (α := α) p).where' fun r => r.id == id)
 
 /-! ## Write view
 
@@ -128,12 +128,12 @@ def liftRead (r : Read s α) : TxnAs σ s p ε α := ⟨Txn.liftRead r⟩
 def throw (e : ε) : TxnAs σ s p ε α := ⟨Txn.throw e⟩
 
 /-- The row with this id, if the read policy admits it. -/
-def get (α : Type) [Entity α] [Policy s P α] (id : LeanDb.Id α) :
-    TxnAs σ s p ε (Option (Stored α)) :=
+def get (α : Type) [Entity α] [IsSchema.Has s α] [Policy s P α] (id : LeanDb.Id α) :
+    TxnAs σ s p ε (Option (LeanDb.Valid α)) :=
   ⟨Txn.liftRead (scopedGet (s := s) α p id)⟩
 
 /-- Insert only if the write policy admits the new row. `none` is denied. -/
-def insert? (α : Type) [Entity α] [HasUnique α] [HasForeignKey α]
+def insert? (α : Type) [Entity α] [HasUnique α] [HasForeignKey α] [IsSchema.Has s α]
     [WritePolicy s P α] (v : Checked α) :
     TxnAs σ s p ε (Option (Except (InsertError α) (Current σ α))) :=
   if WritePolicy.admits (s := s) p v.val then
@@ -142,7 +142,7 @@ def insert? (α : Type) [Entity α] [HasUnique α] [HasForeignKey α]
     ⟨pure none⟩
 
 /-- Delete only a row already read through the view. `none` is hidden. -/
-def deleteVisible (α : Type) [Entity α] [Policy s P α] [HasReferencedBy s α]
+def deleteVisible (α : Type) [Entity α] [IsSchema.Has s α] [Policy s P α] [HasReferencedBy s α]
     (id : LeanDb.Id α) :
     TxnAs σ s p ε (Option (Except (DeleteError s α) (Stored α))) :=
   ⟨do
@@ -212,7 +212,7 @@ Here, default deny for a table with no policy: `PersonRow` has no `Policy`. -/
   Policy Calendar PersonId PersonRow -/
 #guard_msgs (substring := true) in
 /-- Bypass: a table with no policy (everyone's token digests). -/
-def sneakyPeople (me : Actor PersonId) : ReadAs Calendar me (List (Stored PersonRow)) :=
+def sneakyPeople (me : Actor PersonId) : ReadAs Calendar me (List (LeanDb.Valid PersonRow)) :=
   ReadAs.all PersonRow
 
 end Scheduling

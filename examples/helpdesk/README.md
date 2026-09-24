@@ -7,9 +7,8 @@ write view), not a check scattered through handlers.
 
 This is the first example of two kinds of actor on one schema. It builds on
 [`examples/policy-view/`](../policy-view/) (`import PolicyView.Policy`; that
-prototype is not modified). Proofs are about **pure domain functions**. At
-the pinned LeanDB, `DbState` is empty in proofs (review H1), so nothing here
-is a theorem about SQLite.
+prototype is not modified). Proofs are about **pure domain functions**. Nothing
+here is a theorem about SQLite: that needs LeanDB M15 (the laws for such proofs, and the check that execution follows the meaning).
 
 ## Run
 

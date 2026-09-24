@@ -90,7 +90,7 @@ instance {α : Type} [Entity α] [HasListField α] : ToProblem (AppendError α) 
     | .gone => none
     | .notAppend l => some s!"{HasListField.table l} can only grow"
 
-instance {s α : Type} [Entity α] [HasReferencedBy s α] : ToProblem (DeleteError s α) where
+instance {s α : Type} [IsSchema s] [Entity α] [HasReferencedBy s α] : ToProblem (DeleteError s α) where
   status
     | .gone => ⟨404, by decide⟩
     | .restricted .. => ⟨409, by decide⟩
@@ -143,12 +143,12 @@ theorem UpdateError.blind_payload :
 end blind
 
 /-- The default delete answer does not say who references the row. -/
-def DeleteError.SameButReferrers {s α : Type} [Entity α] [HasReferencedBy s α] :
+def DeleteError.SameButReferrers {s α : Type} [IsSchema s] [Entity α] [HasReferencedBy s α] :
     DeleteError s α → DeleteError s α → Prop
   | .restricted .., .restricted .. => True
   | e₁, e₂ => e₁ = e₂
 
-theorem DeleteError.blind_referrers {s α : Type} [Entity α] [HasReferencedBy s α] :
+theorem DeleteError.blind_referrers {s α : Type} [IsSchema s] [Entity α] [HasReferencedBy s α] :
     ToProblem.Blind (DeleteError.SameButReferrers (s := s) (α := α)) := by
   intro e₁ e₂ h
   cases e₁ <;> cases e₂ <;> simp only [DeleteError.SameButReferrers] at h <;>
@@ -211,12 +211,12 @@ structure WithReferrers (ε : Type) where
   val : ε
 
 /-- The table and column of an inbound key, as the schema declares them. -/
-def referrerJson {s α : Type} [h : HasReferencedBy s α] (r : ReferencedBy s α) (rows : Nat) : Json :=
+def referrerJson {s α : Type} [IsSchema s] [h : HasReferencedBy s α] (r : ReferencedBy s α) (rows : Nat) : Json :=
   let _ := h.sourceEntity r
   Json.mkObj [("table", .str (Entity.tableName (h.Source r))), ("column", .str (h.columnName r)),
     ("rows", toJson rows)]
 
-instance {s α : Type} [Entity α] [HasReferencedBy s α] :
+instance {s α : Type} [IsSchema s] [Entity α] [HasReferencedBy s α] :
     ToProblem (WithReferrers (DeleteError s α)) where
   status e := ToProblem.status e.val
   detail e := ToProblem.detail e.val

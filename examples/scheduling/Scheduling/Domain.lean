@@ -193,7 +193,8 @@ def cancel (bs : List Booking) (id : BookingId) : List Booking :=
 /-! ## Proofs
 
 These are about the pure functions above. They are not theorems over
-`DbState`: at the pinned LeanDB, that would be vacuous. -/
+`DbState`: those would describe LeanDB's meaning, not yet the running
+service (LeanDB M15). -/
 
 theorem Instant.make_unix (t : Instant) : Instant.make t.unix = .ok t := by
   unfold Instant.make; simp [t.bound]

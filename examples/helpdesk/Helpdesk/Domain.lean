@@ -3,7 +3,7 @@
   about who may see or change which of them. Pure Lean. No HTTP, no SQL.
 
   Proofs here are about these functions. They are not theorems about the
-  database: at the pinned LeanDB, `DbState` is empty in proofs (review H1).
+  database: that needs LeanDB M15 (the laws for such proofs, and the check that execution follows the meaning).
 -/
 namespace Helpdesk
 

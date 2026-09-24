@@ -1,7 +1,7 @@
 import PolicyView.Games
 open LeanDb PolicyView PolicyView.Games PrivateGames PrivateGames.Storage
 
-def insertRow (conn : Conn) (α : Type) [Entity α] [HasUnique α] [HasForeignKey α] (v : α) : IO Unit := do
+def insertRow (conn : Conn) (α : Type) [Entity α] [HasUnique α] [HasForeignKey α] [IsSchema.Has Games α] (v : α) : IO Unit := do
   let c ← match Checked.check v with
     | .ok c => pure c
     | .error _ => throw (IO.userError "row fails its invariant")

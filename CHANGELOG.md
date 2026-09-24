@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased: LeanDB M15-pre; reads carry their rows' invariants (LAPI-12 part 2)
+
+- LeanDB pinned at M15-pre (`79cfbcc`, branch `ldb-m15-state`). `DbState` has real content in proofs (no placeholder bodies), and every read returns `Valid α`: the stored row together with a proof of its invariant.
+- private-games: `writeStep` takes the `Valid` row it read and passes `s.property` to `GameRow.checkedStep`. The unreachable runtime re-check is gone (LAPI-12 part 2).
+- Migration, in the framework and every example: `Tx` and `Txn` take the schema instance; `LeanDb.Txn.mapErr` follows the new constructors; `DeleteError`/`ReferencedBy` defaults need `IsSchema s`; views and seeds state `IsSchema.Has s α`; reads map `Valid` rows (`·.toStored` where a `Stored` is wanted); `Txn.update` takes the `Valid` row read through the view.
+- Documentation: "`DbState` is empty in proofs" is no longer true. The examples still claim no theorem over the running database, because the laws and the check that execution follows the meaning are LeanDB M15a/M15b.
+
 ## Unreleased: only authentication makes an `Auth`
 
 - `Auth α` has a private constructor. Application code can no longer write `⟨otherUser⟩ : Auth UserId`, so a handler, and a row-policy view built from `me` (`ReadAs.forAuth`), acts for the caller the request authenticated. Pinned with `#guard_msgs` in `tests/Tests/Endpoint.lean`.
