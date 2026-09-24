@@ -1,0 +1,32 @@
+diff --git a/examples/teams-demo/TeamsDemo/Api.lean b/examples/teams-demo/TeamsDemo/Api.lean
+--- a/examples/teams-demo/TeamsDemo/Api.lean
++++ b/examples/teams-demo/TeamsDemo/Api.lean
+@@ -42,16 +42,19 @@
+ inductive ApiError where
+   | notFound
+   | unknownTeam
++  | emailTaken
+   | tryAgain
+ 
+ instance : ToProblem ApiError where
+   status
+     | .notFound => ⟨404, by decide⟩
+     | .unknownTeam => ⟨422, by decide⟩
++    | .emailTaken => ⟨409, by decide⟩
+     | .tryAgain => ⟨503, by decide⟩
+   detail
+     | .notFound => none
+     | .unknownTeam => some "no such team"
++    | .emailTaken => some "that email is taken"
+     | .tryAgain => some "try again"
+ 
+ /-! ## Who is asking -/
+@@ -75,7 +78,7 @@
+     Tx TeamsDb ApiError (Created SignupView) := do
+   let row : UserRow := { email := body.val.email, name := body.val.name, team := tref body.val.team }
+   match ← Txn.insert UserRow (Checked.of row trivial) with
+-  | .error (.duplicate ix _) => nomatch ix  -- users have no unique key: nothing can clash
++  | .error (.duplicate .byEmail _) => Txn.throw .emailTaken
+   | .error (.missingRef _) => Txn.throw .unknownTeam
+   | .ok user =>
+     match ← Txn.insert TokenRow (Checked.of ⟨Tokens.digest token.val, user.id⟩ trivial) with

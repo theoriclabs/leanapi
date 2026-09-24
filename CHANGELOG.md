@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased: the schema-change demo
+
+- `examples/teams-demo`: a users-and-teams API and four schema changes, each of which the compiler reports in the API or in the stated business rule. The changes: a unique email, a display-name rule, a normalized email column, and public profiles. `demo.sh next` walks through them (diff, build error, fix, curl). `demo.sh check` runs the whole demo as a test in CI, asserting every expected error and every HTTP status.
+
 ## Unreleased: LeanDB M15-pre; reads carry their rows' invariants (LAPI-12 part 2)
 
 - LeanDB pinned at M15-pre (`79cfbcc`, branch `ldb-m15-state`). `DbState` has real content in proofs (no placeholder bodies), and every read returns `Valid α`: the stored row together with a proof of its invariant.

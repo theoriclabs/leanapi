@@ -188,6 +188,12 @@ Run the examples:
 ./examples/private-games/seed.sh http://127.0.0.1:8080
 ```
 
+**The schema-change demo** ([`examples/teams-demo`](examples/teams-demo/README.md)): change the schema one step at a time (a unique email, a name rule, a normalized email column, public profiles), and watch the compiler report each change in the API, or in the stated business rule.
+
+```bash
+./examples/teams-demo/demo.sh next      # run it eight times; `reset` starts over
+```
+
 ## Limits worth knowing
 
 - **Throughput is modest.** LeanAPI runs on Lean's built-in `Std.Http` server (toolchain 4.33). On a 10-core laptop with `ab` and keep-alive, a trivial route serves roughly **2,000–3,500 req/s**. Bare `Std.Http` without LeanAPI is within about 10% of that, so the transport is the ceiling. The transport sits behind one module (`Runtime/Server.lean`) and can be replaced without touching routes or proofs.

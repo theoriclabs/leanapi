@@ -1,0 +1,14 @@
+diff --git a/examples/teams-demo/TeamsDemo/Schema.lean b/examples/teams-demo/TeamsDemo/Schema.lean
+--- a/examples/teams-demo/TeamsDemo/Schema.lean
++++ b/examples/teams-demo/TeamsDemo/Schema.lean
+@@ -43,6 +43,10 @@
+   team : Ref TeamRow
+   deriving Repr
+ 
++/-- A display name is 1 to 64 characters. -/
++@[leandb_invariant]
++def UserRow.invariant (u : UserRow) : Bool := 0 < u.name.length && u.name.length ≤ 64
++
+ deriving instance LeanDb.Entity for UserRow
+ 
+ structure TokenRow where

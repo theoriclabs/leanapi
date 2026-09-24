@@ -48,3 +48,5 @@ jobs:
         run: ./scripts/check_private_escapes.sh
       - name: Example posts are checked against the code
         run: for p in helpdesk billing scheduling; do ./scripts/check_blog.sh --post docs/blog/$p.md; done
+      - name: The schema-change demo (every step fails or answers as its README says)
+        run: ./examples/teams-demo/demo.sh check

@@ -1,0 +1,40 @@
+diff --git a/examples/teams-demo/TeamsDemo/Api.lean b/examples/teams-demo/TeamsDemo/Api.lean
+--- a/examples/teams-demo/TeamsDemo/Api.lean
++++ b/examples/teams-demo/TeamsDemo/Api.lean
+@@ -14,9 +14,25 @@
+ instance : SmartCtor TeamId Nat := ⟨TeamId.make, (·.n)⟩
+ instance : SmartCtor UserId Nat := ⟨UserId.make, (·.n)⟩
+ 
++/-- A display name: 1 to 64 characters, checked when the request is decoded. -/
++structure DisplayName where
++  raw : String
++  ok : 0 < raw.length ∧ raw.length ≤ 64
++
++def DisplayName.make (s : String) : Except String DisplayName :=
++  if h : 0 < s.length ∧ s.length ≤ 64 then .ok ⟨s, h⟩ else .error "must be 1 to 64 characters"
++
++instance : SmartCtor DisplayName String := ⟨DisplayName.make, (·.raw)⟩
++
++/-- A user row built from a `DisplayName` satisfies the table's rule, by proof. -/
++def UserRow.checked (email : String) (name : DisplayName) (team : TeamId) : Checked UserRow :=
++  Checked.of { email, name := name.raw, team := tref team } (by
++    show UserRow.invariant _ = true
++    simp [UserRow.invariant, name.ok.1, name.ok.2])
++
+ structure SignupBody where
+   email : String
+-  name : String
++  name : DisplayName
+   team : TeamId
+ 
+ instance : FromBody SignupBody :=
+@@ -76,8 +92,7 @@
+ /-- Sign up to a team. The answer carries your token. -/
+ def signup (body : Body SignupBody) (token : FreshToken) :
+     Tx TeamsDb ApiError (Created SignupView) := do
+-  let row : UserRow := { email := body.val.email, name := body.val.name, team := tref body.val.team }
+-  match ← Txn.insert UserRow (Checked.of row trivial) with
++  match ← Txn.insert UserRow (UserRow.checked body.val.email body.val.name body.val.team) with
+   | .error (.duplicate .byEmail _) => Txn.throw .emailTaken
+   | .error (.missingRef _) => Txn.throw .unknownTeam
+   | .ok user =>

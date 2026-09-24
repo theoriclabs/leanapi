@@ -1,0 +1,5 @@
+Rules.lean
+unsolved goals
+u.val.isPublic = true → u.val.team = tref me.team
+Api.lean
+Fields missing: `isPublic`

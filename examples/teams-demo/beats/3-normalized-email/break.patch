@@ -1,0 +1,31 @@
+diff --git a/examples/teams-demo/TeamsDemo/Schema.lean b/examples/teams-demo/TeamsDemo/Schema.lean
+--- a/examples/teams-demo/TeamsDemo/Schema.lean
++++ b/examples/teams-demo/TeamsDemo/Schema.lean
+@@ -31,6 +31,18 @@
+   if h : n = 0 ∨ n ≥ 2^63 then .error "user id must be between 1 and 2^63-1"
+   else .ok ⟨n, by omega⟩
+ 
++/-- An email address, stored normalized (trimmed, lower-case), so
++    `Ada@Acme.com` and `ada@acme.com` are one address. -/
++structure Email where
++  raw : String
++  deriving DecidableEq, Repr
++
++def Email.make (s : String) : Except String Email :=
++  let e := s.trimAscii.toString.toLower
++  if e.contains '@' then .ok ⟨e⟩ else .error "not an email address"
++
++instance : ColCodec Email := ColCodec.via (β := String) (·.raw) Email.make
++
+ /-! ## Tables -/
+ 
+ structure TeamRow where
+@@ -38,7 +50,7 @@
+   deriving Repr, LeanDb.Entity
+ 
+ structure UserRow where
+-  email : String
++  email : Email
+   name : String
+   team : Ref TeamRow
+   deriving Repr

@@ -346,3 +346,5 @@ Scheduling.Policies Scheduling.writePolicy_admits_ofBooking
 Scheduling.Policies Scheduling.writePolicy_admits_eq_invitee
 Scheduling.Policies Scheduling.project_eq_toBusy
 Scheduling.Policies Scheduling.project_list_eq_freeBusy
+TeamsDemo.Rules TeamsDemo.ref_beq_iff
+TeamsDemo.Rules TeamsDemo.sees_iff_same_team

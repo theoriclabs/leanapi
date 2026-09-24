@@ -1,0 +1,2 @@
+Emails are stored normalized
+The request decodes an Email, and the view shows its text

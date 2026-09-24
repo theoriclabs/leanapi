@@ -1,0 +1,29 @@
+diff --git a/examples/teams-demo/TeamsDemo/Api.lean b/examples/teams-demo/TeamsDemo/Api.lean
+--- a/examples/teams-demo/TeamsDemo/Api.lean
++++ b/examples/teams-demo/TeamsDemo/Api.lean
+@@ -27,7 +27,7 @@
+ 
+ /-- A user row built from a `DisplayName` satisfies the table's rule, by proof. -/
+ def UserRow.checked (email : Email) (name : DisplayName) (team : TeamId) : Checked UserRow :=
+-  Checked.of { email, name := name.raw, team := tref team } (by
++  Checked.of { email, name := name.raw, team := tref team, isPublic := false } (by
+     show UserRow.invariant _ = true
+     simp [UserRow.invariant, name.ok.1, name.ok.2])
+ 
+diff --git a/examples/teams-demo/TeamsDemo/Rules.lean b/examples/teams-demo/TeamsDemo/Rules.lean
+--- a/examples/teams-demo/TeamsDemo/Rules.lean
++++ b/examples/teams-demo/TeamsDemo/Rules.lean
+@@ -18,9 +18,10 @@
+   · intro h; cases a; cases b; simp_all
+   · intro h; rw [h]
+ 
+-/-- **You see a user exactly when they are on your team.** -/
+-theorem sees_iff_same_team (me : Me) (u : Stored UserRow) :
+-    Policy.rule (s := TeamsDb) me u = true ↔ u.val.team = tref me.team := by
++/-- **You see a user exactly when they are on your team, or their profile
++    is public.** -/
++theorem sees_iff_same_team_or_public (me : Me) (u : Stored UserRow) :
++    Policy.rule (s := TeamsDb) me u = true ↔ u.val.team = tref me.team ∨ u.val.isPublic = true := by
+   simp [Policy.rule, ref_beq_iff]
+ 
+ end TeamsDemo

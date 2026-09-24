@@ -1,0 +1,36 @@
+diff --git a/examples/teams-demo/TeamsDemo/Api.lean b/examples/teams-demo/TeamsDemo/Api.lean
+--- a/examples/teams-demo/TeamsDemo/Api.lean
++++ b/examples/teams-demo/TeamsDemo/Api.lean
+@@ -13,6 +13,7 @@
+ 
+ instance : SmartCtor TeamId Nat := ⟨TeamId.make, (·.n)⟩
+ instance : SmartCtor UserId Nat := ⟨UserId.make, (·.n)⟩
++instance : SmartCtor Email String := ⟨Email.make, (·.raw)⟩
+ 
+ /-- A display name: 1 to 64 characters, checked when the request is decoded. -/
+ structure DisplayName where
+@@ -25,13 +26,13 @@
+ instance : SmartCtor DisplayName String := ⟨DisplayName.make, (·.raw)⟩
+ 
+ /-- A user row built from a `DisplayName` satisfies the table's rule, by proof. -/
+-def UserRow.checked (email : String) (name : DisplayName) (team : TeamId) : Checked UserRow :=
++def UserRow.checked (email : Email) (name : DisplayName) (team : TeamId) : Checked UserRow :=
+   Checked.of { email, name := name.raw, team := tref team } (by
+     show UserRow.invariant _ = true
+     simp [UserRow.invariant, name.ok.1, name.ok.2])
+ 
+ structure SignupBody where
+-  email : String
++  email : Email
+   name : DisplayName
+   team : TeamId
+ 
+@@ -46,7 +47,7 @@
+   deriving ToJson
+ 
+ def userView (u : Stored UserRow) : UserView :=
+-  ⟨(uid u.id).n, u.val.email, u.val.name, (tid u.val.team).n⟩
++  ⟨(uid u.id).n, u.val.email.raw, u.val.name, (tid u.val.team).n⟩
+ 
+ structure SignupView where
+   user : UserView

@@ -1,0 +1,21 @@
+diff --git a/examples/teams-demo/TeamsDemo/Schema.lean b/examples/teams-demo/TeamsDemo/Schema.lean
+--- a/examples/teams-demo/TeamsDemo/Schema.lean
++++ b/examples/teams-demo/TeamsDemo/Schema.lean
+@@ -53,6 +53,7 @@
+   email : Email
+   name : String
+   team : Ref TeamRow
++  isPublic : Bool
+   deriving Repr
+ 
+ /-- A display name is 1 to 64 characters. -/
+@@ -95,7 +96,7 @@
+     Lean and once as a query that becomes SQL, until `policy%` generates
+     both from one lambda: LeanDB M16.) -/
+ instance : Policy TeamsDb Me UserRow where
+-  rule me u := u.val.team == tref me.team
+-  scope me := (Query.from UserRow).where' fun u => u.val.team == tref me.team
++  rule me u := u.val.team == tref me.team || u.val.isPublic
++  scope me := (Query.from UserRow).where' fun u => u.val.team == tref me.team || u.val.isPublic
+ 
+ end TeamsDemo

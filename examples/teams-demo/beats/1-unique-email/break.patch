@@ -1,0 +1,11 @@
+diff --git a/examples/teams-demo/TeamsDemo/Schema.lean b/examples/teams-demo/TeamsDemo/Schema.lean
+--- a/examples/teams-demo/TeamsDemo/Schema.lean
++++ b/examples/teams-demo/TeamsDemo/Schema.lean
+@@ -53,6 +53,7 @@
+ /-! ## Keys -/
+ 
+ unique% TokenRow.byDigest := digest
++unique% UserRow.byEmail := email
+ 
+ schema% TeamsDb := TeamRow, UserRow, TokenRow
+ 
