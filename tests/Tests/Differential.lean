@@ -128,8 +128,8 @@ def run : TestM Unit := do
       dbTokens := dbTokens.push dbTok
     let mut world : World := {
       games := [], receipts := [], nextGame := 1
-      players := users.toList.map fun (id, _) => ⟨id⟩
-      sessions := users.toList.map fun (id, t) => (Tokens.digest t, ⟨id⟩) }
+      players := users.toList.map fun (id, _) => PlayerId.ofNat! id
+      sessions := users.toList.map fun (id, t) => (Tokens.digest t, PlayerId.ofNat! id) }
     let mut typedWorld := world
     let mut mismatches := 0
     let mut typedMismatches := 0

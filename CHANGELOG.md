@@ -4,6 +4,10 @@
 
 - **LeanAPI is now under the Business Source License 1.1** (`LICENSE`), from version 0.6.0. Each version converts to the MIT License four years after it is published. Production use is free for organizations with 100 or fewer people and US $100 million or less in annual revenue, unless the use is a Competing Service (see `LICENSE`). Versions up to v0.5.0 remain under the MIT License.
 
+## Unreleased: private-games types carry their facts (LAPI-12, part 1)
+
+- `PlayerId` carries `n < 2^63`. `openGame`'s two runtime range checks are gone, and `GameRow.checkedOpen` takes no range arguments. `pid (pref p) = p` holds unconditionally.
+
 ## Unreleased: framework-computed retry fingerprints (LAPI-10)
 
 - `Idempotency` input: the `Idempotency-Key` with a `v1:` fingerprint of the request as the endpoint reads it (endpoint, path, sorted query, canonical JSON body, `If-Match`, declared headers). Handlers never build one.

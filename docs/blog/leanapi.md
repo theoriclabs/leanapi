@@ -219,12 +219,12 @@ Writes can fail only in the ways their types list, and those come from the schem
 
 <!-- check: excerpt examples/private-games/PrivateGames/DbApi.lean -->
 ```lean
-        let row ← Txn.orAbort (Txn.insert GameRow (GameRow.checkedOpen h hb.1 hb.2)) fun
-          | .missingRef _ => GameError.unknownOpponent
-          | .duplicate ix _ => nomatch ix
+      let row ← Txn.orAbort (Txn.insert GameRow (GameRow.checkedOpen h)) fun
+        | .missingRef _ => GameError.unknownOpponent
+        | .duplicate ix _ => nomatch ix
 ```
 
-A game refers to its players, so the insert can fail with `missingRef`. Games have no unique index, so `duplicate` would need an index that doesn't exist, and `nomatch ix` says so. Add a unique index to games, and this stops compiling until the clash is handled. `GameRow.checkedOpen h …` is the evidence that the new game is valid, from the domain's proof about opening a game. Without it, `insert` doesn't type-check.
+A game refers to its players, so the insert can fail with `missingRef`. Games have no unique index, so `duplicate` would need an index that doesn't exist, and `nomatch ix` says so. Add a unique index to games, and this stops compiling until the clash is handled. `GameRow.checkedOpen h` is the evidence that the new game is valid, from the domain's proof about opening a game. Without it, `insert` doesn't type-check.
 
 ## Writing your own properties
 

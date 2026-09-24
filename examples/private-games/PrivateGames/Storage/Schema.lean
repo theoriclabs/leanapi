@@ -75,7 +75,8 @@ structure GameRow where
 
 /-! ## Row ↔ domain -/
 
-def pid (r : Ref PlayerRow) : PlayerId := ⟨r.toInt64.toNatClampNeg⟩
+def pid (r : Ref PlayerRow) : PlayerId :=
+  ⟨r.toInt64.toNatClampNeg, by have := r.toInt64.toNatClampNeg_lt; omega⟩
 def pref (p : PlayerId) : Ref PlayerRow := ⟨Int64.ofNat p.n⟩
 
 def GameRow.toGame (id : LeanDb.Id GameRow) (r : GameRow) : Game :=
@@ -164,23 +165,21 @@ theorem GameRow.Invariant_iff (r : GameRow) (i : LeanDb.Id GameRow) :
 /-! ## `Checked GameRow` from domain proofs
 
 A player id round-trips through a `Ref` only below 2^63, and `Valid`'s
-`distinct` field needs that. Every player id in a game comes either from
-a stored row (`pid`, always in range: `pid_lt`) or from `PlayerId.make`
-(in range by its check: `PlayerId.make_lt`), so the bound is discharged
-by proof on every real path, not checked at runtime. -/
+`distinct` field needs that. `PlayerId` carries the bound (LAPI-12), so
+every game's participants are in range by their type: no runtime check. -/
 
-/-- Both participants are ids a `Ref` can carry. -/
+/-- Both participants are ids a `Ref` can carry: true of every game, by
+    `PlayerId.lt`. -/
 def _root_.PrivateGames.Game.Bounded (g : Game) : Prop := g.x.n < 2^63 ∧ g.o.n < 2^63
 
-theorem pid_lt (r : Ref PlayerRow) : (pid r).n < 2^63 := by
-  have := r.toInt64.toNatClampNeg_lt; simp [pid]; omega
+theorem _root_.PrivateGames.Game.bounded (g : Game) : g.Bounded := ⟨g.x.lt, g.o.lt⟩
 
-theorem pid_pref {p : PlayerId} (h : p.n < 2^63) : pid (pref p) = p := by
-  cases p; simp [pid, pref, Int64.toNatClampNeg_ofNat_of_lt h]
+theorem pid_lt (r : Ref PlayerRow) : (pid r).n < 2^63 := (pid r).lt
 
-theorem _root_.PrivateGames.PlayerId.make_lt {n : Nat} {p : PlayerId}
-    (h : PlayerId.make n = .ok p) : p.n < 2^63 := by
-  unfold PlayerId.make at h; split at h <;> simp_all; cases h; simp_all
+/-- `pid` and `pref` are exact inverses on player ids. -/
+theorem pid_pref (p : PlayerId) : pid (pref p) = p := by
+  cases p with
+  | mk n h => simp [pid, pref, Int64.toNatClampNeg_ofNat_of_lt h]
 
 theorem GameRow.toGame_bounded (r : GameRow) (i : LeanDb.Id GameRow) : (r.toGame i).Bounded :=
   ⟨pid_lt _, pid_lt _⟩
@@ -196,8 +195,8 @@ private theorem cell_comp : (fun x : MoveRow => x.cell) ∘ (fun c => (⟨c⟩ :
 theorem GameRow.ofGame_invariant (g : Game) (hv : Valid g) (hb : g.Bounded) :
     LeanDb.Invariant GameRow (GameRow.ofGame g) := by
   rw [GameRow.Invariant_iff _ ⟨0⟩]
-  have hx := pid_pref hb.1
-  have ho := pid_pref hb.2
+  have hx := pid_pref g.x
+  have ho := pid_pref g.o
   have hres : (g.resigned.map pref).map pid = g.resigned := by
     cases hr : g.resigned with
     | none => rfl
@@ -217,8 +216,8 @@ theorem GameRow.ofGame_invariant (g : Game) (hv : Valid g) (hb : g.Bounded) :
 /-- The row mapping is a section on valid, in-range games. -/
 theorem GameRow.toGame_ofGame (g : Game) (hv : Valid g) (hb : g.Bounded) (hid : g.id.n < 2^63) :
     (GameRow.ofGame g).toGame ⟨Int64.ofNat g.id.n⟩ = g := by
-  have hx := pid_pref hb.1
-  have ho := pid_pref hb.2
+  have hx := pid_pref g.x
+  have ho := pid_pref g.o
   have hres : (g.resigned.map pref).map pid = g.resigned := by
     cases hr : g.resigned with
     | none => rfl
@@ -235,9 +234,8 @@ def GameRow.checked (g : Game) (hv : Valid g) (hb : g.Bounded) : Checked GameRow
 
 /-- Opening a game: validity from `Valid.preserved_openGame`. -/
 def GameRow.checkedOpen {id : GameId} {p o : PlayerId} {tc : TimeControl} {g : Game}
-    (h : openGame id p o tc = .ok g) (hp : p.n < 2^63) (ho : o.n < 2^63) : Checked GameRow :=
-  GameRow.checked g (Valid.preserved_openGame id p o tc g h) (by
-    unfold openGame at h; split at h <;> simp_all; cases h; exact ⟨hp, ho⟩)
+    (h : openGame id p o tc = .ok g) : Checked GameRow :=
+  GameRow.checked g (Valid.preserved_openGame id p o tc g h) g.bounded
 
 theorem decide_participants {p : PlayerId} {g g' : Game} {cmd : Command}
     (h : PrivateGames.decide p g cmd = .ok g') : g'.x = g.x ∧ g'.o = g.o := by
@@ -263,10 +261,7 @@ theorem decide_participants {p : PlayerId} {g g' : Game} {cmd : Command}
 def GameRow.checkedStep {p : PlayerId} {cmd : Command} {g' : Game} (s : Stored GameRow)
     (hs : LeanDb.Invariant GameRow s.val)
     (h : PrivateGames.decide p (s.val.toGame s.id) cmd = .ok g') : Checked GameRow :=
-  GameRow.checked g' (decide_valid ((GameRow.Invariant_iff _ s.id).mp hs) h) (by
-    obtain ⟨hx, ho⟩ := decide_participants h
-    have := GameRow.toGame_bounded s.val s.id
-    exact ⟨hx ▸ this.1, ho ▸ this.2⟩)
+  GameRow.checked g' (decide_valid ((GameRow.Invariant_iff _ s.id).mp hs) h) g'.bounded
 
 /-- The game a stored row maps to. LeanDB refuses a row that fails the
     invariant before it gets here (`.invariant`, 500 without detail). -/

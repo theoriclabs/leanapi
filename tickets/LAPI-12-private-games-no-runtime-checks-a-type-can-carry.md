@@ -44,3 +44,14 @@
 
 - **Internal to the example.** `PlayerId` is not part of any wire format change: the JSON stays a number, and ids ≥ 2^53 are a separate issue (docs/BOUNDARIES.md A1).
 - **`Model/` code that builds ids as `⟨n⟩` needs the bound.** Do part 1 after LAPI-08 retires the model, or supply the proof there.
+
+## Status (2026-09-23): part 1 done; part 2 waits for LeanDB (in progress there)
+
+**Part 1** (done on the M14c pin, *before* LAPI-08: I supplied the proofs in `Model/`):
+- `PlayerId` has `lt : n < 2^63 := by decide`. `PlayerId.make` returns the proof, `pid` builds it, and `pid_pref : pid (pref p) = p` needs no hypothesis.
+- `Game.bounded` holds for every game. `GameRow.checkedOpen` takes no range arguments, and `openGame` in `DbApi.lean` lost both runtime range checks and the wrong-error branch. The existence check stays.
+- The model's witnesses use `PlayerId.next` (a bounded successor, with `next_ne` and `next_next_ne`) instead of `⟨p.n + 1⟩`. Literals use `PlayerId.lit n`, checked by `decide`. Tests use `PlayerId.ofNat!`.
+- An opponent id ≥ 2^63 in a body still answers 422 naming `body.opponent` (a new test).
+- 432 tests pass (3 runs; the differential test included), the axiom audit passes (168), and EVIDENCE.md is regenerated (the `Checked` row now cites `Game.bounded`, `pid_pref`).
+
+**Part 2** (`writeStep`'s invariant re-check): not done. At the pinned LeanDB `afe4544`, `Read.get`/`first` return `Stored α`, with no evidence. LeanDB's uncommitted working tree (`ldb-m15-state`) already adds `Valid α` (a stored row with `Invariant α r.val`), returns it from `Read.get`/`lookup`, and makes `Current` carry `property`. Once that lands and is pinned, `writeStep` takes the evidence from the row and the `else Txn.throw .hidden` branch goes.

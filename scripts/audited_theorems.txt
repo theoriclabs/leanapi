@@ -28,7 +28,9 @@ PrivateGames.Storage.Schema PrivateGames.Storage.GameRow.valid_id_irrel
 PrivateGames.Storage.Schema PrivateGames.Storage.GameRow.ofGame_invariant
 PrivateGames.Storage.Schema PrivateGames.Storage.GameRow.toGame_ofGame
 PrivateGames.Storage.Schema PrivateGames.Storage.decide_participants
-PrivateGames.Storage.Schema PrivateGames.PlayerId.make_lt
+PrivateGames.Storage.Schema PrivateGames.Game.bounded
+PrivateGames.Domain.Values PrivateGames.PlayerId.next_ne
+PrivateGames.Domain.Values PrivateGames.PlayerId.next_next_ne
 PrivateGames.Storage.Schema PrivateGames.Storage.pid_lt
 PrivateGames.Storage.Schema PrivateGames.Storage.pid_pref
 # M6: private-games service (the model of the exported proved routes)

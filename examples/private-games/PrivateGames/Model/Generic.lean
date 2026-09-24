@@ -30,7 +30,7 @@ def gamesApp : ScopedApp where
   run := runPlan
 
 theorem gamesApp_obligations : gamesApp.Obligations where
-  auth_view r _ _ h := authenticate_view (h (⟨0⟩ : PlayerId)).sessions r
+  auth_view r _ _ h := authenticate_view (h (default : PlayerId)).sessions r
   load_view _ _ _ n h := load_view h n
   run_view a p _ _ h := runPlan_noninterference a p h
 

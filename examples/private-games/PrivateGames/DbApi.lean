@@ -99,18 +99,15 @@ def openGame (me : Auth PlayerId) (body : Body OpenBody) (key : Idempotency) :
     Tx Games GameError (Replayed (Created (Versioned GameView))) :=
   keyed me.val key do
     let opp := body.val.opponent
-    let known ← Txn.liftRead (Read.get PlayerRow (pref opp))
-    if known.isNone || opp.n ≥ 2^63 then Txn.throw .unknownOpponent
+    if (← Txn.liftRead (Read.get PlayerRow (pref opp))).isNone then Txn.throw .unknownOpponent
     match h : PrivateGames.openGame ⟨0⟩ me.val opp body.val.tc with
     | .error e => Txn.throw (.domain e)
     | .ok _ =>
-      if hb : me.val.n < 2^63 ∧ opp.n < 2^63 then
-        let row ← Txn.orAbort (Txn.insert GameRow (GameRow.checkedOpen h hb.1 hb.2)) fun
-          | .missingRef _ => GameError.unknownOpponent
-          | .duplicate ix _ => nomatch ix
-        let g := reconstruct row.toStored
-        pure (true, { val := PrivateGames.Api.Game.versioned g, location := some s!"/games/{g.id.n}" })
-      else Txn.throw .unknownOpponent
+      let row ← Txn.orAbort (Txn.insert GameRow (GameRow.checkedOpen h)) fun
+        | .missingRef _ => GameError.unknownOpponent
+        | .duplicate ix _ => nomatch ix
+      let g := reconstruct row.toStored
+      pure (true, { val := PrivateGames.Api.Game.versioned g, location := some s!"/games/{g.id.n}" })
 
 /-- One page of my games, and how many there are, from one snapshot. -/
 def listGames (me : Auth PlayerId) (q : QueryParams PageReq) : Read Games GamePage := do

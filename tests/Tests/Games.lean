@@ -108,6 +108,10 @@ def runWith (impl : Impl) : TestM Unit := do
     checkEq "wrapped game id refused" (← get svc s!"/games/{2^64 + gid}" [bearer alice]).status 422
     checkEq "unknown token 401" (← get svc s!"/games/{gid}" [bearer "nope"]).status 401
     checkEq "per too big 422" (← get svc "/games?per=500" [bearer bob]).status 422
+    -- LAPI-12: `PlayerId` carries its bound; the edge still refuses a larger id.
+    let big ← postJson svc "/games" (Json.mkObj [("opponent", Json.num ((2^63 : Nat) : JsonNumber))]) [bearer alice]
+    checkEq "opponent ≥ 2^63 → 422" big.status 422
+    check "names the field" ((big.body.splitOn "body.opponent").length > 1)
 
   section_ s!"{if impl == .native then "" else "[LeanDB programs] "}list count and page share a WAL snapshot" do
     let snapshotEnv ← freshEnv "list-snapshot"
@@ -116,17 +120,17 @@ def runWith (impl : Impl) : TestM Unit := do
     let _ ← openGame snapshotEnv.svc owner peerId
     if let some reader := snapshotEnv.rt.readConns[0]? then
       let observed ← LeanDb.DbM.run reader (LeanDb.readSnapshot do
-        let before ← LeanDb.countP (visiblePred ⟨ownerId⟩)
+        let before ← LeanDb.countP (visiblePred (PlayerId.ofNat! ownerId))
         -- A different connection commits after the count and before the page.
         let inserted ← liftM <| LeanDb.DbM.run snapshotEnv.rt.writeConn
           (LeanDb.insert GameRow (GameRow.ofGame
-            (Game.opened ⟨0⟩ ⟨ownerId⟩ ⟨peerId⟩ TimeControl.default)))
-        let after ← LeanDb.countP (visiblePred ⟨ownerId⟩)
-        let page ← LeanDb.fetchFiltered GameRow (visiblePred ⟨ownerId⟩)
+            (Game.opened ⟨0⟩ (PlayerId.ofNat! ownerId) (PlayerId.ofNat! peerId) TimeControl.default)))
+        let after ← LeanDb.countP (visiblePred (PlayerId.ofNat! ownerId))
+        let page ← LeanDb.fetchFiltered GameRow (visiblePred (PlayerId.ofNat! ownerId))
           (window := { limit := some 10, offset := 0 })
         return (before, after, page.size, inserted.isOk))
       checkEq "count and page see the same version" observed.toOption (some (1, 1, 1, true))
-      let listed ← snapshotEnv.rt.repo.listVisible ⟨ownerId⟩ 0 10
+      let listed ← snapshotEnv.rt.repo.listVisible (PlayerId.ofNat! ownerId) 0 10
       checkEq "new game visible after snapshot ends" (listed.toOption.map Prod.snd) (some 2)
     else
       check "snapshot reader exists" false
@@ -226,15 +230,15 @@ def runWith (impl : Impl) : TestM Unit := do
     let (r3Id, _) ← signup svc "r3"
     let gid := (jnat (← openGame svc r1 r2Id) "id").getD 0
     let repo := env.rt.repo
-    let some g ← (do match ← repo.loadVisible ⟨r2Id⟩ ⟨gid⟩ with | .ok g => pure g | .error _ => pure none)
+    let some g ← (do match ← repo.loadVisible (PlayerId.ofNat! r2Id) ⟨gid⟩ with | .ok g => pure g | .error _ => pure none)
       | check "loaded" false
     -- admission happened against `g`; now the row changes participants
     let conn := env.rt.writeConn
     let _ ← LeanDb.DbM.run conn do
       match ← LeanDb.get (gidRef ⟨gid⟩) with
-      | some s => let _ ← LeanDb.update s { s.val with o := pref ⟨r3Id⟩ }; pure ()
+      | some s => let _ ← LeanDb.update s { s.val with o := pref (PlayerId.ofNat! r3Id) }; pure ()
       | none => pure ()
-    let res ← repo.commit ⟨r2Id⟩ (.updateGame g { g with resigned := some ⟨r2Id⟩, rev := g.rev + 1 }) none gameRes
+    let res ← repo.commit (PlayerId.ofNat! r2Id) (.updateGame g { g with resigned := some (PlayerId.ofNat! r2Id), rev := g.rev + 1 }) none gameRes
     check "commit refused after revocation" (match res with | .error .notFound => true | _ => false)
     let now ← get svc s!"/games/{gid}" [bearer r1]
     checkEq "state unchanged" (now.header? "etag") (some "\"0\"")
@@ -318,7 +322,7 @@ def runWith (impl : Impl) : TestM Unit := do
     let info ← LeanDb.instanceInfo path
     checkEq "migrated to the current fingerprint"
       (info.bind (·.1)) (some (LeanDb.fingerprint schema))
-    let games ← rt.repo.listVisible ⟨1⟩ 0 10
+    let games ← rt.repo.listVisible (.lit 1) 0 10
     checkEq "v1 game still readable" (games.toOption.map (·.2)) (some 1)
     let dup ← rt.repo.createPlayer "v1a" "h"
     check "renamed unique index still enforced" (!dup.isOk)

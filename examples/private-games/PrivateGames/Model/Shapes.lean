@@ -225,11 +225,11 @@ theorem gamesObs_sameView {p : PlayerId} {w₁ w₂ : World} (h : gamesObs.SameV
   exact ⟨h.1, h.2.1, h.2.2.1, h.2.2.2.1, h.2.2.2.2⟩
 
 /-- A game between two other players. -/
-def otherGame (p : PlayerId) : Game := Game.opened ⟨0⟩ ⟨p.n + 1⟩ ⟨p.n + 2⟩ TimeControl.default
+def otherGame (p : PlayerId) : Game := Game.opened ⟨0⟩ p.next p.next.next TimeControl.default
 
 theorem otherGame_hidden (p : PlayerId) : visible p (otherGame p) = false := by
   simp [visible, Game.isParticipant, otherGame, Game.opened]
-  constructor <;> (intro h; have := congrArg PlayerId.n h; simp at this)
+  exact ⟨fun h => p.next_ne h.symm, fun h => p.next_next_ne h.symm⟩
 
 def emptyWorld : World := { games := [], sessions := [], players := [], receipts := [], nextGame := 1 }
 
@@ -330,7 +330,7 @@ def ReadsOwnAs (p : PlayerId) (w : World) (r : Req) : Prop :=
     (visibleGames p w).find? (·.id = gid) = some g
 
 /-- A game `p` plays, with id `gid`. -/
-def ownGame (p : PlayerId) (gid : GameId) : Game := Game.opened gid p ⟨p.n + 1⟩ TimeControl.default
+def ownGame (p : PlayerId) (gid : GameId) : Game := Game.opened gid p p.next TimeControl.default
 
 theorem find_ownGame (p : PlayerId) (gid : GameId) :
     (visibleGames p (sessionWorld p d [ownGame p gid])).find? (·.id = gid) = some (ownGame p gid) := by
@@ -378,7 +378,7 @@ def gamesNI (plumb : ReadPlumbing) : NIPackage gamesSys gamesObs where
     exact authenticate_sessionWorld hd p _
   refusal := by
     obtain ⟨r, ps, gid, d, hr, hdec, hd⟩ := plumb
-    refine ⟨⟨1⟩, (), sessionWorld ⟨1⟩ d [], r, acts_sessionWorld hr hd _ [], ?_⟩
+    refine ⟨.lit 1, (), sessionWorld (.lit 1) d [], r, acts_sessionWorld hr hd _ [], ?_⟩
     show ¬ (gamesSys.step () r _).1.status = 200
     rw [step_read hr hdec (authenticate_sessionWorld hd _ _),
       read_missing _ _ gid (by simp [visibleGames, sessionWorld])]

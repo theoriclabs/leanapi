@@ -21,8 +21,8 @@ deriving instance Enumerate for PlayerId, GameId, Cell, TimeControl, Game
 
 /-! ## The store of games: small worlds -/
 
-def g0 : Game := Game.opened ⟨0⟩ ⟨1⟩ ⟨2⟩ TimeControl.default
-def g1 : Game := Game.opened ⟨1⟩ ⟨1⟩ ⟨2⟩ TimeControl.default
+def g0 : Game := Game.opened ⟨0⟩ (.lit 1) (.lit 2) TimeControl.default
+def g1 : Game := Game.opened ⟨1⟩ (.lit 1) (.lit 2) TimeControl.default
 
 def storeWorlds : List gameStore.World :=
   let games := [[], [g0], [g1], [g0, g1], [g0, g0]]
@@ -39,7 +39,7 @@ def showStore (w : gameStore.World) : String :=
 def storeSpec : CheckSpec gameStore.sys where
   worlds := storeWorlds
   envs := [()]
-  reqs := [.create (⟨1⟩, ⟨2⟩, TimeControl.default)]
+  reqs := [.create (.lit 1, .lit 2, TimeControl.default)]
   initB w := w.items.isEmpty
   beq a b := a.items == b.items && a.next == b.next
   showW := showStore
@@ -75,12 +75,12 @@ def parityReport := checkInvariant parity01 parity01Spec "even" (fun n => n % 2 
 /-! ## Hiddenness witnesses (review C1) -/
 
 /-- Small model worlds: games among players 1, 2, 3. -/
-def gA : Game := Game.opened ⟨1⟩ ⟨1⟩ ⟨2⟩ TimeControl.default
-def gB : Game := Game.opened ⟨2⟩ ⟨2⟩ ⟨3⟩ TimeControl.default
+def gA : Game := Game.opened ⟨1⟩ (.lit 1) (.lit 2) TimeControl.default
+def gB : Game := Game.opened ⟨2⟩ (.lit 2) (.lit 3) TimeControl.default
 
 def modelWorlds : List World :=
   [[], [gA], [gB], [gA, gB]].map fun gs =>
-    { games := gs, sessions := [], players := [⟨1⟩, ⟨2⟩, ⟨3⟩], receipts := [], nextGame := 3 }
+    { games := gs, sessions := [], players := [.lit 1, .lit 2, .lit 3], receipts := [], nextGame := 3 }
 
 def modelEq (a b : World) : Bool := a.games == b.games && a.nextGame == b.nextGame
 
@@ -89,12 +89,12 @@ def callerView (p : PlayerId) (w : World) : List Game × Nat := (visibleGames p 
 
 /-- C1: the all-players view. It determines every game (each game is
     visible to its players), so it has no hiddenness witness. -/
-def allView (_ : PlayerId) (w : World) : List (List Game) := [⟨1⟩, ⟨2⟩, ⟨3⟩].map fun q => visibleGames q w
+def allView (_ : PlayerId) (w : World) : List (List Game) := ([.lit 1, .lit 2, .lit 3] : List PlayerId).map fun q => visibleGames q w
 
 def showModel (w : World) : String := s!"games {w.games.map (·.id.n)}"
 
-def callerHidden := checkHidden modelWorlds modelEq [⟨1⟩, ⟨3⟩] callerView (toString ·.n) showModel
-def allHidden := checkHidden modelWorlds modelEq [⟨1⟩, ⟨3⟩] allView (toString ·.n) showModel
+def callerHidden := checkHidden modelWorlds modelEq [.lit 1, .lit 3] callerView (toString ·.n) showModel
+def allHidden := checkHidden modelWorlds modelEq [.lit 1, .lit 3] allView (toString ·.n) showModel
 
 /-! ## Isolation package (review H2, eb67460) -/
 
@@ -126,7 +126,7 @@ def plumbingHolds : Bool :=
 
 /-! ## Authoring -/
 
-def badGame : Game := { g0 with rev := 5, x := ⟨2⟩ }
+def badGame : Game := { g0 with rev := 5, x := .lit 2 }
 
 def run : TestM Unit := do
   section_ "check before proving: unique ids without Fresh (M10)" do

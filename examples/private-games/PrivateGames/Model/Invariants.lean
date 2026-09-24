@@ -210,7 +210,7 @@ theorem freshIds : Invariant gamesSys (fun w => ∀ g ∈ w.games, g.id.n < w.ne
     `CTI` names the world (`nextGame` equal to an existing id), and `Fresh`
     excludes it. -/
 theorem uniqueIds_needs_fresh : ¬ Inductive gameStore.sys gameStore.UniqueIds :=
-  gameStore.unique_not_inductive (⟨1⟩, ⟨2⟩, TimeControl.default) (Game.opened ⟨0⟩ ⟨1⟩ ⟨2⟩ TimeControl.default)
+  gameStore.unique_not_inductive (.lit 1, .lit 2, TimeControl.default) (Game.opened ⟨0⟩ (.lit 1) (.lit 2) TimeControl.default)
     (by simp [gameStore, openGame])
 
 end PrivateGames.Model
