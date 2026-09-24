@@ -22,6 +22,8 @@ An ideal developer experience is:
 
 This design is independent of a particular frontend or existing application framework. Existing libraries can supply implementations once the required interfaces are understood.
 
+In particular, rules about who may see or change which data are declared once, with the data, and enforced and proved across the whole application surface. The authenticated actor flows from the API into the type of every database program, the database layer applies the rule, and isolation follows for every route (§7.5, row-level security).
+
 The long-term framework ambition is broad. The exact v0.1 feature matrix and required proof coverage remain open (Q12).
 
 ## 2. Begin with the domain
@@ -342,6 +344,8 @@ Authority may depend on actor, tenant, role, resource, session generation, and t
 
 A candidate interface gives a protected operation checked evidence tied to actor, resource or scope, and authority facts. Another passes a trusted context and evaluates policy inside a scoped repository. The encoding remains open.
 
+**Direction (2026-09-23):** the goal is the second: a scoped view of the database, `S.As actor`, whose policies the database layer applies to every read and write. The first follows from it, because rows read through the view carry the policy's evidence. See §7.5.
+
 Revocation is also a consistency problem. A check followed by a later read or commit needs a rule for intervening changes. Possible contracts include a transaction snapshot, a revision check, or a documented authorization instant (Q5).
 
 ### 6.3 Choose the isolation claim precisely
@@ -458,6 +462,76 @@ What it needs:
 - **In LeanDB:** a pure meaning for writes (insert, update, append, delete as functions on table contents; today only reads have one); query values usable outside `DbM`; and an in-memory `Source` for `selectSpec`.
 
 The open choices are in Q13. The design of the query and transaction language LeanDB needs, what exists, the LeanDB bugs that stand in the way, and how proofs carry over to the API are in [docs/QUERIES.md](docs/QUERIES.md); the staging is PLAN.md M13–M16.
+
+### 7.5 Vision: row-level security, from the API to the database
+
+**The goal.** Who may see or change which rows is a business rule. It is declared once, with the schema, and enforced and proved at every boundary it crosses:
+- the actor that authentication establishes at the API flows into the *type* of every database program the request runs;
+- the database layer applies the rule to every read and write, both in the SQL and in the meaning;
+- the theorems follow for every route, once, from the database layer's laws, not from a proof per app and per endpoint.
+
+This is row-level security validated across the whole application surface. It is the main instance of what this project means by enforcing business rules across application boundaries (docs/BOUNDARIES.md).
+
+**Today** the rule is a query, `GameRow.visibleTo p`, and it runs in SQL (`Read.first` and `Read.page` require an exact plan). But the database layer doesn't enforce it:
+- **Scoping is the handler's choice.** Inside a player's request, `Read.get GameRow id` compiles as well as the scoped read.
+- **Isolation is proved per app, over a fixed list of routes.** The proof is checked when the proof files are built, not when the server is. A route mounted next to `gamesApi`, or a server built without the proofs, isn't covered (review of 2026-09-23, "reachable is not proved").
+
+**The vision:**
+
+```lean
+-- declared once, with the schema
+policy% GameRow    (p : PlayerId) := fun g => g.val.x == pref p || g.val.o == pref p
+policy% ReceiptRow (p : PlayerId) := fun r => r.val.actor == pref p
+policy% PlayerRow  (p : PlayerId) := fun _ => true   -- public: an opponent must exist
+
+def readGame (me : Auth PlayerId) (id : Path GameId) :
+    Read (Games.As me) (Except GameError (Versioned GameView)) := do
+  match ← Read.get GameRow (gidRef id.val) with
+  | some g => return .ok (versioned g)
+  | none   => return .error .hidden
+```
+
+`Games.As me` is the database as `me` sees it. The handler asks for game `id` directly, and LeanDB answers only if `me` plays in it.
+
+**How the actor flows from the API to the database:**
+1. **API → actor.** Authentication, run by the framework (`AuthenticatesDb`), produces `me : Auth PlayerId`. `Auth` has no public constructor, so only the framework makes actors.
+2. **Actor → program type.** A handler's program is over `Games.As me`. The only `Auth` value a handler has is `me`, so it cannot scope a program to anyone else. A prototype (2026-09-23) checks that instance search types `(me : Auth α) → … → Read (S.As me) ρ`, and that the meaning runs the program on the rows the policy admits.
+3. **Program → database.** Every read of a table in `S.As p` gets that table's policy added, as SQL `WHERE` and in the meaning. **Default deny:** a table without a policy doesn't exist in `S.As p`, so forgetting a policy is a compile error.
+4. **Writes, as in Postgres RLS (`USING` / `WITH CHECK`).**
+   - Update and delete reach only rows the policy admits: a row read through the view carries that evidence.
+   - Inserts and updates must produce admitted rows. The evidence is a proof, as with `Checked`, or a decided check with a typed failure.
+5. **Rows carry the evidence.** A row read through `S.As p` comes with a proof that the policy admits it. Result types such as `GameView me` (LAPI-13) come for free.
+
+**What is then proved once, for every application:**
+
+| Theorem | Where | Statement |
+|---|---|---|
+| Restricted reads | LeanDB | A program over `S.As p` observes only rows `p`'s policy admits: `denote prog st = denote prog (st.restrict p)` |
+| Frame | LeanDB | Two states that agree on `p`'s admitted rows, and on the declared releases below, give the same result |
+| Write confinement | LeanDB | A transaction over `S.As p` leaves unchanged every row that `p`'s policy doesn't admit |
+| Noninterference for every route | LeanAPI | An API whose authenticated programs are all over `S.As me` is noninterfering for `SameView p := st₁.restrict p = st₂.restrict p`. Database access leaves no per-endpoint obligation |
+| Coverage | LeanAPI | `api!` over a schema with policies refuses an endpoint whose program is over the unscoped schema, unless it is marked trusted. The server serves only such an API, so "reachable" and "proved" are the same set of routes |
+
+For private-games:
+- `api_noninterference`, `api_restricted_reads` and `api_existence_private` become corollaries.
+- So does a property today's proofs don't state: **no player can change another player's game** (write confinement).
+
+**Declared releases.** What a view cannot hide is written into the theorem, not hidden:
+- **Ids.** AUTOINCREMENT ids reveal how many rows exist. The next game id is already released today.
+- **Unique keys and foreign keys.** Inserting a key that an invisible row holds fails with `duplicate`, so the constructor reveals that the key is taken; the payload is hidden by default (LAPI-03). The same holds for a foreign key to an invisible row.
+- **Counts and pages** are over visible rows only, as `listGames` is now.
+
+**Trusted exceptions, visible in their types:**
+- **Authentication** reads before there is an actor (a token looked up by digest). It is a small framework program over the unscoped schema, or over a credential-scoped view where a token row is visible to the request that presents its digest.
+- **Sign-up** (an anonymous insert of a player) runs over an anonymous view, `S.Anon`, with an insert policy.
+- **Administration and maintenance** programs run over `S` and are marked trusted, and EVIDENCE.md lists them as such.
+
+**Open questions:**
+- **Policies that read other tables**, such as sharing through a membership table (the notes example): a policy is then a `Pred` with `exists` over a join. This needs LeanDB's quantifier fixes (review D1, D9) and a frame lemma for views spanning several tables.
+- **Column-level rules**, such as password hashes that no scoped program may read: per-column projections in the view.
+- **Several kinds of actor** (players, administrators, service accounts): a view per role, `S.As (r : Role)`, with a policy per role.
+- **Beyond the database.** Caches, search indexes, queues and logs that hold copies of rows should carry the policy of the source (docs/BOUNDARIES.md §3.6–3.7).
+- **Dependency.** This needs LeanDB M15: a `DbState` with real content in proofs, and execution that agrees with the meaning (review D1–D10). Without them, every theorem above is vacuous or unsupported.
 
 ## 8. Proof surface
 

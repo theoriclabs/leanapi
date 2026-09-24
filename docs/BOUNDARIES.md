@@ -245,6 +245,16 @@ Paths that cannot (raw SQL, a vendor console) are declared as bypasses, and the 
 
 ---
 
+### 3.9 Access rules are business rules too
+
+Who may see or change which rows is the business rule that crosses the most boundaries: HTTP, the handler, the query, the database, and every copy of the data (caches, indexes, logs). The same discipline applies:
+- declare the rule once, with the schema, as a policy;
+- let the authenticated actor flow from the API into the type of every database program;
+- have the database layer apply the policy to every read and write;
+- prove isolation once, for every route.
+
+This is row-level security, typed and proved. [DESIGN.md §7.5](../DESIGN.md) sets it as a goal.
+
 ## Part 4. What the compiler checks, and what it cannot
 
 | Check | When | What it catches |
