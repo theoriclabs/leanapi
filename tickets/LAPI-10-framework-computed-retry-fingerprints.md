@@ -66,6 +66,9 @@ private-games:
   - `keyedFor` and the three hand-built strings are gone. `Api`, `DbApi` and the core's `decode` (used by the model and the native service) all take the fingerprint from `Retry.ofReq`.
   - `legacyV0` rebuilds the old strings from the decoded input and is registered for `DbState Games`.
   - `grep fingerprint examples/` finds only the receipt field, comments, and the `v0` function.
+  - Two exceptions to "no application code builds a fingerprint or an operation name", both temporary:
+    - `legacyV0` rebuilds the old strings, so pre-change receipts replay. Delete it once those receipts no longer matter.
+    - `Op.endpoint` in `App/Core.lean` renders the endpoint identity for the model and the native service, which have no typed router. It goes when LAPI-08 retires them.
 - Tests (`tests/Tests/Idempotency.lean`):
   - canonical form: JSON key order and whitespace, query order, the key excluded, undeclared headers excluded;
   - every private-games input (path, body field, `If-Match`, opponent, minutes) changes the fingerprint;
