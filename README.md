@@ -198,9 +198,4 @@ lake build leanapi_tests && ./.lake/build/bin/leanapi_tests
 
 ## License
 
-[Business Source License 1.1](LICENSE), converting to MIT four years after each version is published. Copyright (c) 2026 Theoriclabs, Inc.
-
-- **Free production use** for organizations with 100 or fewer people and US $100 million or less in annual revenue (affiliates included).
-- **Not permitted without a commercial license:** offering a Competing Service. That means LeanAPI itself, or a product whose main value is LeanAPI, sold as a hosted backend platform or embedded in a framework or developer tool. Building and running your own applications with LeanAPI, including ones you sell, is not a Competing Service.
-- **Always allowed:** non-production use (development, testing, evaluation), copying, modifying and redistributing under the same license.
-- **Commercial licenses:** team@theoric.com.
+[Business Source License 1.1](LICENSE). Copyright (c) 2026 Theoriclabs, Inc.
