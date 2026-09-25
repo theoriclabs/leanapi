@@ -131,6 +131,13 @@ structure Body (α : Type) where
 structure Header (name : String) (α : Type) where
   val : α
 
+/-- One query parameter by name, decoded as `α`: required, or optional as
+    `QueryParam n (Option α)`, like FastAPI's `q: str | None = None`. A bad
+    value is a 422 naming `query.<name>`. For several parameters read as one
+    record, use `QueryParams`. -/
+structure QueryParam (name : String) (α : Type) where
+  val : α
+
 /-- The `If-Match` precondition, when sent: the quoted ETag, decoded as
     `α`. `*` and absence are `none` (no precondition). -/
 structure IfMatch (α : Type) where
@@ -306,6 +313,14 @@ instance [FromParam α] : FromRequest σ (Header n α) where
 instance (priority := high) [FromParam α] : FromRequest σ (Header n (Option α)) where
   kind := s!"header {n}?"
   extract _ _ r := (Got.ofDecoded (Extract.headerOpt (α := α) n r)).map Header.mk
+
+instance [FromParam α] : FromRequest σ (QueryParam n α) where
+  kind := s!"query {n}"
+  extract _ _ r := (Got.ofDecoded (Extract.query (α := α) n r)).map QueryParam.mk
+
+instance (priority := high) [FromParam α] : FromRequest σ (QueryParam n (Option α)) where
+  kind := s!"query {n}?"
+  extract _ _ r := (Got.ofDecoded (Extract.queryOpt (α := α) n r)).map QueryParam.mk
 
 /-- Strip the quotes of an entity tag (`"3"`, `W/"3"`). -/
 def unquoteETag (s : String) : String :=

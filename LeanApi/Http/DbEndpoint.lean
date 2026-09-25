@@ -57,6 +57,9 @@ class FromRequest.Pure (σ : Type) (α : Type) [F : FromRequest σ α] : Prop wh
 
 instance [FromQuery α] : FromRequest.Pure σ (QueryParams α) := ⟨fun _ _ _ _ => rfl⟩
 instance [FromParam α] : FromRequest.Pure σ (Header n α) := ⟨fun _ _ _ _ => rfl⟩
+instance [FromParam α] : FromRequest.Pure σ (QueryParam n α) := ⟨fun _ _ _ _ => rfl⟩
+instance (priority := high) [FromParam α] : FromRequest.Pure σ (QueryParam n (Option α)) :=
+  ⟨fun _ _ _ _ => rfl⟩
 instance (priority := high) [FromParam α] : FromRequest.Pure σ (Header n (Option α)) :=
   ⟨fun _ _ _ _ => rfl⟩
 instance [FromParam α] : FromRequest.Pure σ (IfMatch α) := ⟨fun _ _ _ _ => rfl⟩

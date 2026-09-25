@@ -1,5 +1,5 @@
 name = "leanapi"
-version = "0.6.0"
+version = "0.1.0"
 defaultTargets = ["LeanApi", "PolicyView", "Helpdesk", "Billing", "Scheduling", "TeamsDemo"]
 
 # Crypto dependency (M2), pinned by tag.
@@ -106,3 +106,19 @@ globs = ["TeamsDemo.+"]
 name = "teamsdemo"
 srcDir = "examples/teams-demo"
 root = "TeamsDemoMain"
+
+# The starter examples in README.md (mirrors of Express's and FastAPI's).
+[[lean_exe]]
+name = "hello"
+srcDir = "examples/starter"
+root = "Hello"
+
+[[lean_exe]]
+name = "items"
+srcDir = "examples/starter"
+root = "Items"
+
+[[lean_exe]]
+name = "users"
+srcDir = "examples/starter"
+root = "Users"

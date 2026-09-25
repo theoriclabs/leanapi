@@ -40,8 +40,10 @@ jobs:
         run: lake build leanapi_tests && ./.lake/build/bin/leanapi_tests
       - name: Proof audit
         run: ./scripts/axiom_audit.sh
-      - name: README snippets compile
+      - name: README examples compile and match examples/starter
         run: ./scripts/check_readme.sh
+      - name: The starter examples answer as the README shows
+        run: ./examples/starter/smoke.sh
       - name: EVIDENCE.md claim tables match the property registry
         run: ./scripts/gen_evidence.sh --check
       - name: Only authentication makes an Auth (no framework internals outside LeanApi/)

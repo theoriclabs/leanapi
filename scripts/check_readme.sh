@@ -21,5 +21,22 @@ for f in "$dir"/snippet*.lean; do
     echo "README snippet $(basename "$f") reported errors:"; echo "$out"; fail=1
   fi
 done
+# A block preceded by `<!-- file: PATH -->` must be exactly that file, so the
+# README and the runnable examples cannot drift apart.
+if ! python3 - <<'PY'
+import re, sys
+text = open("README.md").read()
+bad = 0
+for m in re.finditer(r"<!-- file: (\S+) -->\s*\n```lean\n(.*?)\n```", text, re.S):
+    path, block = m.group(1), m.group(2)
+    try:
+        body = open(path).read().rstrip("\n")
+    except FileNotFoundError:
+        print(f"README names {path}, which does not exist"); bad = 1; continue
+    if block.rstrip("\n") != body:
+        print(f"README block for {path} differs from the file"); bad = 1
+sys.exit(bad)
+PY
+then fail=1; fi
 if [ "$fail" -ne 0 ]; then echo "README snippet check FAILED"; exit 1; fi
-echo "README snippet check passed ($count snippets)"
+echo "README snippet check passed ($count snippets, examples match their files)"

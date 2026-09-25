@@ -1,216 +1,284 @@
 # LeanAPI
 
-**A web framework for Lean 4 where your API's guarantees are theorems.**
+**A fully functional API server for Lean 4. Think of it as Express or FastAPI, for Lean.**
 
-LeanAPI gives you what you expect from Express or FastAPI: routing, typed request extraction, validation, middleware, authentication, OpenAPI. It is also built so you can **prove** properties of the running service, across the HTTP boundary, your domain logic and the database ([LeanDB](https://github.com/theoriclabs/LeanDB)). For example:
+Routes, middleware, authentication, CORS, headers, query parameters, JSON bodies with validation: the usual things, with handlers that are plain Lean functions. A handler's arguments say where each input comes from, and LeanAPI decodes and validates them before your code runs.
 
-- *No route ever returns another user's data*, including through status codes, error messages or counts.
-- *Retrying a request with the same idempotency key never applies it twice.*
-- *Every accepted command keeps the domain valid.*
-
-Tests can show a bug is present. A proof shows a whole class of bugs is absent, for every request and every state. LeanAPI is a framework for writing services where that is practical.
-
-> **Status: 0.6.0, experimental.** The toolkit is usable, and the proved example is real. APIs will change. [EVIDENCE.md](EVIDENCE.md) lists exactly what is proved, what is only tested, and what is assumed.
-
----
-
-## Hello, LeanAPI
-
-An endpoint is a plain function. Its **type is its specification**: where each input comes from, whether it changes state, and every way it can answer.
-
-```lean
-import LeanApi
-open LeanApi Lean
-
-structure Greeting where
-  message : String
-  deriving ToJson
-
-/-- Greet someone by name. -/
-def hello (name : Path String) : Greeting := ⟨s!"hello {name.val}"⟩
-
-def main : IO Unit := do
-  let api : Api Unit := api! [.get "/hello/{name}" hello]
-  serve (api.service (.ofMutex (← Std.Mutex.new ()))) { port := 8080 }
-```
-
-`api!` checks at compile time that each template has exactly as many `{…}` parameters as the handler has `Path` arguments, and rejects conflicting routes. A `GET` whose handler can change state does not compile. Design: [docs/ENDPOINTS.md](docs/ENDPOINTS.md).
-
-## From a domain rule to a proof
-
-The core idea: write the domain in plain Lean, state its invariant, prove that every accepted decision preserves it, and expose the decision as a typed endpoint. Inputs decode through the same constructors the domain uses, so invalid data never reaches the decision.
-
-```lean
-import LeanApi
-open LeanApi LeanApi.Props Lean
-
--- 1. Values carry their rules. The only way to get a `Title` is `Title.make`.
-structure Title where
-  raw : String
-  deriving ToJson
-
-instance : SmartCtor Title String where
-  make s := if s.trimAscii.isEmpty then .error "title must be nonempty" else .ok ⟨s⟩
-  raw := (·.raw)
-
--- 2. State, and the invariant it must keep. `invariant` also generates the
---    runtime check `Board.Valid.check` (naming failing fields), a
---    `Decidable` instance, and a proof that the check matches the `Prop`.
-structure Board where
-  items : List Title
-  deriving ToJson
-
-invariant Board.Valid (b : Board) where
-  bounded : b.items.length ≤ 100
-
--- 3. A decision: pure, and allowed to refuse.
-def Board.add (t : Title) (b : Board) : Except String Board :=
-  if b.items.length < 100 then .ok { items := b.items ++ [t] } else .error "board is full"
-
--- 4. The proof that every accepted decision keeps the invariant. `preserves`
---    generates `Board.Valid.preserved_add` and proves it: refusals close
---    themselves, and the accepted branch is arithmetic.
-preserves Board.Valid by Board.add
-
--- 5. Expose it. The signature says: a JSON body decoded as a `Title`, a
---    change to the board, and either 201 with the board or 409 when full.
-structure BoardFull where
-  why : String
-
-instance : ToProblem BoardFull where
-  status _ := ⟨409, by decide⟩
-  detail e := some e.why
-
-def addItem (t : Body Title) : Writes Board (Except BoardFull (Created Board)) := fun b =>
-  match b.add t.val with
-  | .ok b' => (b', .ok { val := b' })
-  | .error why => (b, .error ⟨why⟩)
-
-def api : Api Board := api! [.post "/items" addItem]
-```
-
-`POST /items` with `{"title": ""}` → **422**, rejected at the boundary by `Title.make`. The 101st item → **409** `board is full`. The generated theorem guarantees that no sequence of successful requests can produce a board that breaks `Valid`. When `preserves` cannot close an obligation by itself, it fails and prints each remaining goal, tagged with the field and the branch conditions, and you add `| Board.add => tactic` for just that goal.
-
-This example proves a property of *one decision*. The next section shows properties of the *whole API*.
-
-## Whole-API guarantees: the private-games example
-
-[`examples/private-games`](examples/private-games/README.md) is a LeanDB-backed service of private tic-tac-toe games. Only a game's two players may see or play it. It has authentication, revision-checked moves (`ETag` / `If-Match`) and idempotency keys. The same decision code runs in the native server and in a reference model, and Lean proves the following about the model:
-
-| Guarantee | Theorem |
-|---|---|
-| **Isolation.** For a request authenticated as player `p`, the complete response (status, every header, body bytes) depends only on `p`'s view. Other players' games may differ arbitrarily | `step_noninterference_caller` |
-| **Existence privacy.** A game you're not in is indistinguishable from a game that doesn't exist | `existence_private` |
-| **Keyed idempotence.** Replaying a committed keyed request returns the recorded response and changes nothing, even after any number of other requests. Reusing a key with a different body is refused | `keyed_replay`, `keyed_replay_after`, `gamesKeyed_reuse` |
-| **System invariants.** Every stored game is valid; game ids are unique; a game's move log only grows | `allValid`, `uniqueIds`, `movesGrow` |
-| **Across requests.** After any sequence of requests by a group of players, what each of them sees depends only on what the group can see | `trace_noninterference` |
-| **Safe reads.** `GET` routes, and unrouted requests (404, 405, OPTIONS), never change state. For the typed API this is free: every typed API has it | `reads_pure`, `unrouted_pure`, `Api.step_safe` |
-| **Domain.** Accepted moves are allowed, follow the transition rules and keep every game valid | `decide_allowed`, `decide_transition`, `decide_valid` |
-| **Availability.** A player can always read their own game (so "reject everyone" doesn't count as secure) | `read_available` |
-
-The game routes are also written as typed endpoints ([`PrivateGames/Api.lean`](examples/private-games/PrivateGames/Api.lean)). There, "GET never changes state" comes from the framework. Validity and unique ids (`api_allValid`, `api_uniqueIds`), isolation (`api_noninterference`) and existence privacy (`api_existence_private`) are proved on the typed API itself, through the framework's theorems for every typed API. A differential test checks that the typed API, the reference model and the native LeanDB service answer byte for byte alike, across every error status. Keyed idempotence is still proved on the reference model; moving it to the typed API is the next step.
-
-The precise scopes (what "view" includes, what is only checked by tests, and the trusted base: `Std.Http`, SQLite, crypto, middleware, and model ≡ native) are in [EVIDENCE.md](EVIDENCE.md). Every listed theorem is checked by `./scripts/axiom_audit.sh`: no `sorry`, no `native_decide`, no extra axioms.
-
-### Reusing the isolation proof
-
-Isolation doesn't have to be re-proved per app. Describe your service as a `LeanApi.Proofs.ScopedApp`:
-
-```
-route → authenticate → decode → load (scoped to the caller) → core → commit
-```
-
-Then prove three small facts about your storage model: authentication, the scoped load and the commit's response depend only on the caller's view. You get `step_noninterference_caller` for every route. `decode` and `core`, your actual business logic, need **no** proof. Both private-games and a second app with sharing (`examples/notes`, `Notes/Shared.lean`) are instances.
-
-## Invariants and properties
-
-`LeanApi.Props` is a property library. Declare an invariant once:
-
-- `invariant` generates the `Prop`, a runtime check that names the failing fields, a proof that the check matches the `Prop`, and a `Decidable` instance. Storage runs the generated check, so the runtime check and the proved property cannot drift.
-- `preserves` generates one theorem per decision function and proves the routine cases itself. What is left is printed goal by goal, tagged with the field.
-- `ListStore` and `Invariant.pullback` lift an entity invariant to "every stored entity", with no further proof. private-games proves that every stored game is valid and that game ids are unique, in every reachable state. Both were runtime checks before.
-- `#check_invariant` searches small worlds before you write a proof. It reports vacuous invariants, counterexamples to induction (and whether they are reachable), and the next strengthening to try.
-- `register_property` puts every claim in a registry. [EVIDENCE.md](EVIDENCE.md)'s claim tables are generated from it, and a "proved" claim is refused unless its theorem passes the axiom audit.
-
-The theory (shapes, admissibility, how invariants compose) is in [docs/PROPERTIES.md](docs/PROPERTIES.md).
+> **Status: v0.1.0, the first release.** Usable, and experimental: APIs may change.
 
 ## Features
 
-| Area | What you get |
-|---|---|
-| **Typed endpoints** | Handlers are pure functions whose type is the spec: inputs (`Auth`, `Path`, `Query`, `Body`, `Header`, `IfMatch`, `FreshToken`, or your own `FromRequest`), effect (`Reads`/`Writes` over a pluggable `Store`, or `IO`), success shape (`Created`, `Versioned`, `Paged`, `NoContent`, JSON) and failures (`Except ε`, statuses typed as 4xx/5xx). `GET` handlers that write don't compile; `Api.describe` prints every signature |
-| **Routing** | `{id}`, `{id:int}`, `{id:nat}`, `{*rest}`; groups; precedence literal > constrained > param > catch-all; 404 vs 405 with `Allow`; automatic `HEAD` and `OPTIONS`; trailing-slash policy; conflicting routes rejected at compile time |
-| **Extraction** | Path, query, header, cookie, JSON and form bodies. `SmartCtor` plugs your domain constructors in. All errors are reported at once, with locations (`body.title`) |
-| **Content** | 415 on a wrong `Content-Type`, 406 on `Accept`, per-route body limits enforced while streaming (413) |
-| **Errors** | RFC 9457 `application/problem+json`. Exceptions become a 500 with no internal detail, logged under the request id |
-| **Middleware** | `App → App`, named stacks with printable order: `recover`, `requestId`, `accessLog`, `cors`, `trustedProxy`, `timeout`, `health`, `securityHeaders`. Typed stages with proved contracts |
-| **Auth** | `Authenticator` interface; bearer, Basic and session cookies over your verifier; `orElse`, `requireAuth`, `optionalAuth`; 401 with `WWW-Authenticate` |
-| **JWT and passwords** | HS256 JWT verification (`alg: none` and algorithm confusion rejected), opaque tokens stored as SHA-256 digests, scrypt password hashes |
-| **HTTP extras** | Conditional requests (304/412/428), rate limiting (429), Server-Sent Events, `traceparent`, multipart, OpenAPI 3.1 with a `/docs` page |
-| **Persistence** | LeanDB integration in the example: scoped queries, compare-and-swap commits, idempotency receipts in the same transaction, single writer with read-only reader pool |
-| **Testing** | In-process test client over `Std.Http.Server.serveConnection`: the real parser and writer, no sockets |
-| **Proofs** | `ScopedApp` isolation theorem; the `LeanApi.Props` property library (invariants, step and trace properties, noninterference with hiddenness witnesses, keyed idempotence); axiom audit script; generated evidence tables; route and writer coverage checks |
+- **Routing:** path parameters (`/items/{item_id}`, or typed like `{id:nat}`), route groups, `404` vs `405` with `Allow`, automatic `HEAD` and `OPTIONS`. Conflicting routes are rejected at compile time.
+- **Requests:** path and query parameters, headers, cookies, JSON and form bodies, multipart uploads. Invalid input is a `422` that names the field (`body.price`, `query.limit`), as in FastAPI.
+- **Responses:** JSON, text, `201 Created` with `Location`, `204 No Content`, ETags and conditional requests, cookies. Errors are RFC 9457 `application/problem+json`, and an exception is a `500` that reveals nothing.
+- **Middleware:** `cors`, `accessLog`, `requestId`, `recover`, `timeout`, `rateLimit`, `securityHeaders`, `health`, `trustedProxy`, or your own.
+- **Auth:** bearer tokens, Basic auth, session cookies, HS256 JWT, and password hashing (scrypt). A missing or bad credential is a `401` with `WWW-Authenticate`.
+- **Also:** Server-Sent Events, OpenAPI 3.1 with a `/docs` page, graceful shutdown, and an in-process test client.
 
-## Using it in your project
+## Install
 
-In `lakefile.toml`:
+In your `lakefile.toml`:
 
 ```toml
 [[require]]
 name = "leanapi"
 git = "https://github.com/theoriclabs/leanapi"
-rev = "v0.6.0"
+rev = "v0.1.0"
 ```
 
-Requirements:
-- Toolchain `leanprover/lean4:v4.33.0`.
-- OpenSSL 3 (`brew install openssl@3` or `apt install libssl-dev`) for [leancrypto](https://github.com/theoriclabs/leancrypto).
-- SQLite development headers if you use LeanDB.
+You need:
+- the toolchain `leanprover/lean4:v4.33.0`;
+- OpenSSL 3 (`brew install openssl@3`, or `apt install libssl-dev`).
 
-> The `leanapi` and `leancrypto` repositories are currently private. You need read access to both.
+> The `leanapi` repository and its dependencies are currently private; you need read access.
 
-## Build, test, audit
+## Hello World
+
+Express's [Hello World](https://expressjs.com/en/starter/hello-world.html):
+
+```js
+const express = require('express')
+const app = express()
+
+app.get('/', (req, res) => {
+  res.send('Hello World!')
+})
+
+app.listen(3000)
+```
+
+In LeanAPI ([`examples/starter/Hello.lean`](examples/starter/Hello.lean)):
+
+<!-- file: examples/starter/Hello.lean -->
+```lean
+import LeanApi
+open LeanApi
+
+def hello : Text := ⟨"Hello World!"⟩
+
+def app : Api Unit := api! [.get "/" hello]
+
+def main : IO Unit := app.listen 3000
+```
+
+```text
+$ lake exe hello
+listening on http://127.0.0.1:3000
+
+$ curl localhost:3000
+Hello World!
+```
+
+## FastAPI's first example
+
+The example from [FastAPI's README](https://github.com/fastapi/fastapi#example): a path parameter, an optional query parameter, and a `PUT` with a JSON body:
+
+```python
+from typing import Union
+from fastapi import FastAPI
+from pydantic import BaseModel
+
+app = FastAPI()
+
+class Item(BaseModel):
+    name: str
+    price: float
+    is_offer: Union[bool, None] = None
+
+@app.get("/")
+def read_root():
+    return {"Hello": "World"}
+
+@app.get("/items/{item_id}")
+def read_item(item_id: int, q: Union[str, None] = None):
+    return {"item_id": item_id, "q": q}
+
+@app.put("/items/{item_id}")
+def update_item(item_id: int, item: Item):
+    return {"item_name": item.name, "item_id": item_id}
+```
+
+In LeanAPI ([`examples/starter/Items.lean`](examples/starter/Items.lean)):
+
+<!-- file: examples/starter/Items.lean -->
+```lean
+import LeanApi
+open LeanApi Lean
+
+structure Item where
+  name : String
+  price : Float
+  isOffer : Option Bool
+
+instance : FromBody Item := .record (Item.mk <$> .req "name" <*> .req "price" <*> .opt "is_offer")
+
+def readRoot : Json := json% {"Hello": "World"}
+
+def readItem (itemId : Path Int) (q : QueryParam "q" (Option String)) : Json :=
+  json% {"item_id": $(itemId.val), "q": $(q.val)}
+
+def updateItem (itemId : Path Int) (item : Body Item) : Json :=
+  json% {"item_name": $(item.val.name), "item_id": $(itemId.val)}
+
+def app : Api Unit := api! [
+  .get "/"                readRoot,
+  .get "/items/{item_id}" readItem,
+  .put "/items/{item_id}" updateItem ]
+
+def main : IO Unit := app.listen 8000
+```
+
+Each handler's arguments say where its inputs come from: `Path` (the `{item_id}` segment), `QueryParam "q"`, `Body`. They arrive already decoded, and the handler just returns its answer.
+
+```text
+$ lake exe items
+$ curl 'localhost:8000/items/5?q=somequery'
+{"item_id":5,"q":"somequery"}
+
+$ curl -X PUT localhost:8000/items/5 -H 'content-type: application/json' -d '{"name":"Foo","price":42.5}'
+{"item_id":5,"item_name":"Foo"}
+
+$ curl -X PUT localhost:8000/items/5 -H 'content-type: application/json' -d '{"name":"Foo"}'
+{"detail":"request validation failed","errors":[{"loc":"body.price","msg":"field required"}],"status":422,...}
+
+$ curl localhost:8000/items/abc
+{"detail":"request validation failed","errors":[{"loc":"path.item_id","msg":"expected an integer"}],"status":422,...}
+```
+
+## An Express app: middleware, JSON, a query, a header, auth
+
+A typical small Express app: CORS and a request log as middleware, a list with a `?limit=` query parameter, a `POST` with a JSON body, and a route that needs a bearer token.
+
+```js
+const express = require('express')
+const cors = require('cors')
+const morgan = require('morgan')
+
+const app = express()
+app.use(cors({ origin: 'http://localhost:5173' }))
+app.use(morgan('combined'))
+app.use(express.json())
+
+const users = [{ id: 1, name: 'Ada' }]
+const tokens = { secret: 1 }
+
+function requireAuth(req, res, next) {
+  const token = (req.headers.authorization || '').replace('Bearer ', '')
+  req.user = users.find(u => u.id === tokens[token])
+  if (!req.user) return res.sendStatus(401)
+  next()
+}
+
+app.get('/users', (req, res) => {
+  res.json(users.slice(0, Number(req.query.limit ?? 10)))
+})
+
+app.post('/users', (req, res) => {
+  if (!req.body.name) return res.status(422).json({ error: 'name required' })
+  const user = { id: users.length + 1, name: req.body.name }
+  users.push(user)
+  res.status(201).location(`/users/${user.id}`).json(user)
+})
+
+app.get('/users/me', requireAuth, (req, res) => {
+  res.json({ ...req.user, agent: req.headers['user-agent'] })
+})
+
+app.listen(3000)
+```
+
+In LeanAPI ([`examples/starter/Users.lean`](examples/starter/Users.lean)):
+
+<!-- file: examples/starter/Users.lean -->
+```lean
+import LeanApi
+open LeanApi Lean
+
+structure User where
+  id : Nat
+  name : String
+  deriving ToJson
+
+structure State where
+  users : Array User := #[⟨1, "Ada"⟩]
+  tokens : List (String × Nat) := [("secret", 1)]
+
+-- `Authorization: Bearer secret` is Ada; anything else is a 401.
+instance : Authenticates State User :=
+  .sessions fun s token => (s.tokens.lookup token).bind fun id => s.users.find? (·.id == id)
+
+structure NewUser where
+  name : String
+
+instance : FromBody NewUser := .record (NewUser.mk <$> .req "name")
+
+def listUsers (limit : QueryParam "limit" (Option Nat)) : Reads State (List User) :=
+  fun s => s.users.toList.take (limit.val.getD 10)
+
+def createUser (body : Body NewUser) : Writes State (Created User) := fun s =>
+  let user : User := ⟨s.users.size + 1, body.val.name⟩
+  ({ s with users := s.users.push user }, { val := user, location := some s!"/users/{user.id}" })
+
+def me (user : Auth User) (agent : Header "user-agent" (Option String)) : Json :=
+  json% {"id": $(user.val.id), "name": $(user.val.name), "agent": $(agent.val)}
+
+def app : Api State := api! [
+  .get  "/users"    listUsers,
+  .post "/users"    createUser,
+  .get  "/users/me" me ]
+
+def main : IO Unit :=
+  app.listenWith {} 3000 (stack := Stack.of [
+    cors { origins := .list ["http://localhost:5173"] },
+    accessLog ])
+```
+
+The signatures carry what Express does by hand:
+- **`Auth User`** makes `/users/me` require a valid token. Nothing else in the handler checks it.
+- **`Reads State`** can only read the state and **`Writes State`** can change it. A `GET` handler that writes doesn't compile.
+- **`Created User`** answers `201` with the `Location` header.
+
+```text
+$ lake exe users
+$ curl -i localhost:3000/users/me
+HTTP/1.1 401 Unauthorized
+www-authenticate: Bearer realm="api"
+...
+
+$ curl localhost:3000/users/me -H 'authorization: Bearer secret'
+{"agent":"curl/8.7.1","id":1,"name":"Ada"}
+
+$ curl -X POST localhost:3000/users -H 'content-type: application/json' -d '{}'
+{"detail":"request validation failed","errors":[{"loc":"body.name","msg":"field required"}],"status":422,...}
+
+$ curl 'localhost:3000/users?limit=x'
+{"detail":"request validation failed","errors":[{"loc":"query.limit","msg":"expected a natural number"}],"status":422,...}
+```
+
+For a bigger app (sign-up and login, sessions in cookies, ETags, pagination, CORS with credentials), see [`examples/notes`](examples/notes/Notes/App.lean).
+
+## Run the examples
 
 ```bash
-lake build                                                # the library
+lake exe hello        # Hello World, on :3000
+lake exe items        # FastAPI's example, on :8000
+lake exe users        # the Express app, on :3000
+./examples/starter/smoke.sh   # starts each one and checks the answers above
+```
+
+## Not there yet
+
+- **Throughput is modest.** LeanAPI runs on Lean's built-in `Std.Http` server: roughly 2,000–3,500 requests per second for a trivial route on a laptop.
+- **OpenAPI is written by hand.** Routes carry a description, and LeanAPI serves the document and a `/docs` page. It isn't generated from handler types, the way FastAPI does it.
+- **No WebSockets here.** They live in a separate library.
+
+## Build and test
+
+```bash
+lake build
 lake build leanapi_tests && ./.lake/build/bin/leanapi_tests
-./scripts/axiom_audit.sh                                  # every theorem in EVIDENCE.md
-./scripts/gen_evidence.sh --check                         # EVIDENCE.md tables match the registry
-./scripts/check_readme.sh                                 # README examples compile
-lake build notes games                                    # the example servers
+./scripts/check_readme.sh     # every Lean example in this README compiles, and matches examples/starter
 ```
-
-Run the examples:
-
-```bash
-./.lake/build/bin/notes 8080                              # notes: auth, ETags, CORS, pagination
-./.lake/build/bin/games --port 8080 --db games.sqlite     # private-games
-./examples/private-games/seed.sh http://127.0.0.1:8080
-```
-
-**The schema-change demo** ([`examples/teams-demo`](examples/teams-demo/README.md)): change the schema one step at a time (a unique email, a name rule, a normalized email column, public profiles), and watch the compiler report each change in the API, or in the stated business rule.
-
-```bash
-./examples/teams-demo/demo.sh next      # run it eight times; `reset` starts over
-```
-
-## Limits worth knowing
-
-- **Throughput is modest.** LeanAPI runs on Lean's built-in `Std.Http` server (toolchain 4.33). On a 10-core laptop with `ab` and keep-alive, a trivial route serves roughly **2,000–3,500 req/s**. Bare `Std.Http` without LeanAPI is within about 10% of that, so the transport is the ceiling. The transport sits behind one module (`Runtime/Server.lean`) and can be replaced without touching routes or proofs.
-- **Proofs are about a model.** The native server runs the same decision code, and a differential test compares the two, but that correspondence is *checked*, not proved.
-- **What remains open** is listed in [EVIDENCE.md](EVIDENCE.md#open) and the latest [review](docs/reviews/).
-
-## Documentation
-
-| Document | What it covers |
-|---|---|
-| [DESIGN.md](DESIGN.md) | The architecture: domain first, HTTP and persistence as adapters, proof surface, open questions |
-| [docs/PROPERTIES.md](docs/PROPERTIES.md) | The property library: shapes, admissibility, composing invariants |
-| [PLAN.md](PLAN.md) | Milestones M0–M12 (shipped) |
-| [EVIDENCE.md](EVIDENCE.md) | Proved / checked / assumed / open, claim by claim |
-| [docs/decisions/](docs/decisions/README.md) | Decision records for each settled design question |
-| [docs/reviews/](docs/reviews/) | External reviews and follow-ups |
-| [CHANGELOG.md](CHANGELOG.md) | Release notes |
 
 ## License
 
@@ -221,4 +289,4 @@ Run the examples:
 - **Always allowed:** non-production use (development, testing, evaluation), copying, modifying and redistributing under the same license.
 - **Commercial licenses:** team@theoric.com.
 
-Versions up to v0.5.0 were released under the MIT License and remain under it.
+Development versions published before 2026-09-24 were released under the MIT License and remain under it.

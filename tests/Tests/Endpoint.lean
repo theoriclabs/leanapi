@@ -52,6 +52,13 @@ example : (Handler.effect (σ := State) (τ := type_of% editNote)) = .writes := 
 example : (Handler.effect (σ := State) (τ := type_of% getNote)) = .reads := rfl
 example : (Handler.pathArity (σ := State) (τ := type_of% editNote)) = 1 := rfl
 
+/-! ## Named query parameters -/
+
+def queryEcho (n : QueryParam "n" Nat) (q : QueryParam "q" (Option String)) : Text :=
+  ⟨s!"{n.val}:{q.val.getD "-"}"⟩
+
+def queryApi : Api Unit := api! [.get "/q" queryEcho]
+
 /-! ## Runtime -/
 
 def run : TestM Unit := do
@@ -76,5 +83,14 @@ def run : TestM Unit := do
     let d := Notes.api.describe
     check "describe shows the signature" ((d.splitOn "Auth User → Path NoteId → IfMatch Rev → Body NoteEdit").length > 1)
     check "describe shows the effect" ((d.splitOn "PATCH /notes/{id:nat} [writes").length > 1)
+  section_ "named query parameters" do
+    let svc := queryApi.service (.ofMutex (← Std.Mutex.new ()))
+    checkEq "required and optional" (← get svc "/q?n=3&q=hi").body "3:hi"
+    checkEq "optional absent" (← get svc "/q?n=3").body "3:-"
+    let r ← get svc "/q"
+    checkEq "required absent 422" r.status 422
+    check "names query.n" ((r.body.splitOn "query.n").length > 1)
+    checkEq "bad value 422" (← get svc "/q?n=x").status 422
+    check "describe shows the inputs" ((queryApi.describe.splitOn "query n, query q?").length > 1)
 
 end Tests.Endpoint
