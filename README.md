@@ -288,5 +288,3 @@ lake build leanapi_tests && ./.lake/build/bin/leanapi_tests
 - **Not permitted without a commercial license:** offering a Competing Service. That means LeanAPI itself, or a product whose main value is LeanAPI, sold as a hosted backend platform or embedded in a framework or developer tool. Building and running your own applications with LeanAPI, including ones you sell, is not a Competing Service.
 - **Always allowed:** non-production use (development, testing, evaluation), copying, modifying and redistributing under the same license.
 - **Commercial licenses:** team@theoric.com.
-
-Development versions published before 2026-09-24 were released under the MIT License and remain under it.
