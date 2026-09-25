@@ -23,12 +23,12 @@ expect() {  # expect <status> <body-substring> <curl args...>
 }
 J=(-H 'content-type: application/json')
 
-echo "hello (Express's Hello World)"
+echo "hello"
 start hello 3000
 expect 200 'Hello World!' localhost:3000/
 stop
 
-echo "items (FastAPI's first example)"
+echo "items (path, query and body)"
 start items 8000
 expect 200 '{"Hello":"World"}' localhost:8000/
 expect 200 '{"item_id":5,"q":"somequery"}' "localhost:8000/items/5?q=somequery"
@@ -38,7 +38,7 @@ expect 422 '"loc":"body.price"' -X PUT localhost:8000/items/5 "${J[@]}" -d '{"na
 expect 422 '"loc":"path.item_id"' localhost:8000/items/abc
 stop
 
-echo "users (an Express app: middleware, JSON, query, headers, auth)"
+echo "users (middleware, headers and auth)"
 start users 3000
 expect 200 '[{"id":1,"name":"Ada"}]' "localhost:3000/users?limit=5"
 expect 201 '{"id":2,"name":"Grace"}' -X POST localhost:3000/users "${J[@]}" -d '{"name":"Grace"}'

@@ -34,21 +34,6 @@ You need:
 
 ## Hello World
 
-Express's [Hello World](https://expressjs.com/en/starter/hello-world.html):
-
-```js
-const express = require('express')
-const app = express()
-
-app.get('/', (req, res) => {
-  res.send('Hello World!')
-})
-
-app.listen(3000)
-```
-
-In LeanAPI ([`examples/starter/Hello.lean`](examples/starter/Hello.lean)):
-
 <!-- file: examples/starter/Hello.lean -->
 ```lean
 import LeanApi
@@ -69,36 +54,7 @@ $ curl localhost:3000
 Hello World!
 ```
 
-## FastAPI's first example
-
-The example from [FastAPI's README](https://github.com/fastapi/fastapi#example): a path parameter, an optional query parameter, and a `PUT` with a JSON body:
-
-```python
-from typing import Union
-from fastapi import FastAPI
-from pydantic import BaseModel
-
-app = FastAPI()
-
-class Item(BaseModel):
-    name: str
-    price: float
-    is_offer: Union[bool, None] = None
-
-@app.get("/")
-def read_root():
-    return {"Hello": "World"}
-
-@app.get("/items/{item_id}")
-def read_item(item_id: int, q: Union[str, None] = None):
-    return {"item_id": item_id, "q": q}
-
-@app.put("/items/{item_id}")
-def update_item(item_id: int, item: Item):
-    return {"item_name": item.name, "item_id": item_id}
-```
-
-In LeanAPI ([`examples/starter/Items.lean`](examples/starter/Items.lean)):
+## Path parameters, query parameters and JSON bodies
 
 <!-- file: examples/starter/Items.lean -->
 ```lean
@@ -128,7 +84,7 @@ def app : Api Unit := api! [
 def main : IO Unit := app.listen 8000
 ```
 
-Each handler's arguments say where its inputs come from: `Path` (the `{item_id}` segment), `QueryParam "q"`, `Body`. They arrive already decoded, and the handler just returns its answer.
+Each handler's arguments say where its inputs come from: `Path` (the `{item_id}` segment), `QueryParam "q"`, `Body`. They arrive already decoded, and the handler just returns its answer. Invalid input never reaches it:
 
 ```text
 $ lake exe items
@@ -145,49 +101,9 @@ $ curl localhost:8000/items/abc
 {"detail":"request validation failed","errors":[{"loc":"path.item_id","msg":"expected an integer"}],"status":422,...}
 ```
 
-## An Express app: middleware, JSON, a query, a header, auth
+## Middleware, headers and auth
 
-A typical small Express app: CORS and a request log as middleware, a list with a `?limit=` query parameter, a `POST` with a JSON body, and a route that needs a bearer token.
-
-```js
-const express = require('express')
-const cors = require('cors')
-const morgan = require('morgan')
-
-const app = express()
-app.use(cors({ origin: 'http://localhost:5173' }))
-app.use(morgan('combined'))
-app.use(express.json())
-
-const users = [{ id: 1, name: 'Ada' }]
-const tokens = { secret: 1 }
-
-function requireAuth(req, res, next) {
-  const token = (req.headers.authorization || '').replace('Bearer ', '')
-  req.user = users.find(u => u.id === tokens[token])
-  if (!req.user) return res.sendStatus(401)
-  next()
-}
-
-app.get('/users', (req, res) => {
-  res.json(users.slice(0, Number(req.query.limit ?? 10)))
-})
-
-app.post('/users', (req, res) => {
-  if (!req.body.name) return res.status(422).json({ error: 'name required' })
-  const user = { id: users.length + 1, name: req.body.name }
-  users.push(user)
-  res.status(201).location(`/users/${user.id}`).json(user)
-})
-
-app.get('/users/me', requireAuth, (req, res) => {
-  res.json({ ...req.user, agent: req.headers['user-agent'] })
-})
-
-app.listen(3000)
-```
-
-In LeanAPI ([`examples/starter/Users.lean`](examples/starter/Users.lean)):
+A small app: CORS and a request log as middleware, a list with a `?limit=` query parameter, a `POST` with a JSON body, and a route that needs a bearer token.
 
 <!-- file: examples/starter/Users.lean -->
 ```lean
@@ -233,7 +149,7 @@ def main : IO Unit :=
     accessLog ])
 ```
 
-The signatures carry what Express does by hand:
+The types do the work:
 - **`Auth User`** makes `/users/me` require a valid token. Nothing else in the handler checks it.
 - **`Reads State`** can only read the state and **`Writes State`** can change it. A `GET` handler that writes doesn't compile.
 - **`Created User`** answers `201` with the `Location` header.
@@ -261,15 +177,15 @@ For a bigger app (sign-up and login, sessions in cookies, ETags, pagination, COR
 
 ```bash
 lake exe hello        # Hello World, on :3000
-lake exe items        # FastAPI's example, on :8000
-lake exe users        # the Express app, on :3000
+lake exe items        # path, query and body, on :8000
+lake exe users        # middleware, headers and auth, on :3000
 ./examples/starter/smoke.sh   # starts each one and checks the answers above
 ```
 
 ## Not there yet
 
 - **Throughput is modest.** LeanAPI runs on Lean's built-in `Std.Http` server: roughly 2,000–3,500 requests per second for a trivial route on a laptop.
-- **OpenAPI is written by hand.** Routes carry a description, and LeanAPI serves the document and a `/docs` page. It isn't generated from handler types, the way FastAPI does it.
+- **OpenAPI is written by hand.** Routes carry a description, and LeanAPI serves the document and a `/docs` page. It isn't generated from handler types yet.
 - **No WebSockets here.** They live in a separate library.
 
 ## Build and test

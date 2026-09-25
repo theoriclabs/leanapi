@@ -107,7 +107,7 @@ name = "teamsdemo"
 srcDir = "examples/teams-demo"
 root = "TeamsDemoMain"
 
-# The starter examples in README.md (mirrors of Express's and FastAPI's).
+# The starter examples in README.md.
 [[lean_exe]]
 name = "hello"
 srcDir = "examples/starter"
