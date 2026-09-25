@@ -30,8 +30,6 @@ You need:
 - the toolchain `leanprover/lean4:v4.33.0`;
 - OpenSSL 3 (`brew install openssl@3`, or `apt install libssl-dev`).
 
-> The `leanapi` repository and its dependencies are currently private; you need read access.
-
 ## Hello World
 
 <!-- file: examples/starter/Hello.lean -->
