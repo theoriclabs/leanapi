@@ -2,7 +2,6 @@
 
 **A fully functional API server for Lean 4. Think of it as Express or FastAPI, for Lean.**
 
-Routes, middleware, authentication, CORS, headers, query parameters, JSON bodies with validation: the usual things, with handlers that are plain Lean functions. A handler's arguments say where each input comes from, and LeanAPI decodes and validates them before your code runs.
 
 > **Status: v0.1.0, the first release.** Usable, and experimental: APIs may change.
 
