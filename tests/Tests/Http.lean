@@ -120,6 +120,11 @@ def run : TestM Unit := do
     checkEq "over limit 413" (← request svc "POST" "/small" [] "12345678901").status 413
     let chunked := "POST /small HTTP/1.1\r\nHost: t\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n6\r\n123456\r\n6\r\n123456\r\n0\r\n\r\n"
     checkEq "chunked over limit 413" (parseReply (← sendRaw svc chunked.toUTF8)).status 413
+    let chunked := "POST /small HTTP/1.1\r\nHost: t\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n6\r\n123456\r\n0\r\n\r\n"
+    checkEq "chunked under limit" (parseReply (← sendRaw svc chunked.toUTF8)).body "got 6"
+    checkEq "empty body" (← request svc "POST" "/small" [] "").body "got 0"
+    let noLength := "POST /small HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n"
+    checkEq "no Content-Length is an empty body" (parseReply (← sendRaw svc noLength.toUTF8)).body "got 0"
     let r ← get svc "/boom"
     checkEq "exception 500" r.status 500
     check "no internal detail leaked" (!r.body.contains "secret")

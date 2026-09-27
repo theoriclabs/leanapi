@@ -250,7 +250,7 @@ namespace Authenticates
 
 /-- Session tokens looked up in the state: `Authorization: Bearer`, and the
     cookie `cookie` when given. -/
-def sessions (lookup : σ → String → Option α) (cookie : Option String := none) (realm : String := "api") :
+@[instance_reducible] def sessions (lookup : σ → String → Option α) (cookie : Option String := none) (realm : String := "api") :
     Authenticates σ α where
   challenge := s!"Bearer realm=\"{realm}\""
   authenticate s _ req :=
@@ -270,7 +270,7 @@ def sessions (lookup : σ → String → Option α) (cookie : Option String := n
       | none => .error .missing
 
 /-- Basic credentials checked against the state. -/
-def passwords (verify : σ → String → String → Option α) (realm : String := "api") : Authenticates σ α where
+@[instance_reducible] def passwords (verify : σ → String → String → Option α) (realm : String := "api") : Authenticates σ α where
   challenge := s!"Basic realm=\"{realm}\", charset=\"UTF-8\""
   authenticate s _ req :=
     let hasBasic := match req.header? "authorization" with
@@ -285,7 +285,7 @@ def passwords (verify : σ → String → String → Option α) (realm : String 
 
 /-- HS256 JWTs, verified at the request's time; claims mapped to an actor
     against the state. -/
-def jwt (policy : Jwt.Policy) (toActor : σ → Json → Option α) (realm : String := "api") : Authenticates σ α where
+@[instance_reducible] def jwt (policy : Jwt.Policy) (toActor : σ → Json → Option α) (realm : String := "api") : Authenticates σ α where
   challenge := s!"Bearer realm=\"{realm}\""
   authenticate s env req :=
     match req.header? "authorization" with
@@ -445,7 +445,7 @@ def dflt [FromBody α] (name : String) (d : α) : Fields α := fun loc j => fiel
 end Fields
 
 /-- A `FromBody` instance from a record of fields. -/
-def FromBody.record (f : Fields α) : FromBody α where
+@[instance_reducible] def FromBody.record (f : Fields α) : FromBody α where
   fromBody loc j := match j with
     | .obj _ => f loc j
     | _ => .error [⟨loc, "expected an object"⟩]
@@ -482,7 +482,7 @@ def opt [FromParam α] (name : String) : FormFields (Option α) := fun ps =>
 
 end FormFields
 
-def FromForm.record (f : FormFields α) : FromForm α := ⟨f⟩
+@[instance_reducible] def FromForm.record (f : FormFields α) : FromForm α := ⟨f⟩
 
 /-! ## Outputs -/
 

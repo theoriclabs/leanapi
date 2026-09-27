@@ -154,7 +154,7 @@ is decision 0010.
    only as SHA-256 digests.
 3. **Crypto** (decision 0002): OpenSSL 3 (SHA-256, HMAC, scrypt, RAND_bytes,
    constant-time compare), through leancrypto's C binding.
-4. **`Std.Http`** parsing and framing (Lean toolchain v4.33.0), plus LeanAPI's
+4. **`Std.Http`** parsing and framing (Lean toolchain nightly-2026-09-26), plus LeanAPI's
    head decoding (`Runtime/Server.lean`): the model receives the `Req` the
    edge built.
 5. **Middleware** (decision 0001): `recover → requestId → accessLog → health

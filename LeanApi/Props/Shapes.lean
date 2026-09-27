@@ -195,7 +195,7 @@ theorem acts_nonempty (P : NIPackage S O) (a : O.Observer) : ∃ r w, P.acts a r
 
 /-- The success predicate is not trivially true. -/
 theorem ok_nontrivial (P : NIPackage S O) : ∃ a o, ¬ P.ok a o :=
-  let ⟨a, e, w, r, _, h⟩ := P.refusal
+  let ⟨a, _, _, _, _, h⟩ := P.refusal
   ⟨a, _, h⟩
 
 end NIPackage

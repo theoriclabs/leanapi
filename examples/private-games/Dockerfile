@@ -11,8 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV ELAN_HOME=/usr/local/elan
 ENV PATH="${ELAN_HOME}/bin:${PATH}"
 RUN curl -fsSL https://elan.lean-lang.org/elan-init.sh | sh -s -- -y --default-toolchain none \
-    && elan toolchain install leanprover/lean4:v4.33.0 \
-    && elan default leanprover/lean4:v4.33.0
+    && elan toolchain install leanprover/lean4-nightly:nightly-2026-09-26 \
+    && elan default leanprover/lean4-nightly:nightly-2026-09-26
 
 WORKDIR /src/leanapi
 COPY . /src/leanapi

@@ -8,7 +8,8 @@
      peer address). Unsupported methods: 501. Undecodable paths: 400.
   2. Ask the router for the route's body limit and read the body while
      streaming, stopping with 413 as soon as the limit is exceeded
-     (a `Content-Length` over the limit is refused before reading).
+     (a `Content-Length` over the limit is refused before reading, and an
+     empty body is not read).
   3. Run the app on a dedicated thread (handlers do blocking `IO`: SQLite,
      FFI), so async pool threads are never pinned.
   4. Encode the `Res`.
@@ -82,12 +83,13 @@ def Service.handler (svc : Service) (log : String → IO Unit := IO.eprintln) :
         try runBlocking (svc.app req)
         catch _ => pure (Problem.make 500).toRes
       | some limit =>
-      let declared ← request.body.getKnownSize
-      let tooBig : Bool := match declared with
-        | some (.fixed n) => decide (n > limit)
-        | _ => false
-      if tooBig then pure (Problem.make 413 (some s!"body exceeds {limit} bytes")).toRes else
-      match ← readLimited request.body limit with
+      -- Awaiting even an empty stream costs a trip through the async
+      -- scheduler, so a body declared empty (a GET, say) is not read.
+      let body? ← match ← request.body.getKnownSize with
+        | some (.fixed 0) => pure (some ByteArray.empty)
+        | some (.fixed n) => if n > limit then pure none else readLimited request.body limit
+        | _ => readLimited request.body limit
+      match body? with
       | none => pure (Problem.make 413 (some s!"body exceeds {limit} bytes")).toRes
       | some body =>
         try runBlocking (svc.app { req with body })
@@ -99,7 +101,13 @@ def Service.handler (svc : Service) (log : String → IO Unit := IO.eprintln) :
 structure ServeConfig where
   host : String := "127.0.0.1"
   port : UInt16 := 8080
+  /-- Transport settings. `maxConnections` (default 1024) caps open
+      connections; past it, new ones wait in the listen backlog. -/
   http : Std.Http.Config := { generateDate := true }
+  /-- Connections the kernel queues before `accept`. The OS may cap it:
+      macOS at `kern.ipc.somaxconn` (128 by default), where a burst beyond
+      `maxConnections` plus the backlog fails to connect. -/
+  backlog : UInt32 := 1024
   /-- Stop accepting and drain on SIGTERM / SIGINT. -/
   handleSignals : Bool := true
   log : String → IO Unit := IO.eprintln
@@ -112,7 +120,7 @@ def serve (svc : Service) (cfg : ServeConfig := {}) (onReady : UInt16 → IO Uni
     | throw (IO.userError s!"invalid IPv4 host {cfg.host}")
   let addr : Net.SocketAddress := .v4 { addr := ip, port := cfg.port }
   let handler := Std.Http.Server.Handler.ofFn (svc.handler cfg.log)
-  let server ← Async.block (Std.Http.Server.serve addr handler cfg.http)
+  let server ← Async.block (Std.Http.Server.serve addr handler cfg.http cfg.backlog)
   onReady cfg.port
   cfg.log (Lean.Json.mkObj [("event", .str "leanapi.ready"), ("host", .str cfg.host),
     ("port", Lean.Json.num cfg.port.toNat)]).compress
