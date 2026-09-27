@@ -3,7 +3,7 @@
   may call it, what it reads or writes, and how it can fail.
 -/
 import TeamsDemo.Schema
-import LeanApi.Auth.Tokens
+import LeanApi
 
 namespace TeamsDemo
 

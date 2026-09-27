@@ -150,10 +150,6 @@ end TxnAs
 abbrev WriteAs (s : Type) [IsSchema s] {P : Type} (p : P) (ε ρ : Type) :=
   {σ : Type} → TxnAs σ s p ε ρ
 
-def WriteAs.toTx {s : Type} [IsSchema s] {P : Type} {p : P} {ε ρ : Type}
-    (w : WriteAs s p ε ρ) : Tx s ε ρ :=
-  fun {σ} => (w (σ := σ)).prog
-
 /-! ## Projection: the invoice a tenant sees -/
 
 structure LineView where

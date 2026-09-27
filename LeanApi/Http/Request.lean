@@ -5,13 +5,10 @@
   the router; `locals` carries strings set by middleware (request id,
   client address after proxy handling).
 -/
-import Std.Http
 import LeanApi.Util.Url
 import LeanApi.Http.Response
 
 namespace LeanApi
-
-open Std.Http
 
 /-- Methods LeanAPI routes on. Anything else is answered 501 at the edge. -/
 inductive Method where
@@ -30,8 +27,6 @@ instance : ToString Method := ⟨Method.toString⟩
 
 def ofString? (s : String) : Option Method :=
   all.find? (·.toString == s.toUpper)
-
-def ofStd? (m : Std.Http.Method) : Option Method := ofString? (ToString.toString m)
 
 end Method
 

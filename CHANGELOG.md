@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **The architecture and the goals, in Lean** ([architecture/](architecture/README.md)). A theorem says every import follows the design. From it: the property library and typed endpoints never reach the server or `Std.Http`, and an application's domain and policies never reach HTTP. `Goals.lean` states the project's goals, each proved or waiting on a named ticket.
+- **Invalid input never reaches a handler**, as theorems: `Handler.path_failed`, `Handler.input_failed`, `Handler.auth_failed`.
+- **Moved, same names:**
+  - `Auth` is now in `LeanApi.Auth.Actor`, which imports nothing.
+  - `Service` is now in `LeanApi.Http.Service`.
+  - `Method.ofStd?` and `Res.toStd` are now in `LeanApi.Runtime.Server`, the only module that imports `Std.Http`.
+  - `import LeanApi` still brings all of them.
+
 ## 0.1.0 (2026-09-24): first release
 
 LeanAPI is an API server for Lean 4, in the spirit of Express and FastAPI.

@@ -5,6 +5,8 @@ import LeanApi.Http.Request
 import LeanApi.Http.Router
 import LeanApi.Http.Extract
 import LeanApi.Http.Middleware
+import LeanApi.Http.Service
+import LeanApi.Auth.Actor
 import LeanApi.Auth.Basic
 import LeanApi.Runtime.Blocking
 import LeanApi.Runtime.Server

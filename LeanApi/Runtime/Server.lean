@@ -1,7 +1,7 @@
 /-
-  The transport edge. The only module that touches `Std.Http` request and
-  response types (risk mitigation: `Std.Http` may change between
-  toolchains; it is kept behind this one module).
+  The transport edge. The only module that imports `Std.Http`
+  (`Architecture.Framework.only_the_server_imports_std_http`): `Std.Http`
+  may change between toolchains, and the change then stays in this file.
 
   Per request:
   1. Decode the head into a `Req` (method, decoded path, query, headers,
@@ -14,21 +14,29 @@
   4. Encode the `Res`.
 -/
 import Std.Http
-import LeanApi.Http.Middleware
+import LeanApi.Http.Service
 
 namespace LeanApi
 
 open Std Std.Http Std.Async
 
-/-- An application ready to serve: the app (router wrapped in middleware)
-    plus the router, for per-route body limits. -/
-structure Service where
-  app : App
-  /-- `some n`: read at most `n` bytes. `none`: do not read the body. -/
-  bodyLimit : Req → Option Nat := fun _ => some (1024 * 1024)
+/-! ## Conversions to and from `Std.Http` -/
 
-def Service.ofRouter (r : Router) (stack : Stack := {}) : Service :=
-  { app := stack.apply r.app, bodyLimit := r.bodyLimit }
+def Method.ofStd? (m : Std.Http.Method) : Option Method := Method.ofString? (ToString.toString m)
+
+/-- Status for a code; unknown codes in a valid range become a custom status. -/
+def statusOf (n : Nat) : Status :=
+  (Status.ofCode none n.toUInt16).getD .internalServerError
+
+/-- Convert to the transport's response. Invalid header names or values are
+    dropped rather than sent (the transport would reject them anyway). -/
+def Res.toStd (r : Res) : Std.Async.Async (Response Body.Any) := do
+  let headers := r.headers.foldl (init := Headers.empty) fun acc (k, v) =>
+    match Header.Name.ofString? k, Header.Value.ofString? v with
+    | some n, some val => acc.insert n val
+    | _, _ => acc
+  let resp ← (Response.new.status (statusOf r.status) |>.headers headers).fromBytes r.body
+  return { line := resp.line, body := Body.Any.ofBody resp.body, extensions := resp.extensions }
 
 /-- Decode a request head. `none` when the method is not routable. -/
 def decodeHead (line : Request.Head) (remote : Option String) : Except Res Req := do

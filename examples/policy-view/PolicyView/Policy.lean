@@ -5,7 +5,7 @@
   what it does not yet.
 -/
 import LeanDb
-import LeanApi
+import LeanApi.Auth.Actor
 open LeanDb
 
 namespace PolicyView

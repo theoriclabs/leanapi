@@ -20,6 +20,8 @@ An ideal developer experience is:
 4. State the properties that matter for this application.
 5. See which properties follow from types, which need proofs, which are checked at runtime, and which depend on trusted execution.
 
+The project's own goals are written this way too: [architecture/Architecture/Goals.lean](architecture/Architecture/Goals.lean) states each goal in Lean where it can be stated today, with its proof or the ticket that proves it.
+
 This design is independent of a particular frontend or existing application framework. Existing libraries can supply implementations once the required interfaces are understood.
 
 In particular, rules about who may see or change which data are declared once, with the data, and enforced and proved across the whole application surface. The authenticated actor flows from the API into the type of every database program, the database layer applies the rule, and isolation follows for every route (§7.5, row-level security).
@@ -149,6 +151,10 @@ Domain definitions
 ```
 
 Adapters import the domain and application interfaces they implement. Domain rules should not need a request object, socket, SQLite connection, or deployment configuration. Pure codec or schema descriptions may be colocated with domain definitions if their dependencies remain appropriate; the package boundary is open.
+
+**Checked, for LeanAPI and three example applications** ([architecture/](architecture/README.md)). The design is a small graph in Lean, and a theorem says every import in the build follows it. From that theorem:
+- LeanAPI's property library, typed endpoints and database endpoints never reach the server or `Std.Http`;
+- in helpdesk, billing and scheduling, the domain reaches neither HTTP nor LeanDB, and the schema and policies reach the actor (`Auth`) but not the rest of LeanAPI.
 
 Shared meaning does not require identical representations. A private record, public response, SQL row, and event can have different fields while referring to the same concepts. Their mappings are explicit parts of the system.
 

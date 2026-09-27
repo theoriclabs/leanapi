@@ -5,10 +5,17 @@
 -/
 import Helpdesk.Policies
 import LeanApi.Auth.Tokens
+import LeanApi.Http.DbEndpoint
 
 namespace Helpdesk
 
 open LeanApi Lean LeanDb PolicyView
+
+/-- Bridge for `DbApi` handlers: the request's `Auth` is the only `Who`
+    the write program is indexed by. -/
+def TxAs.forAuth {ε α : Type} (me : Auth Who)
+    (prog : (who : Who) → TxAs HelpdeskDb who ε α) : Tx HelpdeskDb ε α :=
+  (prog me.val).prog
 
 /-! ## Boundary types -/
 

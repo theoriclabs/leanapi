@@ -9,11 +9,16 @@
 -/
 import LeanApi.Http.DbEndpoint
 import Billing.Policies
-import Billing.Bypass
 
 namespace Billing.Api
 
 open LeanApi Lean LeanDb Billing Billing.Schema Billing.Policies PolicyView
+
+/-- A write program over the tenant's view, as the `Tx` a `DbApi` handler
+    returns: the bridge from the policies to the HTTP surface. -/
+def WriteAs.toTx {s : Type} [IsSchema s] {P : Type} {p : P} {ε ρ : Type}
+    (w : WriteAs s p ε ρ) : Tx s ε ρ :=
+  fun {σ} => (w (σ := σ)).prog
 
 /-! ## JSON and constructors -/
 

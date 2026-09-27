@@ -3,6 +3,7 @@
   totals match their lines, finalized invoices stay put, tenants isolated.
 -/
 import Billing.Api
+import LeanApi
 
 namespace Tests.Billing
 

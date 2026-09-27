@@ -13,6 +13,12 @@ namespace Scheduling
 
 open LeanApi Lean LeanDb PolicyView
 
+/-- Bridge for `DbApi` handlers: the write program for the request's
+    authenticated actor, as the `Tx` a handler returns. -/
+def TxAs.forAuth {s : Type} [IsSchema s] {P ε ρ : Type} (me : Auth P)
+    (k : (p : P) → TxAs s p ε ρ) : Tx s ε ρ :=
+  fun {_σ} => (k me.val).prog
+
 /-! ## Smart constructors: HTTP and columns share them -/
 
 instance : SmartCtor Instant Nat := ⟨Instant.make, (·.unix)⟩

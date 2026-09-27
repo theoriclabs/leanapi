@@ -35,10 +35,11 @@
 import LeanApi.Http.Router
 import LeanApi.Http.Extract
 import LeanApi.Http.Middleware
+import LeanApi.Auth.Actor
 import LeanApi.Auth.Basic
 import LeanApi.Auth.Jwt
 import LeanApi.Util.Base64
-import LeanApi.Runtime.Server
+import LeanApi.Http.Service
 import LeanApi.Props.Sys
 import LeanApi.Http.Idempotency
 import Std.Sync.Mutex
@@ -146,30 +147,6 @@ structure IfMatch (α : Type) where
 /-- A required `If-Match` precondition: 428 when missing. -/
 structure IfMatchRequired (α : Type) where
   val : α
-
-/-- The authenticated actor, of the type the scheme produces.
-
-    The constructor is private: an `Auth α` is made only by authentication
-    (the `FromRequest` and `Handler` instances below, and `DbEndpoint`'s
-    through `Internal.authOf`). Application code cannot write
-    `⟨otherUser⟩ : Auth UserId`, so a handler, or a row-policy view built
-    from `me`, acts for the caller the request authenticated and no one else.
-    `scripts/check_private_escapes.sh` (CI) refuses any use of
-    `LeanApi.Internal` outside `LeanApi/` and `tests/`. -/
-structure Auth (α : Type) where
-  private mk ::
-  val : α
-
-/-! Framework internals. Lean 4 has no friend modules, so the framework's
-    other files reach private constructors through this namespace, and CI
-    (`scripts/check_private_escapes.sh`) refuses its use anywhere else. -/
-namespace Internal
-
-/-- An `Auth` for an actor that authentication has produced. For the
-    framework's authentication paths only (`DbEndpoint`). -/
-def authOf (who : α) : Auth α := ⟨who⟩
-
-end Internal
 
 /-- A fresh random token (24 bytes of the request's entropy, base64url):
     randomness as an input. -/
@@ -353,7 +330,7 @@ instance [A : Authenticates σ α] : FromRequest σ (Auth α) where
   kind := "auth"
   extract s env r :=
     match A.authenticate s env r with
-    | .ok who => .ok ⟨who⟩
+    | .ok who => .ok (Internal.authOf who)
     | .error .missing => .reject (unauthorized A.challenge)
     | .error (.invalid _) => .reject (unauthorized A.challenge "invalid credentials")
 
@@ -682,7 +659,7 @@ instance {β : Type u} [A : Authenticates σ α] [V : ViewOf σ α] [H : Handler
   inputs := "auth" :: H.inputs
   step f env r s i :=
     match A.authenticate s env r with
-    | .ok who => H.step (f ⟨who⟩) env r s i
+    | .ok who => H.step (f (Internal.authOf who)) env r s i
     | .error .missing => (unauthorized A.challenge, s)
     | .error (.invalid _) => (unauthorized A.challenge "invalid credentials", s)
   errors env r s i := H.errors env r s i
@@ -696,7 +673,7 @@ instance {β : Type u} [A : Authenticates σ α] [V : ViewOf σ α] [H : Handler
   Preserved I f := ∀ a : Auth α, H.Preserved I (f a)
   step_preserved I f hp env r s i hs := by
     split
-    · exact H.step_preserved I _ (hp ⟨_⟩) env r s _ hs
+    · exact H.step_preserved I _ (hp (Internal.authOf _)) env r s _ hs
     · exact hs
     · exact hs
   ErrStable R := H.ErrStable R
@@ -708,7 +685,7 @@ instance {β : Type u} [A : Authenticates σ α] [V : ViewOf σ α] [H : Handler
   step_isolated R f hI env r s₁ s₂ i h := by
     rw [← hI.1 env r s₁ s₂ h]
     cases ha : A.authenticate s₁ env r with
-    | ok a => exact H.step_isolated _ _ (hI.2.2 ⟨a⟩) env r s₁ s₂ _ ⟨h, hI.2.1 env r s₁ s₂ a h ha⟩
+    | ok a => exact H.step_isolated _ _ (hI.2.2 (Internal.authOf a)) env r s₁ s₂ _ ⟨h, hI.2.1 env r s₁ s₂ a h ha⟩
     | error e => cases e <;> rfl
 
 instance [ToResponse ρ] : Handler σ (Reads σ ρ) where
@@ -753,6 +730,64 @@ instance (priority := low) [ToResponse ρ] : Handler σ ρ where
   errors_stable _ _ _ _ _ _ _ _ := rfl
   Isolated _ _ := True
   step_isolated _ _ _ _ _ _ _ _ _ := rfl
+
+/-! ## What never reaches a handler
+
+A path parameter or input that does not decode, and a credential that does
+not authenticate, are answered before the handler runs: the answer is the
+same whatever the handler is, and the state does not change. -/
+
+namespace Handler
+
+variable {σ α : Type} {β : Type u} {env : Env} {r : Req} {s : σ}
+
+private theorem step_path [FromParam α] [H : Handler σ β] (f : Path α → β) (i : Nat) :
+    Handler.step f env r s i = (match pathAt (α := α) r i with
+      | .ok a => H.step (f ⟨a⟩) env r s (i + 1)
+      | .error es => (validationRes (es ++ H.errors env r s (i + 1)), s)) := rfl
+
+private theorem step_input [R : FromRequest σ α] [H : Handler σ β] (f : α → β) (i : Nat) :
+    Handler.step f env r s i = (match R.extract s env r with
+      | .ok a => H.step (f a) env r s i
+      | .invalid es => (validationRes (es ++ H.errors env r s i), s)
+      | .reject res => (res, s)) := rfl
+
+private theorem step_auth [A : Authenticates σ α] [ViewOf σ α] [H : Handler σ β] (f : Auth α → β)
+    (i : Nat) : Handler.step f env r s i = (match A.authenticate s env r with
+      | .ok who => H.step (f (Internal.authOf who)) env r s i
+      | .error .missing => (unauthorized A.challenge, s)
+      | .error (.invalid _) => (unauthorized A.challenge "invalid credentials", s)) := rfl
+
+/-- A path parameter that does not decode never reaches the handler. -/
+theorem path_failed [FromParam α] [Handler σ β] (f g : Path α → β) (i : Nat)
+    (h : ∀ a, pathAt (α := α) r i ≠ .ok a) :
+    Handler.step f env r s i = Handler.step g env r s i ∧ (Handler.step f env r s i).2 = s := by
+  rw [step_path f, step_path g]
+  cases hx : pathAt (α := α) r i with
+  | ok a => exact absurd hx (h a)
+  | error => exact ⟨rfl, rfl⟩
+
+/-- A query parameter, header, cookie or body that does not decode, or is
+    refused, never reaches the handler. -/
+theorem input_failed [R : FromRequest σ α] [Handler σ β] (f g : α → β) (i : Nat)
+    (h : ∀ a, R.extract s env r ≠ .ok a) :
+    Handler.step f env r s i = Handler.step g env r s i ∧ (Handler.step f env r s i).2 = s := by
+  rw [step_input f, step_input g]
+  cases hx : R.extract s env r with
+  | ok a => exact absurd hx (h a)
+  | invalid => exact ⟨rfl, rfl⟩
+  | reject => exact ⟨rfl, rfl⟩
+
+/-- A request that does not authenticate never reaches the handler. -/
+theorem auth_failed [A : Authenticates σ α] [ViewOf σ α] [Handler σ β] (f g : Auth α → β) (i : Nat)
+    (h : ∀ a, A.authenticate s env r ≠ .ok a) :
+    Handler.step f env r s i = Handler.step g env r s i ∧ (Handler.step f env r s i).2 = s := by
+  rw [step_auth f, step_auth g]
+  cases hx : A.authenticate s env r with
+  | ok a => exact absurd hx (h a)
+  | error e => cases e <;> exact ⟨rfl, rfl⟩
+
+end Handler
 
 /-! ## Endpoints -/
 

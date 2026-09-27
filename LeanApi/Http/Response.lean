@@ -1,15 +1,14 @@
 /-
   Responses. A `Res` is plain data: status, header list, and a buffered
   body. It becomes a `Std.Http.Response` only at the transport edge
-  (`Res.toStd`), so handlers, middleware, and the reference model can all
+  (`Res.toStd`, in `LeanApi/Runtime/Server.lean`), so handlers, middleware, and the reference model can all
   compare and reason about responses as values.
 -/
-import Std.Http
 import Lean.Data.Json
 
 namespace LeanApi
 
-open Std.Http Lean
+open Lean
 
 /-- A response as a value. Header names are stored lowercase. -/
 structure Res where
@@ -183,21 +182,5 @@ def toRes (p : Problem) : Res :=
     body := p.toJson.compress.toUTF8 }
 
 end Problem
-
-/-! ## Transport edge -/
-
-/-- Status for a code; unknown codes in a valid range become a custom status. -/
-def statusOf (n : Nat) : Status :=
-  (Status.ofCode none n.toUInt16).getD .internalServerError
-
-/-- Convert to the transport's response. Invalid header names or values are
-    dropped rather than sent (the transport would reject them anyway). -/
-def Res.toStd (r : Res) : Std.Async.Async (Response Body.Any) := do
-  let headers := r.headers.foldl (init := Headers.empty) fun acc (k, v) =>
-    match Header.Name.ofString? k, Header.Value.ofString? v with
-    | some n, some val => acc.insert n val
-    | _, _ => acc
-  let resp ← (Response.new.status (statusOf r.status) |>.headers headers).fromBytes r.body
-  return { line := resp.line, body := Body.Any.ofBody resp.body, extensions := resp.extensions }
 
 end LeanApi

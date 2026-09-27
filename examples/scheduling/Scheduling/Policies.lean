@@ -101,7 +101,8 @@ def scopedGet (α : Type) [Entity α] {s P : Type} [IsSchema s] [IsSchema.Has s 
 Parameterized by the actor value, not `PolicyView.Actor` (that constructor
 lives in `PolicyView.Policy`). The private constructor still stops an
 unscoped `Txn` being wrapped in. `Auth`'s constructor is private, so
-`forAuth` acts for the authenticated caller and no one else. -/
+`TxAs.forAuth` (in `Scheduling/Api.lean`) acts for the authenticated caller
+and no one else. -/
 
 structure TxnAs (σ : Type) (s : Type) [IsSchema s] {P : Type} (p : P)
     (ε : Type) (α : Type) : Type 1 where
@@ -115,10 +116,6 @@ instance {σ s : Type} [IsSchema s] {P : Type} {p : P} {ε : Type} :
 
 abbrev TxAs (s : Type) [IsSchema s] {P : Type} (p : P) (ε α : Type) :=
   {σ : Type} → TxnAs σ s p ε α
-
-def TxAs.forAuth {s : Type} [IsSchema s] {P ε ρ : Type} (me : LeanApi.Auth P)
-    (k : (p : P) → TxAs s p ε ρ) : LeanApi.Tx s ε ρ :=
-  fun {_σ} => (k me.val).prog
 
 namespace TxnAs
 variable {σ : Type} {s : Type} [IsSchema s] {P : Type} {p : P} {ε : Type}

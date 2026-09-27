@@ -34,7 +34,7 @@ jobs:
         with:
           path: .lake
           key: lake-${{ runner.os }}-${{ hashFiles('lean-toolchain', 'lake-manifest.json', 'lakefile.toml') }}
-      - name: Build
+      - name: Build (includes architecture/, which checks the imports against the design and lists the goals)
         run: lake build
       - name: Tests
         run: lake build leanapi_tests && ./.lake/build/bin/leanapi_tests

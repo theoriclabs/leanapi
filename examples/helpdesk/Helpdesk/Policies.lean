@@ -4,12 +4,12 @@
   pushed into SQL).
 
   `PolicyView.Actor.mk` is module-private, so the write view is indexed by
-  `Who` and entered through `TxAs.forAuth` from the request's `Auth`.
+  `Who` and entered through `TxAs.forAuth` (in `Helpdesk/Api.lean`) from
+  the request's `Auth`. Nothing here imports HTTP.
   Forging `Auth` is the same framework caveat PolicyView documents.
 -/
 import PolicyView.Policy
 import Helpdesk.Schema
-import LeanApi.Http.DbEndpoint
 
 namespace Helpdesk
 
@@ -267,12 +267,6 @@ def update (α : Type) [Entity α] [HasUnique α] [HasForeignKey α] [IsSchema.H
       | .ok row => pure row
       | .error e => Txn.throw (onUpdate e)
     else Txn.throw denied⟩
-
-/-- Bridge for `DbApi` handlers: the request's `Auth` is the only `Who`
-    the write program is indexed by. -/
-def forAuth {ε α : Type} (me : Auth Who)
-    (prog : (who : Who) → TxAs HelpdeskDb who ε α) : Tx HelpdeskDb ε α :=
-  (prog me.val).prog
 
 end TxAs
 

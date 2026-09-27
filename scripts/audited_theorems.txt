@@ -161,6 +161,9 @@ PrivateGames.Model.Shapes PrivateGames.Model.gamesNI
 LeanApi.Http.Endpoint LeanApi.Api.step_safe
 LeanApi.Http.Endpoint LeanApi.Api.inductive_of
 LeanApi.Http.Endpoint LeanApi.Api.resolveIn_route
+LeanApi.Http.Endpoint LeanApi.Handler.path_failed
+LeanApi.Http.Endpoint LeanApi.Handler.input_failed
+LeanApi.Http.Endpoint LeanApi.Handler.auth_failed
 PrivateGames.ApiProofs PrivateGames.Api.api_reads_safe
 PrivateGames.ApiProofs PrivateGames.Api.api_allValid
 PrivateGames.ApiProofs PrivateGames.Api.api_uniqueIds
@@ -348,3 +351,15 @@ Scheduling.Policies Scheduling.project_eq_toBusy
 Scheduling.Policies Scheduling.project_list_eq_freeBusy
 TeamsDemo.Rules TeamsDemo.ref_beq_iff
 TeamsDemo.Rules TeamsDemo.sees_iff_same_team
+# The shape of the codebase (architecture/): every import follows the design, and the rules that follow
+Architecture.Framework Architecture.Framework.conforms
+Architecture.Framework Architecture.Framework.props_never_reach_the_server
+Architecture.Framework Architecture.Framework.endpoints_never_reach_the_transport
+Architecture.Framework Architecture.Framework.database_never_reaches_the_transport
+Architecture.Framework Architecture.Framework.endpoints_never_reach_leandb
+Architecture.Framework Architecture.Framework.actor_is_a_leaf
+Architecture.Framework Architecture.Framework.only_the_server_imports_std_http
+Architecture.Apps Architecture.Apps.conforms
+Architecture.Apps Architecture.Apps.domain_is_plain_lean
+Architecture.Apps Architecture.Apps.rules_never_reach_http
+Architecture.Apps Architecture.Apps.nothing_reaches_the_api

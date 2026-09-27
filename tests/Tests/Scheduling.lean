@@ -5,6 +5,7 @@
 -/
 import Scheduling.Api
 import Scheduling.Bypass
+import LeanApi
 
 namespace Tests.Schedule
 
