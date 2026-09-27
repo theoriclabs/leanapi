@@ -181,7 +181,7 @@ lake exe users        # middleware, headers and auth, on :3000
 
 ## Not there yet
 
-- **Throughput is modest.** LeanAPI runs on Lean's built-in `Std.Http` server: roughly 4,500–9,000 requests per second for a trivial route on a laptop. Load testing on macOS, raise `kern.ipc.somaxconn` (128 by default): a burst of connections beyond `maxConnections` (1,024) plus that backlog fails to connect. `serve` takes both in its `ServeConfig`.
+- **Throughput is modest.** LeanAPI runs on Lean's built-in `Std.Http` server: roughly 5,000–10,000 requests per second for a trivial route on a laptop. Load testing on macOS, raise `kern.ipc.somaxconn` (128 by default): a burst of connections beyond `maxConnections` (1,024) plus that backlog fails to connect. `serve` takes both in its `ServeConfig`.
 - **OpenAPI is written by hand.** Routes carry a description, and LeanAPI serves the document and a `/docs` page. It isn't generated from handler types yet.
 - **No WebSockets here.** They live in a separate library.
 

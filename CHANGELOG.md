@@ -4,6 +4,8 @@
 
 - **Toolchain:** `leanprover/lean4-nightly:nightly-2026-09-26`, until Lean 4.36 ships. Its `Std.Http` no longer parks a thread on every socket read (lean4#15174): Hello World goes from about 1,800 to 6,400 requests per second (Apple M4, 50 keep-alive connections).
 - **Requests without a body are faster:** a body declared empty (a GET, say) is no longer read from the stream. Hello World reaches about 8,800 requests per second.
+- **Handlers run on reused threads:** the server and `timeout` no longer start a thread per request (`spawnBlocking`). A thread idle for a second exits. Hello World is about 9% faster, and 25% with `timeout` in the stack.
+- **`timeout` no longer cancels the handler:** it answers 504 and lets the handler run to completion, so `IO.checkCanceled` does not see the deadline.
 - **`ServeConfig.backlog`** sets the listen backlog (default 1,024). macOS caps it at `kern.ipc.somaxconn`, 128 by default.
 
 Thanks to @keithadler for tracing the throughput ceiling (#3).

@@ -12,6 +12,7 @@
   a → b → c → app, and the response returns c → b → a.
 -/
 import LeanApi.Http.Router
+import LeanApi.Runtime.Blocking
 import Std.Async
 
 namespace LeanApi
@@ -206,12 +207,12 @@ def trustedProxy (trusted : List String) (source : ProxyHeaders := .xForwarded) 
 /-! ### Timeouts -/
 
 /-- Answer 504 if the inner app has not responded within `ms`. The inner
-    task is cancelled (cooperatively: `IO.checkCanceled` in long loops).
-    A handler that already committed state keeps its commit; the client
-    sees 504 and must treat the outcome as unknown (use idempotency keys). -/
+    app is not interrupted: it runs to completion on its own thread, and
+    what it commits stays committed. The client sees 504 and must treat
+    the outcome as unknown (use idempotency keys). -/
 def timeout (ms : Nat) : NamedMiddleware :=
   ⟨s!"timeout({ms}ms)", fun h req => do
-    let work ← IO.asTask (h req) .dedicated
+    let work ← spawnBlocking (h req)
     -- A libuv timer: waiting on it holds no thread (an `IO.sleep` task
     -- would pin a pool thread per in-flight request).
     let sleep ← Std.Async.Async.block (Std.Async.Sleep.mk (Std.Time.Millisecond.Offset.ofNat ms))
@@ -221,7 +222,6 @@ def timeout (ms : Nat) : NamedMiddleware :=
     | some (.ok res) => sleep.stop; pure res
     | some (.error e) => sleep.stop; throw e
     | none =>
-      IO.cancel work
       pure ((Problem.make 504 (some "request timed out")).withExt "request_id" (.str req.requestId)).toRes⟩
 
 /-! ### Health -/

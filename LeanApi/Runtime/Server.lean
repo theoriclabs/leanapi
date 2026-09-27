@@ -10,8 +10,9 @@
      streaming, stopping with 413 as soon as the limit is exceeded
      (a `Content-Length` over the limit is refused before reading, and an
      empty body is not read).
-  3. Run the app on a dedicated thread (handlers do blocking `IO`: SQLite,
-     FFI), so async pool threads are never pinned.
+  3. Run the app on a blocking thread, reused between requests
+     (`spawnBlocking`; handlers do blocking `IO`: SQLite, FFI), so async
+     pool threads are never pinned.
   4. Encode the `Res`.
 -/
 import Std.Http
@@ -63,11 +64,10 @@ partial def readLimited (stream : Body.Stream) (limit : Nat) : ContextAsync (Opt
       loop (acc ++ chunk.data)
   loop .empty
 
-/-- Run blocking work on a dedicated OS thread and await it without
+/-- Run blocking work on a reused blocking thread and await it without
     occupying an async pool thread. -/
 def runBlocking (act : IO α) : Async α := do
-  let t ← IO.asTask act .dedicated
-  match ← await t with
+  match ← await (← spawnBlocking act) with
   | .ok a => pure a
   | .error e => throw e
 
@@ -136,5 +136,7 @@ def serve (svc : Service) (cfg : ServeConfig := {}) (onReady : UInt16 → IO Uni
     cfg.log "{\"event\":\"leanapi.stopped\"}"
   else
     Async.block server.waitShutdown
+  -- Idle blocking threads would hold up the program's exit.
+  blockingThreads.releaseIdle
 
 end LeanApi

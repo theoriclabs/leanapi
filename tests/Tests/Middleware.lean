@@ -28,6 +28,13 @@ def stack : Stack := Stack.of [
 
 def svc : Service := Service.ofRouter (Router.build! routes) stack
 
+/-- Wait (up to 2 s) until `n` threads are idle: a thread goes idle just
+    after its job's result is visible. -/
+def waitIdle (t : Threads) (n : Nat) : IO Unit := do
+  for _ in [0:200] do
+    if (← t.idleCount) ≥ n then return
+    IO.sleep 10
+
 def peer (a : String) (port : UInt16 := 5555) : Option Std.Net.SocketAddress :=
   (Std.Net.IPv4Addr.ofString a).map fun ip => .v4 { addr := ip, port }
 
@@ -124,5 +131,35 @@ def run : TestM Unit := do
     let _ ← IO.wait blocker
     let _ ← IO.wait queued
     w.stop
+
+  section_ "reused blocking threads" do
+    let t ← Threads.new (keepAliveMs := 60000)
+    checkEq "returns the result" (← IO.wait (← t.spawn (pure 41 : IO Nat))).toOption (some 41)
+    let r ← IO.wait (← t.spawn (throw (IO.userError "boom") : IO Nat))
+    checkEq "returns the error" (match r with | .error e => toString e | .ok _ => "") "boom"
+    let gate ← IO.Promise.new (α := Unit)
+    let started ← IO.mkRef 0
+    let blocked ← (List.range 50).mapM fun _ =>
+      t.spawn (do started.modify (· + 1); IO.wait gate.result!)
+    for _ in [0:200] do
+      if (← started.get) < 50 then IO.sleep 10
+    checkEq "50 blocked jobs run at once" (← started.get) 50
+    gate.resolve ()
+    for b in blocked do let _ ← IO.wait b
+    waitIdle t 50
+    let a ← IO.wait (← t.spawn IO.getTID)
+    waitIdle t 50
+    let b ← IO.wait (← t.spawn IO.getTID)
+    checkEq "an idle thread is reused" a.toOption b.toOption
+    checkEq "no thread started for it" (← t.idleCount) 50
+    t.releaseIdle
+    checkEq "releaseIdle ends the idle threads" (← t.idleCount) 0
+    let t ← Threads.new (keepAliveMs := 20)
+    let a ← IO.wait (← t.spawn IO.getTID)
+    for _ in [0:200] do
+      if (← t.idleCount) > 0 then IO.sleep 10
+    checkEq "a thread idle past keepAlive exits" (← t.idleCount) 0
+    let b ← IO.wait (← t.spawn IO.getTID)
+    check "and is not reused" (a.toOption != b.toOption)
 
 end Tests.Middleware
