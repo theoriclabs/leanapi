@@ -8,6 +8,7 @@
   bounded below 2^63, every policy single-table.
 -/
 import LeanDb
+import LeanApi.Storage.Bounds
 import Helpdesk.Domain
 
 namespace Helpdesk
@@ -213,8 +214,15 @@ theorem MessageRow.invariant_iff (r : MessageRow) (i : LeanDb.Id MessageRow) :
 
 theorem MessageRow.Invariant_iff (r : MessageRow) (i : LeanDb.Id MessageRow) :
     LeanDb.Invariant MessageRow r ↔ Message.ok (r.toMessage i) := by
-  show MessageRow.invariant r = true ↔ _
-  exact MessageRow.invariant_iff r i
+  first
+  | exact MessageRow.invariant_iff r i
+  | constructor
+    · intro h
+      exact (MessageRow.invariant_iff r i).mp h.2
+    · intro h
+      refine ⟨?_, (MessageRow.invariant_iff r i).mpr h⟩
+      change (LeanDb.ColCodec.toSql? r.createdAt.unixSeconds).isSome = true
+      exact LeanApi.Storage.nat_sql_range _ r.createdAt.lt
 
 theorem MessageRow.ofMessage_invariant (m : Message) (h : Message.ok m) :
     LeanDb.Invariant MessageRow (MessageRow.ofMessage m) := by
@@ -227,7 +235,12 @@ def MessageRow.checked (m : Message) (h : Message.ok m) : Checked MessageRow :=
 
 /-- An inbound ticket: always `open`, so `Checked` is free (no row invariant). -/
 def TicketRow.checked (t : Ticket) : Checked TicketRow :=
-  Checked.of (TicketRow.ofTicket t) trivial
+  Checked.of (TicketRow.ofTicket t) (by
+    first
+    | trivial
+    | refine ⟨?_, trivial⟩
+      change (LeanDb.ColCodec.toSql? t.openedAt.unixSeconds).isSome = true
+      exact LeanApi.Storage.nat_sql_range _ t.openedAt.lt)
 
 def TicketRow.checkedOpen (id : TicketId) (org : OrgId) (requester : UserId)
     (subject : Subject) (inbound : EmailMessageId) (now : Instant) : Checked TicketRow :=

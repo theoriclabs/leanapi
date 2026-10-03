@@ -15,6 +15,7 @@
   scoped repository (`Repo.lean`) only.
 -/
 import LeanDb
+import LeanApi.Storage.Bounds
 import PrivateGames.Domain.Proofs
 
 namespace PrivateGames.Storage
@@ -159,8 +160,24 @@ theorem GameRow.invariant_iff (r : GameRow) (i : LeanDb.Id GameRow) :
 /-- LeanDB's `Invariant GameRow` is the same statement. -/
 theorem GameRow.Invariant_iff (r : GameRow) (i : LeanDb.Id GameRow) :
     LeanDb.Invariant GameRow r ↔ Valid (r.toGame i) := by
-  show GameRow.invariant r = true ↔ _
-  exact GameRow.invariant_iff r i
+  first
+  | exact GameRow.invariant_iff r i
+  | constructor
+    · intro h
+      exact (GameRow.invariant_iff r i).mp h.2
+    · intro valid
+      refine ⟨?_, (GameRow.invariant_iff r i).mpr valid⟩
+      change ((LeanDb.ColCodec.toSql? r.minutes.minutes).isSome &&
+        (LeanDb.ColCodec.toSql? r.rev).isSome) = true
+      rw [LeanApi.Storage.nat_sql_range _ (by have := r.minutes.isValid; omega)]
+      change (LeanDb.ColCodec.toSql? r.rev).isSome = true
+      apply LeanApi.Storage.nat_sql_range
+      have length := valid.length
+      have revision := valid.rev
+      have extra : (if (r.toGame i).resigned.isSome then 1 else 0) ≤ 1 := by
+        split <;> omega
+      change r.rev = (r.toGame i).moves.length + _ at revision
+      omega
 
 /-! ## `Checked GameRow` from domain proofs
 

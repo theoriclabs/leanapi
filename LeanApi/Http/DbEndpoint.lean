@@ -157,7 +157,10 @@ def mapErr (g : ε → ε') : {α : Type} → Txn σ s ε α → Txn σ s ε' α
   | _, @Txn.update _ _ _ _ α a b c h o n => @Txn.update _ _ _ _ α a b c h o n
   | _, @Txn.set _ _ _ _ α a b c h r n => @Txn.set _ _ _ _ α a b c h r n
   | _, @Txn.patch _ _ _ _ α a b c h r fs n => @Txn.patch _ _ _ _ α a b c h r fs n
-  | _, @Txn.append _ _ _ _ α a b h o n => @Txn.append _ _ _ _ α a b h o n
+  | _, @Txn.append _ _ _ _ α ent lists .. => by
+      rename_i old new
+      apply @Txn.append
+      all_goals assumption
   | _, @Txn.delete _ _ _ _ α a b h id => @Txn.delete _ _ _ _ α a b h id
 
 theorem denote_go_mapErr (g : ε → ε') (st0 : DbState s) {α : Type} (p : Txn σ s ε α) :
@@ -502,6 +505,45 @@ where
     | .ok (.error err) => return .error (DbFault.ofDbError err)
     | .ok (.ok r) => return r
 
+/-- Construct the program only after admission and transaction start. A command's
+clock is sampled after `BEGIN IMMEDIATE` has acquired SQLite's writer lock,
+including when an external connection holds that lock. Authentication and the
+body use that same environment. The inner rank-2 transaction retains its abort
+semantics; infrastructure faults also abort the outer transaction. -/
+def execWithEnv (dc : DbConns) (fresh : IO Env) : {e : Effect} →
+    (Env → DbProg s e) → IO (Except DbFault Res)
+  | .pure, p => runRead p
+  | .reads, p => runRead p
+  | .writes, p => do
+    let action : DbM (Except DbFault (Except Res Res)) := LeanDb.transaction do
+      let env ← fresh
+      match ← Txn.run (s := s) (p env) with
+      | .error f => pure (.abort f)
+      | .ok r => pure (.commit r)
+    match ← dc.writer.run action with
+    | .error .busy => return .error (.locking "writer queue full")
+    | .error .stopped => return .error (.io "writer stopped")
+    | .ok (.error err) => return .error (DbFault.ofDbError err)
+    | .ok (.ok (.error f)) => return .error f
+    | .ok (.ok (.ok r)) => return .ok (merge r)
+where
+  runRead (p : Env → Read s Res) : IO (Except DbFault Res) := do
+    let action : DbM (Except DbFault Res) := readSnapshot do
+      let env ← fresh
+      Read.run (p env)
+    match ← dc.read action with
+    | .error .busy => return .error (.locking "reader queue full")
+    | .error .stopped => return .error (.io "reader stopped")
+    | .ok (.error err) => return .error (DbFault.ofDbError err)
+    | .ok (.ok r) => return r
+
+end DbProg
+
+namespace DbProg
+/-- Native environment-prepared execution boundary; optional adapters can use a
+newer database runner while preserving the existing core dependency baseline. -/
+abbrev EnvExecutor (s : Type) [IsSchema s] :=
+  DbConns → IO Env → {effect : Effect} → (Env → DbProg s effect) → IO (Except DbFault Res)
 end DbProg
 
 namespace DbEndpoint
@@ -510,19 +552,23 @@ variable {s : Type} [IsSchema s]
 
 /-- A fresh environment, and the whole request (authentication, decoding,
     the handler) as one program: one snapshot, or one transaction. -/
-def toRoute (e : DbEndpoint s) (dc : DbConns) (log : String → IO Unit) : Route where
+def toRouteWithEnv (e : DbEndpoint s) (dc : DbConns) (fresh : IO Env)
+    (log : String → IO Unit) (execute : DbProg.EnvExecutor s := DbProg.execWithEnv) : Route where
   method := e.method
   template := e.template
   handler req := do
-    let env ← Env.fresh
     let req := { req with params := req.params ++ Retry.routeParams e.method e.template e.inputs }
-    match ← DbProg.exec dc (e.prog env req) with
+    match ← execute dc fresh (fun env => e.prog env req) with
     | .ok res => return res
     | .error f =>
       log s!"\{\"event\":\"db_fault\",\"request_id\":\"{req.requestId}\",\"fault\":{(Json.str (toString f)).compress}}"
       return faultRes f req.requestId
   bodyLimit := e.bodyLimit
   name := if e.signature.isEmpty then none else some e.signature
+
+/-- Production clock and entropy, sampled after transaction admission. -/
+def toRoute (e : DbEndpoint s) (dc : DbConns) (log : String → IO Unit) : Route :=
+  e.toRouteWithEnv dc Env.fresh log
 
 end DbEndpoint
 

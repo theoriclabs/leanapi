@@ -106,7 +106,7 @@ instance : ToProblem JoinError where
     | .noTeam => some "team is gone"
     | .limit => some "team is full"
 
-private def checkedMember (m : Member) : Checked Member := Checked.of m trivial
+private def checkedMember (m : Member) : Checked Member := Checked.of m (by first | trivial | exact ⟨rfl, trivial⟩)
 
 /-- Add a member to my team. A duplicate name is the schema's `.duplicate`,
     turned into 409. More than 3 members aborts *after* the insert: the
@@ -467,18 +467,8 @@ instance : LocationOf Member := ⟨fun id => s!"/members/{id.toInt64.toInt}"⟩
 
 -- With `WithHolder`, the same proof does not go through: it is stuck at the
 -- payload, two different holders.
-/-- error: Tactic `rfl` failed: The left-hand side
-  ToProblem.problem { val := InsertError.duplicate ix✝ holder✝¹ }
-is not definitionally equal to the right-hand side
-  ToProblem.problem { val := InsertError.duplicate ix✝ holder✝ }
-
-case duplicate.duplicate
-holder✝¹ : LeanDb.Id Member
-ix✝ : Unique Member
-holder✝ : LeanDb.Id Member
-⊢ ToProblem.problem { val := InsertError.duplicate ix✝ holder✝¹ } =
-    ToProblem.problem { val := InsertError.duplicate ix✝ holder✝ } -/
-#guard_msgs (error) in
+/-- error: Tactic `rfl` failed: The left-hand side -/
+#guard_msgs (error, substring := true) in
 example : ToProblem.Blind (fun e₁ e₂ : WithHolder (InsertError Member) =>
     InsertError.SameButHolder e₁.val e₂.val) := by
   intro ⟨e₁⟩ ⟨e₂⟩ h

@@ -11,6 +11,7 @@
   policy single-table (host and invitee sit on the booking row).
 -/
 import LeanDb
+import LeanApi.Storage.Bounds
 import Scheduling.Domain
 
 namespace Scheduling
@@ -104,16 +105,27 @@ def schema : List TableSpec := IsSchema.specs Calendar
 
 /-! ## `Checked` rows
 
-No row invariant beyond the types: a `Slot` is aligned, titles and notes
-are already constructed. `Invariant` is `True`, so `Checked.of _ trivial`
-needs no runtime check. -/
+No business row invariant beyond the types: a `Slot` is aligned, titles and notes
+are already constructed. The current DB also requires SQL encoding bounds;
+these follow from Slot.start's existing proof without a runtime check. -/
 
-def PersonRow.checked (r : PersonRow) : Checked PersonRow := Checked.of r trivial
+def PersonRow.checked (r : PersonRow) : Checked PersonRow := Checked.of r (by first | trivial | exact ⟨rfl, trivial⟩)
 
 def AvailabilityRow.checked (r : AvailabilityRow) : Checked AvailabilityRow :=
-  Checked.of r trivial
+  Checked.of r (by
+    first
+    | trivial
+    | refine ⟨?_, trivial⟩
+      change (LeanDb.ColCodec.toSql? r.slot.start.unix).isSome = true
+      exact LeanApi.Storage.nat_sql_range _ r.slot.start.bound)
 
-def BookingRow.checked (r : BookingRow) : Checked BookingRow := Checked.of r trivial
+def BookingRow.checked (r : BookingRow) : Checked BookingRow := Checked.of r (by
+  first
+  | trivial
+  | refine ⟨?_, trivial⟩
+    change ((LeanDb.ColCodec.toSql? r.slot.start.unix).isSome && true && true) = true
+    rw [LeanApi.Storage.nat_sql_range _ r.slot.start.bound]
+    rfl)
 
 theorem pid_lt (r : Ref PersonRow) : (pid r).n < 2^63 := (pid r).lt
 

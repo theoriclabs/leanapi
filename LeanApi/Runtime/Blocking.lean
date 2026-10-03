@@ -26,24 +26,34 @@ private structure Job where
 structure Worker where
   private queue : Std.CloseableChannel Job
   private pending : IO.Ref Nat
+  private begun : IO.Ref Nat
   capacity : Nat
   private thread : Task (Except IO.Error Unit)
 
 namespace Worker
 
+/-- Waiting jobs, excluding the active callback. Observation only; useful for
+deterministic admission tests and queue instrumentation. -/
+def queued (w : Worker) : IO Nat := w.pending.get
+
+/-- Number of callbacks admitted to the worker, including the active callback. -/
+def startedJobs (w : Worker) : IO Nat := w.begun.get
+
 partial def start (capacity : Nat := 256) : IO Worker := do
   let queue ← Std.CloseableChannel.new (α := Job)
   let pending ← IO.mkRef 0
+  let begun ← IO.mkRef 0
   let sync := queue.sync
   let rec loop : IO Unit := do
     match ← sync.recv with
     | none => pure ()
     | some job =>
       pending.modify (· - 1)
+      begun.modify (· + 1)
       try job.run catch _ => pure ()
       loop
   let thread ← IO.asTask loop .dedicated
-  return { queue, pending, capacity, thread }
+  return { queue, pending, begun, capacity, thread }
 
 /-- Run `act` on the worker thread and wait for its result. -/
 def run (w : Worker) (act : IO α) : IO (Except SubmitError α) := do
