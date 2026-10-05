@@ -9,6 +9,7 @@ import Tests.Props
 import Tests.PropsCommands
 import Tests.Registry
 import Tests.Endpoint
+import Tests.TransactionClock
 import Tests.DbEndpoint
 import Tests.Idempotency
 import Tests.Helpdesk
@@ -28,6 +29,7 @@ def main : IO UInt32 := do
     Tests.Tier2.run
     Tests.Props.run
     Tests.Endpoint.run
+    Tests.TransactionClock.run
     Tests.DbEndpoint.run
     Tests.Idempotency.run
     Tests.HelpdeskHttp.run

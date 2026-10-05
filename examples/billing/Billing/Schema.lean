@@ -13,6 +13,7 @@
   built from domain proofs, with no runtime recomputation of the total.
 -/
 import LeanDb
+import LeanApi.Storage.Bounds
 import Billing.Domain
 
 namespace Billing.Schema
@@ -251,8 +252,16 @@ theorem InvoiceRow.invariant_ofInvoice (inv : Invoice) (h : Balanced inv) :
 
 theorem InvoiceRow.Invariant_ofInvoice (inv : Invoice) (h : Balanced inv) :
     LeanDb.Invariant InvoiceRow (InvoiceRow.ofInvoice inv) := by
-  show InvoiceRow.invariant (InvoiceRow.ofInvoice inv) = true
-  exact InvoiceRow.invariant_ofInvoice inv h
+  first
+  | exact InvoiceRow.invariant_ofInvoice inv h
+  | refine ⟨?_, InvoiceRow.invariant_ofInvoice inv h⟩
+    change (((LeanDb.ColCodec.toSql? inv.period.year).isSome &&
+      (LeanDb.ColCodec.toSql? inv.period.month).isSome) &&
+      (LeanDb.ColCodec.toSql? inv.total.minor).isSome && true) = true
+    rw [LeanApi.Storage.nat_sql_range _ (by have := inv.period.yearOk; omega),
+      LeanApi.Storage.nat_sql_range _ (by have := inv.period.monthOk; omega),
+      LeanApi.Storage.nat_sql_range _ inv.total.lt]
+    rfl
 
 /-- A checked invoice row from a balanced domain invoice. No runtime check. -/
 def InvoiceRow.checked (inv : Invoice) (h : Balanced inv) : Checked InvoiceRow :=
@@ -274,10 +283,27 @@ def InvoiceRow.checkedVoid (inv : FinalizedInvoice) (h : Balanced inv.val) : Che
 
 /-- Usage events have no extra invariant; every well-typed row is `Checked`. -/
 def UsageEventRow.checked (e : UsageEvent) : Checked UsageEventRow :=
-  Checked.of (UsageEventRow.ofEvent e) (by unfold LeanDb.Invariant; trivial)
+  Checked.of (UsageEventRow.ofEvent e) (by
+    first
+    | trivial
+    | refine ⟨?_, trivial⟩
+      change ((((true && (LeanDb.ColCodec.toSql? e.quantity.n).isSome) &&
+        (LeanDb.ColCodec.toSql? e.occurredAt.unixSec).isSome) &&
+        (LeanDb.ColCodec.toSql? e.period.year).isSome) &&
+        (LeanDb.ColCodec.toSql? e.period.month).isSome) = true
+      rw [LeanApi.Storage.nat_sql_range _ e.quantity.lt,
+        LeanApi.Storage.nat_sql_range _ e.occurredAt.lt,
+        LeanApi.Storage.nat_sql_range _ (by have := e.period.yearOk; omega),
+        LeanApi.Storage.nat_sql_range _ (by have := e.period.monthOk; omega)]
+      rfl)
 
 def TenantRow.checked (r : TenantRow) : Checked TenantRow :=
-  Checked.of r (by unfold LeanDb.Invariant; trivial)
+  Checked.of r (by
+    first
+    | trivial
+    | refine ⟨?_, trivial⟩
+      change (LeanDb.ColCodec.toSql? r.unitPrice.minor).isSome = true
+      exact LeanApi.Storage.nat_sql_range _ (Nat.lt_of_le_of_lt r.unitPrice.le maxUnitPrice_lt))
 
 def invoiceOf (s : Stored InvoiceRow) : Option (InvoiceId × Invoice) :=
   (InvoiceRow.toInvoice s.val).map fun inv => (iid s.id, inv)

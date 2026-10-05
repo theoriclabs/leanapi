@@ -73,7 +73,13 @@ def findReceipt (me : PlayerId) (k : Retry) : Txn σ Games GameError (Option (St
 /-- A keyed write: replay the recorded answer, refuse a reused key, or
     decide. The key and its fingerprint are the framework's. -/
 def keyed [ToResponse α] (me : PlayerId) (key : Idempotency)
-    (decide : Txn σ Games GameError (Bool × α)) : Txn σ Games GameError (Replayed α) :=
+    (decide : Txn σ Games GameError (Bool × α))
+    (statusFits : ∀ value : α, (ToResponse.toRes value).status < 2 ^ 63 := by
+      intro value
+      first
+      | exact of_decide_eq_true rfl
+      | simpa only [Created.toRes_status] using (show (201 : Nat) < 2 ^ 63 from by decide)) :
+    Txn σ Games GameError (Replayed α) :=
   match key.retry with
   | none => do let (_, a) ← decide; pure (.fresh a)
   | some k => do
@@ -87,7 +93,12 @@ def keyed [ToResponse α] (me : PlayerId) (key : Idempotency)
         let res := ToResponse.toRes a
         let _ ← Txn.orAbort (Txn.insert ReceiptRow (Checked.of
             { actor := pref me, op := k.op, key := k.key, fingerprint := k.fingerprint,
-              status := res.status, body := rowBody res } trivial)) fun
+              status := res.status, body := rowBody res } (by
+                first
+                | trivial
+                | refine ⟨?_, trivial⟩
+                  change (LeanDb.ColCodec.toSql? res.status).isSome = true
+                  exact LeanApi.Storage.nat_sql_range _ (statusFits a)))) fun
           | .duplicate .. => GameError.keyReused
           | .missingRef _ => GameError.hidden
       pure (.fresh a)

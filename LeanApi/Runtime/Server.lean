@@ -28,6 +28,12 @@ structure Service where
   app : App
   /-- `some n`: read at most `n` bytes. `none`: do not read the body. -/
   bodyLimit : Req → Option Nat := fun _ => some (1024 * 1024)
+  /-- Protocol adapters may preserve their envelope at the buffering boundary. -/
+  bodyTooLarge : Req → Nat → Res := fun _ limit =>
+    (Problem.make 413 (some s!"body exceeds {limit} bytes")).toRes
+  errorResponse : Req → Res := fun _ => (Problem.make 500).toRes
+  /-- Native credential/domain adapters can suppress private exception text. -/
+  logErrors : Bool := true
 
 def Service.ofRouter (r : Router) (stack : Stack := {}) : Service :=
   { app := stack.apply r.app, bodyLimit := r.bodyLimit }
@@ -81,7 +87,7 @@ def Service.handler (svc : Service) (log : String → IO Unit := IO.eprintln) :
       match svc.bodyLimit req with
       | none =>
         try runBlocking (svc.app req)
-        catch _ => pure (Problem.make 500).toRes
+        catch _ => pure (svc.errorResponse req)
       | some limit =>
       -- Awaiting even an empty stream costs a trip through the async
       -- scheduler, so a body declared empty (a GET, say) is not read.
@@ -90,12 +96,13 @@ def Service.handler (svc : Service) (log : String → IO Unit := IO.eprintln) :
         | some (.fixed n) => if n > limit then pure none else readLimited request.body limit
         | _ => readLimited request.body limit
       match body? with
-      | none => pure (Problem.make 413 (some s!"body exceeds {limit} bytes")).toRes
+      | none => pure (svc.bodyTooLarge req limit)
       | some body =>
         try runBlocking (svc.app { req with body })
         catch e => do
-          log s!"\{\"event\":\"error\",\"error\":{Lean.Json.str (toString e) |>.compress}}"
-          pure (Problem.make 500).toRes
+          if svc.logErrors then
+            log s!"\{\"event\":\"error\",\"error\":{Lean.Json.str (toString e) |>.compress}}"
+          pure (svc.errorResponse req)
   res.toStd
 
 structure ServeConfig where

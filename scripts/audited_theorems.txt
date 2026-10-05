@@ -1,4 +1,8 @@
 # module theorem   (one per line)
+# DDD: native storage/transport bounds
+LeanApi.Storage.Bounds LeanApi.Storage.nat_sql_range
+LeanApi.Http.Endpoint LeanApi.Created.toRes_status
+LeanApi.Http.Endpoint LeanApi.Versioned.toRes_status
 # M3: domain
 PrivateGames.Domain.Proofs PrivateGames.playMove_valid
 PrivateGames.Domain.Proofs PrivateGames.playMove_allowed

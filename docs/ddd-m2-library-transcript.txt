@@ -1,0 +1,22 @@
+$ curl localhost:8080/books/1
+{"ok":{"borrowers":[],"shelf":"general","title":"Dune"}}
+$ curl -X POST localhost:8080/sign-in -H 'Accept: application/vnd.leanapp.token' -d '{"email":"bea@example.com","password":"correct horse battery staple"}'
+{"ok":{"profile":2,"token":"$BEA2"}}
+$ curl -X POST localhost:8080/books/1/loans -H "Authorization: Bearer $BEA2"
+{"ok":1}
+$ curl -X POST localhost:8080/books/1/loans -H "Authorization: Bearer $BEA2"
+{"error":"alreadyBorrowed"}
+$ curl localhost:8080/books/1
+{"ok":{"borrowers":[{"name":"Bea"}],"shelf":"general","title":"Dune"}}
+$ curl -X POST localhost:8080/books -H "Authorization: Bearer $BEA2" -d '{"title":"Emma","shelf":"reference"}'
+{"error":"librarianOnly"}
+$ curl -X POST localhost:8080/books -H "Authorization: Bearer $ADA" -d '{"title":"Emma","shelf":"reference"}'
+{"ok":2}
+$ curl -X POST localhost:8080/books/1/loans
+{"error":"unauthorized"}
+$ curl -X POST localhost:8080/join -H 'Accept: application/vnd.leanapp.token' -d '{"name":"Ada again","email":"ADA@example.com","password":"correct horse battery staple"}'
+{"error":"emailTaken"}
+$ curl -X POST localhost:8080/books/1/remove -H "Authorization: Bearer $ADA"
+{"ok":null}
+$ curl localhost:8080/books/1
+{"error":"notFound"}

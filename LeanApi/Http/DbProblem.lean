@@ -70,11 +70,13 @@ instance {α : Type} [Entity α] [HasUnique α] [HasForeignKey α] (fs : LeanDb.
   status
     | .gone => ⟨404, by decide⟩
     | .duplicate .. => ⟨409, by decide⟩
-    | .missingRef _ => ⟨422, by decide⟩
-  detail
-    | .gone => none
-    | .duplicate t _ => some s!"a row with this {ixName t.ix} already exists"
-    | .missingRef _ => some "a referenced row does not exist"
+    | _ => ⟨422, by decide⟩ -- Newer DB: checked field merge can fail validation.
+  detail error := by
+    cases error
+    case gone => exact none
+    case duplicate index _ => exact some s!"a row with this {ixName index.ix} already exists"
+    case missingRef _ => exact some "a referenced row does not exist"
+    all_goals exact some "the updated fields fail storage validation"
   extensions
     | .missingRef w => [("errors", Json.arr #[Json.mkObj
         [("loc", .str s!"body.{fkName w.fk}"), ("msg", .str "does not exist")]])]

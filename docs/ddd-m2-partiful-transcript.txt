@@ -1,0 +1,14 @@
+$ curl -X POST localhost:8080/sign-up -H 'Accept: application/vnd.leanapp.token' -d '{"name":"Asha","email":"asha@example.com","password":"correct horse battery staple"}'
+{"ok":{"profile":1,"token":"$ASHA"}}
+$ curl -X POST localhost:8080/sign-up -H 'Accept: application/vnd.leanapp.token' -d '{"name":"Ben","email":"ben@example.com","password":"correct horse battery staple"}'
+{"ok":{"profile":2,"token":"$BEN"}}
+$ curl -X POST localhost:8080/parties -H "Authorization: Bearer $ASHA" -d '{"title":"Housewarming","description":"Bring a plant","date":"2026-10-17T19:00:00Z","guestList":"everyone"}'
+{"ok":1}
+$ curl -X POST localhost:8080/parties/1/rsvp -H "Authorization: Bearer $BEN"
+{"ok":null}
+$ curl localhost:8080/parties/1
+{"ok":{"date":"2026-10-17T19:00:00Z","description":"Bring a plant","guests":{"tag":"visible","value":{"guests":[{"name":"Ben"}]}},"title":"Housewarming"}}
+$ curl -X POST localhost:8080/sign-up -H 'Accept: application/vnd.leanapp.token' -d '{"name":"Not Asha","email":"asha@example.com","password":"correct horse battery staple"}'
+{"error":"emailTaken"}
+$ curl -X POST localhost:8080/parties/1/rsvp
+{"error":"unauthorized"}

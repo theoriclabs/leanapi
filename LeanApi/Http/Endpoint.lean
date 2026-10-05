@@ -535,6 +535,12 @@ instance [ToResponse α] : ToResponse (Created α) where
     | some l => r.setHeader "location" l
     | none => r
 
+/-- Location changes response headers, never the created status. -/
+@[simp] theorem Created.toRes_status [ToResponse α] (value : Created α) :
+    (ToResponse.toRes value).status = 201 := by
+  cases value with
+  | mk body location => cases location <;> rfl
+
 /-- A value with a version: adds `ETag: "<version>"`. -/
 structure Versioned (α : Type) where
   val : α
@@ -542,6 +548,9 @@ structure Versioned (α : Type) where
 
 instance [ToResponse α] : ToResponse (Versioned α) where
   toRes v := (ToResponse.toRes v.val).setHeader "etag" s!"\"{v.version}\""
+
+@[simp] theorem Versioned.toRes_status [ToResponse α] (value : Versioned α) :
+    (ToResponse.toRes value).status = (ToResponse.toRes value.val).status := rfl
 
 /-- No body: 204. -/
 structure NoContent where
