@@ -118,6 +118,9 @@ lean_exe domain_migration_checks where
 lean_exe domain_library_app where
   srcDir := {q(root / 'adapters/domain/tests')}
   root := `LibraryApp
+lean_exe domain_counter_app where
+  srcDir := {q(root / 'adapters/domain/tests')}
+  root := `CounterApp
 '''
 # The generality fixture serves a LeanReact `App`; its bundle is a Lake target too.
 if a.node_modules:

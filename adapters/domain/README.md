@@ -22,6 +22,22 @@ def main (args : List String) : IO UInt32 := server.main args
   `credential C.profile C.hash` next to the `api`, whose profile is the signed-in principal;
   the operations whose flow starts a session (`Auth.startSession`) sign the browser in.
 
+An API with no accounts (no credential, no sessions, no pages):
+
+```lean
+app% Name where
+  api := api                                           -- post "/games" …, get "/games/:game" …
+  migrations := [addNote := Shop.Order.addField note (fill := "")]   -- optional
+```
+
+- The schema is the domain entities of the api's namespace (the root namespace for a root
+  `api`). `PublicApp s` has no profile type and no auth storage, so no account table exists.
+- Every operation takes no actor. One that needs a signed-in user (`SignedIn`,
+  `Option SignedIn`) is an elaboration error naming it; one that hashes a password or starts
+  a session is refused when the app is assembled (`app.accounts_required`).
+- Presented credentials (cookies, `Authorization`) are ignored, and commands need no Origin or
+  CSRF check: there is no ambient credential to protect (see decision 9 in the handoff).
+
 Without pages, or with explicit routes:
 
 ```lean
@@ -51,6 +67,6 @@ def main (args : List String) : IO UInt32 := Shop.main args { database := "shop.
   `LEANAPP_*` variables. The executable finds its browser bundle from its build tree.
 
 Fixtures: `tests/LibraryApp.lean` (a library-loans app with a LeanReact `App`, the generality
-fixture), `tests/PostApp.lean`, `tests/PartifulBefore.lean` and `tests/RouteChecks.lean`; the
-acceptance scripts under `scripts/`.
+fixture), `tests/CounterApp.lean` (public counters, no accounts), `tests/PostApp.lean`,
+`tests/PartifulBefore.lean` and `tests/RouteChecks.lean`; the acceptance scripts under `scripts/`.
 See [the milestone 2 handoff](../../docs/ddd-m2-handoff.md).

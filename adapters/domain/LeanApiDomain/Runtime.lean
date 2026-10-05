@@ -220,6 +220,42 @@ def assembleQuery {s Profile Actor I O E} [IsSchema s] [LeanApp.Domain.Entity Pr
     (requirements : operation.Requirements (Native.resources s)) : Published s :=
   assembleQueryAt context codecs (rpcBinding operation) operation requirements
 
+/-! ## Apps with no accounts
+
+An app with no accounts (`app% Name where api := api`) has no credential, no session table
+and no actor: each of its operations takes none (`Unit`). Two rules follow, recorded next to
+decision 9:
+
+* **Presented credentials are ignored, not refused.** The app issues none, so a cookie or an
+  `Authorization` header can name nobody and authorize nothing. A browser also sends a host's
+  cookies to every port of that host, so refusing them would break requests that carry
+  another local app's cookies.
+* **Commands need no Origin or CSRF check.** Those checks stop a cross-site page from using a
+  visitor's ambient credential, or from planting one (decision 9). Without accounts there is
+  none, so a cross-site request can do only what any client can, such as `curl -X POST`. -/
+
+/-- An operation of an app with no accounts must not hash, verify or start a session: there is
+no credential or session table to answer it. Refused when the app is assembled. -/
+def requireNoAccounts (operation : LeanApp.Domain.Operation k Actor I O E) : Ontology.Validation Unit :=
+  if operation.metadata.kdf.isEmpty && !operation.metadata.establishesSession then .ok ()
+  else .error (Ontology.ValidationErrors.single "app.accounts_required"
+    (params := [("operation", operation.contract.identity.namespaceName ++ "." ++ operation.contract.identity.name)]))
+
+/-- Publish a command of an app with no accounts at an explicit route: no actor to resolve, no
+Origin or CSRF check, presented credentials ignored. -/
+def assemblePublicCommandAt {s I O E} [IsSchema s] (codecs : Contract.Http.Codecs) (binding : RouteBinding)
+    (operation : LeanApp.Domain.Operation .command (fun _ => Unit) I O E)
+    (requirements : operation.Requirements (Native.resources s)) : Published s :=
+  publishCommandWithResourcesAt codecs operation requirements (fun _ _ => pure ())
+    (fun env => Native.commandAlgebra env) (fun _ => 422) binding
+
+/-- Publish a query of an app with no accounts at an explicit route (GET allowed). -/
+def assemblePublicQueryAt {s I O E} [IsSchema s] (codecs : Contract.Http.Codecs) (binding : RouteBinding)
+    (operation : LeanApp.Domain.Operation .query (fun _ => Unit) I O E)
+    (requirements : operation.Requirements (Native.resources s)) : Published s :=
+  publishQueryCheckedWithResourcesAt codecs operation requirements (fun _ _ => pure (.ok ()))
+    Native.queryAlgebra (fun _ => 422) binding
+
 /-- Sign-up and sign-in. Browsers get the HttpOnly cookie and CSRF cookie after commit;
 an explicit token request (`Accept: application/vnd.leanapp.token`) gets the raw token in
 the body and no cookie. A presented live session, cookie or bearer, is rotated. -/

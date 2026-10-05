@@ -82,24 +82,32 @@ def describe (operation : LeanApp.Domain.Operation k Actor I O E) :
 private def identityJson (identity : Contract.OperationId) : Lean.Json :=
   .mkObj [("namespace", .str identity.namespaceName), ("name", .str identity.name), ("version", .str identity.version)]
 
+private def contractCodecs : IO Contract.Http.Codecs :=
+  match Contract.Http.codecs with
+  | .ok codecs => pure codecs
+  | .error _ => throw (IO.userError "contract codec assembly failed")
+
+/-- The generated client for explicit routes (templates, GET, plain bodies): each route as a
+`ClientRoute`, with the served manifest embedded verbatim. -/
+def emitRouteClient (descriptions : List (LeanApp.PublicOperation × Contract.Http.ErrorStatus × RouteBinding))
+    (out : System.FilePath) : IO Unit := do
+  let codecs ← contractCodecs
+  let routes := descriptions.map fun (operation, _, route) =>
+    ({ identity := operation.operation.identity, method := route.methodName, path := route.path,
+       params := route.params, body := match route.format with | .plain => "plain" | .envelope => "envelope" } :
+      Contract.Generate.ClientRoute)
+  let manifest : Lean.Json := .mkObj [("operations", .arr (descriptions.map fun (operation, _, route) =>
+    operation.toJson.setObjVal! "http" route.toJson).toArray)]
+  Contract.Generate.emitClient (descriptions.map (·.1)) codecs (descriptions.map (·.2.1)) out "./runtime"
+    (routes := routes) (manifestOverride := some manifest)
+
 def NativeApp.emitClient {s Profile} [IsSchema s] [LeanApp.Domain.Entity Profile]
     (app : NativeApp s Profile) (out : System.FilePath) : IO Unit := do
-  let codecs ← match Contract.Http.codecs with
-    | .ok codecs => pure codecs
-    | .error _ => throw (IO.userError "contract codec assembly failed")
-  -- Explicit routes (templates, GET, plain bodies) go to the client as `ClientRoute`s, with the
-  -- served manifest embedded verbatim; milestone 1 RPC apps keep the literal POST client.
+  -- Milestone 1 RPC apps keep the literal POST client.
   if app.descriptions.all (·.2.2.portable?.isSome) then
-    Contract.Generate.emitClient (app.descriptions.map (·.1)) codecs (app.descriptions.map (·.2.1)) out "./runtime"
+    Contract.Generate.emitClient (app.descriptions.map (·.1)) (← contractCodecs) (app.descriptions.map (·.2.1)) out "./runtime"
   else
-    let routes := app.descriptions.map fun (operation, _, route) =>
-      ({ identity := operation.operation.identity, method := route.methodName, path := route.path,
-         params := route.params, body := match route.format with | .plain => "plain" | .envelope => "envelope" } :
-        Contract.Generate.ClientRoute)
-    let manifest : Lean.Json := .mkObj [("operations", .arr (app.descriptions.map fun (operation, _, route) =>
-      operation.toJson.setObjVal! "http" route.toJson).toArray)]
-    Contract.Generate.emitClient (app.descriptions.map (·.1)) codecs (app.descriptions.map (·.2.1)) out "./runtime"
-      (routes := routes) (manifestOverride := some manifest)
+    emitRouteClient app.descriptions out
   IO.FS.writeFile (out / "pages.json") (.mkObj [
     ("pages", .arr (app.pages.map Page.describe).toArray),
     ("app", (app.browserApp.map BrowserApp.toJson).getD .null),
@@ -139,6 +147,23 @@ def acceptsHtml (req : Req) : Bool :=
   (req.headerAll "accept").any fun line => (line.splitOn ",").any fun range =>
     ((range.splitOn ";").headD "").trimAscii.toString.toLower == "text/html"
 
+/-- Apps with plain routes answer framework failures, unknown paths included, in the
+`{"error": …}` envelope; milestone 1 RPC apps keep their Contract replies. -/
+def Application.bodyFormat {s} [IsSchema s] (publication : Application s) : BodyFormat :=
+  if publication.bindings.any (·.format == .plain) then .plain else .envelope
+
+/-- The served routes, with framework failures (an unknown path, a body too large, an
+infrastructure fault) answered in `format`. -/
+def routerService (routes : List Route) (format : BodyFormat) (codecs : Contract.Http.Codecs) : Service :=
+  let router := Router.build! routes
+  let router := if format == .plain then
+      { router with notFound := fun _ => pure (envelopeFailure (Native.fault (Error := Empty) "route.not_found" 404)) }
+    else router
+  { Service.ofRouter router with
+    bodyTooLarge := fun _ _ => failureReply format codecs (Native.fault (Error := Empty) "request.body_too_large" 413)
+    errorResponse := fun _ => failureReply format codecs (Native.fault (Error := Empty) "infrastructure.unavailable")
+    logErrors := false }
+
 def NativeApp.service {s Profile} [IsSchema s] [LeanApp.Domain.Entity Profile]
     (app : NativeApp s Profile) (context : Context s Profile) (codecs : Contract.Http.Codecs)
     (publication : Application s) (browser : System.FilePath) : Service :=
@@ -169,17 +194,7 @@ def NativeApp.service {s Profile} [IsSchema s] [LeanApp.Domain.Entity Profile]
   let api := api.filter fun r => !(r.method == .get &&
     app.pages.any (fun p => shape ({ path := p.path : RouteBinding }).routerTemplate == shape r.template))
   let routes := api ++ pageRoutes ++ (if app.pages.isEmpty then [] else [asset])
-  -- Apps with plain routes answer framework failures, unknown paths included, in the
-  -- `{"error": …}` envelope; milestone 1 RPC apps keep their Contract replies.
-  let format : BodyFormat := if publication.bindings.any (·.format == .plain) then .plain else .envelope
-  let router := Router.build! routes
-  let router := if format == .plain then
-      { router with notFound := fun _ => pure (envelopeFailure (Native.fault (Error := Empty) "route.not_found" 404)) }
-    else router
-  { Service.ofRouter router with
-    bodyTooLarge := fun _ _ => failureReply format codecs (Native.fault (Error := Empty) "request.body_too_large" 413)
-    errorResponse := fun _ => failureReply format codecs (Native.fault (Error := Empty) "infrastructure.unavailable")
-    logErrors := false }
+  routerService routes publication.bodyFormat codecs
 
 /-- Where the compiled browser bundle may be, in order: an explicit directory (config or
 `LEANAPP_BROWSER_DIR`), the build workspace of this executable (`.lake/build/bin/<exe>`
@@ -243,9 +258,9 @@ def NativeApp.withService {s Profile} [IsSchema s] [LeanApp.Domain.Entity Profil
 /-- LeanDB's migration gate at startup: a covered schema change is applied (and
 reported), an uncovered one refuses with the gate's message naming every
 `Entity.field`, and nothing is opened. Returns the exit code on refusal. -/
-def NativeApp.gate {s Profile} [IsSchema s] [LeanApp.Domain.Entity Profile]
-    (app : NativeApp s Profile) (config : AppConfig) : IO (Option UInt32) := do
-  match ← LeanDb.Gate.ensure config.database (LeanDb.Gate.Target.ofSchema s) app.migrations with
+def gateDatabase (s : Type) [IsSchema s] (migrations : List LeanDb.SchemaMigration)
+    (config : AppConfig) : IO (Option UInt32) := do
+  match ← LeanDb.Gate.ensure config.database (LeanDb.Gate.Target.ofSchema s) migrations with
   | .error (.migrate why) =>
     IO.eprintln why
     return some LeanDb.Gate.refusedExit
@@ -258,27 +273,81 @@ def NativeApp.gate {s Profile} [IsSchema s] [LeanApp.Domain.Entity Profile]
       (← IO.getStdout).flush
     return none
 
-/-- The app executable: `migrate --check` / `migrate` (LeanDB's `Gate.command?`), or the
-startup gate then the server. `LEANAPP_*` overrides apply to both. -/
-def NativeApp.main {s Profile} [IsSchema s] [LeanApp.Domain.Entity Profile]
-    (app : NativeApp s Profile) (args : List String) (config : AppConfig := {}) : IO UInt32 := do
+def NativeApp.gate {s Profile} [IsSchema s] [LeanApp.Domain.Entity Profile]
+    (app : NativeApp s Profile) (config : AppConfig) : IO (Option UInt32) :=
+  gateDatabase s app.migrations config
+
+/-- An app executable over schema `s`: `LEANAPP_EMIT_CLIENT` emits the client;
+`migrate --check` / `migrate` run LeanDB's `Gate.command?`; otherwise the startup gate, then
+`serve`. `LEANAPP_*` overrides apply to all of them. -/
+def runApp (s : Type) [IsSchema s] (migrations : List LeanDb.SchemaMigration)
+    (emit : System.FilePath → IO Unit) (serve : AppConfig → IO Unit)
+    (args : List String) (config : AppConfig := {}) : IO UInt32 := do
   if let some path ← IO.getEnv "LEANAPP_EMIT_CLIENT" then
-    app.emitClient path
+    emit path
     return 0
   let config ← NativeApp.configure config
-  if let some code ← LeanDb.Gate.command? config.database (LeanDb.Gate.Target.ofSchema s) app.migrations args then
+  if let some code ← LeanDb.Gate.command? config.database (LeanDb.Gate.Target.ofSchema s) migrations args then
     return code
   unless args.isEmpty do
     IO.eprintln s!"unsupported arguments {args}; expected none, `migrate --check` or `migrate`"
     return 2
-  if let some code ← app.gate config then return code
-  app.withService config fun _ service => LeanApi.serve service { port := config.port }
+  if let some code ← gateDatabase s migrations config then return code
+  serve config
   return 0
+
+/-- The app executable: `migrate --check` / `migrate` (LeanDB's `Gate.command?`), or the
+startup gate then the server. `LEANAPP_*` overrides apply to both. -/
+def NativeApp.main {s Profile} [IsSchema s] [LeanApp.Domain.Entity Profile]
+    (app : NativeApp s Profile) (args : List String) (config : AppConfig := {}) : IO UInt32 :=
+  runApp s app.migrations app.emitClient
+    (fun config => app.withService config fun _ service => LeanApi.serve service { port := config.port })
+    args config
 
 /-- A `main : IO Unit` (no arguments) still gets the startup gate and exits with the
 gate's code on refusal. The `migrate` commands need `main (args)` with `NativeApp.main`. -/
 def NativeApp.serve {s Profile} [IsSchema s] [LeanApp.Domain.Entity Profile]
     (app : NativeApp s Profile) (config : AppConfig := {}) : IO Unit := do
+  let code ← app.main [] config
+  unless code == 0 do IO.Process.exit code.toUInt8
+
+/-! ## Apps with no accounts
+
+`app% Name where api := api` serves a portable `Api` with no credential, no sessions and no
+pages: `PublicApp` has no profile type and no auth storage, rather than empty ones. Its
+operations take no actor; see `assemblePublicCommandAt` for presented credentials and Origin. -/
+
+/-- An app with no accounts: the api's routes over schema `s`, and the schema's migrations. -/
+structure PublicApp (s : Type) [IsSchema s] : Type 1 where
+  build : Contract.Http.Codecs → Ontology.Validation (Application s)
+  /-- The published operations with their routes, in api order. -/
+  descriptions : List (LeanApp.PublicOperation × Contract.Http.ErrorStatus × RouteBinding)
+  /-- Declared schema migrations (`migration%`), handed to LeanDB's startup gate. -/
+  migrations : List LeanDb.SchemaMigration := []
+
+def PublicApp.emitClient {s} [IsSchema s] (app : PublicApp s) (out : System.FilePath) : IO Unit :=
+  emitRouteClient app.descriptions out
+
+/-- Open the database, build the exact publication and run `k` with the service. -/
+def PublicApp.withService {s} [IsSchema s] (app : PublicApp s) (config : AppConfig)
+    (k : Service → IO α) : IO α := do
+  let codecs ← contractCodecs
+  let dc ← DbConns.open config.database (IsSchema.specs s) 2
+  try
+    match app.build codecs with
+    | .error errors =>
+      throw (IO.userError s!"app publication assembly failed: {errors.toList.map fun error => (error.code, error.params)}")
+    | .ok publication =>
+      k (routerService (publication.routes dc (clock config.clockFile) executePrepared) publication.bodyFormat codecs)
+  finally dc.close
+
+/-- The executable: `migrate --check` / `migrate`, or the startup gate then the server. -/
+def PublicApp.main {s} [IsSchema s] (app : PublicApp s) (args : List String) (config : AppConfig := {}) : IO UInt32 :=
+  runApp s app.migrations app.emitClient
+    (fun config => app.withService config fun service => LeanApi.serve service { port := config.port })
+    args config
+
+def PublicApp.serve {s} [IsSchema s] (app : PublicApp s) (config : AppConfig := {}) : IO Unit := do
   let code ← app.main [] config
   unless code == 0 do IO.Process.exit code.toUInt8
 
@@ -356,6 +425,31 @@ private structure AppSource where
   migrationTerms : Array Syntax := #[]
   ref : Syntax
 
+/-- The `migrations := […]` entries, as rooted `LeanDb.SchemaMigration` terms. Migrations need
+the native entities, so an inline one is declared here, after the schema, under the app's
+name, and recorded by LeanDB under its own short name. -/
+private def declareMigrations (appName : Lean.Name) (migrationTerms : Array Syntax) :
+    CommandElabM (Array String) := do
+  let root := fun n : Lean.Name => "_root_." ++ n.toString
+  let mut migrations : Array String := #[]
+  for migration in migrationTerms do
+    let migrationName := migration[0].getId
+    if migration[1].getNumArgs == 2 then
+      let body ← liftCoreM <| PrettyPrinter.ppTerm ⟨migration[1][1]⟩
+      generated ("namespace " ++ appName.toString)
+      try
+        withRef migration <| generated ("migration% " ++ migrationName.toString ++ " := " ++
+          (body.pretty 100000))
+      finally
+        generated ("end " ++ appName.toString)
+      migrations := migrations.push (root (appName ++ migrationName))
+    else
+      let resolved ← resolveGlobalConstNoOverload (TSyntax.mk (ks := `ident) migration[0])
+      unless (← getConstInfo resolved).type.isConstOf ``LeanDb.SchemaMigration do
+        throwErrorAt migration "{resolved} is not a migration (LeanDb.SchemaMigration)"
+      migrations := migrations.push (root resolved)
+  return migrations
+
 private def elabAppCore (src : AppSource) : CommandElabM Unit := withRef src.ref do
     let name := src.name
     let accountName := src.account
@@ -395,25 +489,7 @@ private def elabAppCore (src : AppSource) : CommandElabM Unit := withRef src.ref
       generated ("native_schema% " ++ schemaName.toString ++ " := " ++ String.intercalate ", "
         (entities.toList.map (fun entry => entry.name.toString) ++ [accountName.toString ++ ".Native.Credential", accountName.toString ++ ".Native.Session"]))
       generated ("native_auth_storage% " ++ schema ++ " for " ++ root accountName)
-    -- Migrations need the native entities, so they are declared here, under the app's
-    -- name, and recorded by LeanDB under their own short name.
-    let mut migrations : Array String := #[]
-    for migration in migrationTerms do
-      let migrationName := migration[0].getId
-      if migration[1].getNumArgs == 2 then
-        let body ← liftCoreM <| PrettyPrinter.ppTerm ⟨migration[1][1]⟩
-        generated ("namespace " ++ appName.toString)
-        try
-          withRef migration <| generated ("migration% " ++ migrationName.toString ++ " := " ++
-            (body.pretty 100000))
-        finally
-          generated ("end " ++ appName.toString)
-        migrations := migrations.push (root (appName ++ migrationName))
-      else
-        let resolved ← resolveGlobalConstNoOverload (TSyntax.mk (ks := `ident) migration[0])
-        unless (← getConstInfo resolved).type.isConstOf ``LeanDb.SchemaMigration do
-          throwErrorAt migration "{resolved} is not a migration (LeanDb.SchemaMigration)"
-        migrations := migrations.push (root resolved)
+    let migrations ← declareMigrations appName migrationTerms
     let signUp := accountName ++ `signUp
     let signIn := accountName ++ `signIn
     let publishTerm := fun (operation : Lean.Name) (binding : String) => do
@@ -612,5 +688,61 @@ def elabReactApp : CommandElab := fun stx => do
   elabAppCore { name := ⟨stx[1]⟩, account := profile, accountRef := appRef, credential := some (credential, appRef),
                 explicitRoutes := true, api := some (api, appRef), reactApp := some reactApp,
                 migrationTerms := (stx[6].getOptional?.map (·[3].getSepArgs)).getD #[], ref := stx }
+
+/-- `app% Name where api := api`: serve a portable `Api` with no accounts. The schema is the
+domain entities of the api's namespace (the root namespace for a root `api`); there is no
+credential, session table or page. Every operation must take no actor: one that needs a
+signed-in user (`SignedIn`, `Option SignedIn`) is an error here. -/
+syntax (name := domainPublicApp) "app% " ident " where " &"api" ":=" ident (appMigrations)? : command
+
+@[command_elab domainPublicApp]
+def elabPublicApp : CommandElab := fun stx => withRef stx do
+  let name : TSyntax `ident := ⟨stx[1]⟩
+  let apiRef := stx[5]
+  let apiName ← resolveGlobalConstNoOverload (TSyntax.mk (ks := `ident) apiRef)
+  let appName := (← getCurrNamespace) ++ name.getId
+  let root := fun n : Lean.Name => "_root_." ++ n.toString
+  let schemaName := appName ++ `Database
+  let domain := apiName.getPrefix
+  let where_ := if domain.isAnonymous then "the root namespace" else s!"namespace {domain}"
+  let entities := (LeanApp.Domain.Deriving.entityDeclarations.getState (← getEnv)).filter
+    (fun entry => entry.name.getPrefix == domain)
+  if entities.isEmpty then throwErrorAt apiRef "{apiName}: {where_} declares no entities to store"
+  let endpoints ← withRef apiRef (apiEndpoints apiName)
+  let mut operations : Array Lean.Name := #[]
+  let mut entries : Array AppEntry := #[]
+  for (method, template, operation) in endpoints do
+    discard <| withRef apiRef (liftTermElabM (checkRoute method template operation))
+    if operations.contains operation then
+      throwErrorAt apiRef "{operation.getPrefix} is already routed; an operation has one route"
+    let function := operation.getPrefix
+    unless operation.getString! == "operation" && (← getEnv).contains (function ++ `Actor) do
+      throwErrorAt apiRef "{function}: expected an operation of the api (`post \"/path\" f`)"
+    -- No accounts, no actor: an operation that needs a signed-in user cannot be served.
+    let actor ← liftTermElabM do
+      let family ← whnf (mkConst (function ++ `Actor))
+      lambdaTelescope family fun _ body => do
+        if body.isConstOf ``Unit then pure none
+        else pure (some (← ppExpr body))
+    if let some actor := actor then
+      throwErrorAt apiRef "{function} takes an actor ({actor}), but app% {name.getId} has no accounts, \
+        so its operations must take none. Serve this api with a credential instead: declare \
+        `credential C.profile C.hash` and use `app := …` or `authentication := P with C`."
+    let info ← getConstInfo operation
+    let kind ← liftTermElabM <| whnf (info.type.getArg! 0)
+    let assemble := if kind.isConstOf ``Contract.OperationKind.query then "assemblePublicQueryAt" else "assemblePublicCommandAt"
+    let binding := "(route_binding% " ++ method ++ " " ++ (Lean.Json.str template).compress ++ " " ++ root operation ++ ")"
+    operations := operations.push operation
+    entries := entries.push ⟨operation, binding,
+      "LeanApi.Domain." ++ assemble ++ " codecs " ++ binding ++ " " ++ root operation ++ " (" ++ root function ++ ".Requirements.infer)"⟩
+  generated ("native_schema% " ++ schemaName.toString ++ " := " ++ String.intercalate ", "
+    (entities.toList.map fun entry => entry.name.toString))
+  let migrations ← declareMigrations appName ((stx[6].getOptional?.map (·[3].getSepArgs)).getD #[])
+  generated ("def " ++ root appName ++ " : LeanApi.Domain.PublicApp " ++ root schemaName ++ " := {\n" ++
+    "  build := fun codecs => (([" ++ String.intercalate ", " (entries.toList.map fun entry =>
+      "LeanApi.Domain.requireNoAccounts " ++ root entry.operation) ++ "] : List (Ontology.Validation Unit)).forM id).bind fun _ =>\n" ++
+    "    LeanApi.Domain.Application.create [" ++ String.intercalate ", " (entries.toList.map (·.publish)) ++ "]\n" ++
+    "  descriptions := [" ++ String.intercalate ", " (entries.toList.map fun entry => "LeanApi.Domain.describeAt " ++ entry.binding ++ " " ++ root entry.operation) ++ "]\n" ++
+    "  migrations := [" ++ String.intercalate ", " migrations.toList ++ "] }")
 
 end LeanApi.Domain

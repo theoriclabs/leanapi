@@ -10,7 +10,7 @@ root=$PWD
 workspace=$(cd "$workspace" && pwd)
 export LEAN_NUM_THREADS=2
 step=build
-(cd "$workspace" && lake build domain_native_command_checks domain_native_read_checks domain_prepared_checks domain_kdf_gate_checks domain_route_checks domain_migration_checks domain_library_app library_browser)
+(cd "$workspace" && lake build domain_native_command_checks domain_native_read_checks domain_prepared_checks domain_kdf_gate_checks domain_route_checks domain_migration_checks domain_library_app library_browser domain_counter_app)
 step=route_checks
 "$workspace/.lake/build/bin/domain_route_checks"
 step=migration_acceptance
@@ -19,6 +19,9 @@ node "$root/scripts/ddd_migration_acceptance.mjs" "$workspace"
 step=library_acceptance
 node "$root/scripts/ddd_library_acceptance.mjs" "$workspace" --node-modules "$node_modules"
 # The post-shaped portable app (LeanReact's PostPart1), when the peer provides it.
+# An app with no accounts: public counters over curl and SQLite.
+step=counter_acceptance
+node "$root/scripts/ddd_counter_acceptance.mjs" "$workspace"
 step=post_app
 post_fixture=0
 if rg -q 'lean_exe domain_post_app' "$workspace/lakefile.lean"; then
@@ -41,7 +44,7 @@ expect_rejection() {
     exit 1
   fi
 }
-fixtures="UnchangedUnique AuthStoreWire RouteMissingParam RouteGetCommand RouteAppEntry RoutePathCodec"
+fixtures="UnchangedUnique AuthStoreWire RouteMissingParam RouteGetCommand RouteAppEntry RoutePathCodec PublicSignedIn"
 if [ "$post_fixture" = 1 ]; then fixtures="$fixtures PostApiDuplicate"; fi
 for fixture in $fixtures; do
   step="negative:$fixture"
@@ -62,6 +65,7 @@ for fixture in $fixtures; do
     RouteGetCommand) expect_rejection 'GET "/parties/:party/rsvp" requires a query operation, but RouteChecks.rsvp is a command' 1 ;;
     RouteAppEntry) expect_rejection 'RouteAppEntry.lean:25:4: error: path parameter :person in "/people/:person/name" has no matching input field in RouteAppEntry.rename' 1 ;;
     PostApiDuplicate) expect_rejection 'PostApiDuplicate.lean:14:2: error: rsvp is already routed; an operation has one route' 1 ;;
+    PublicSignedIn) expect_rejection 'PublicSignedIn.lean:32:9: error: Board.write takes an actor \(Board.SignedIn\), but app% board has no accounts' 1 ;;
     RoutePathCodec) expect_rejection 'path parameter :password .* RouteChecks.account.signIn input field password : .*Password, which has no LeanApi.Domain.PathParam instance' 1 ;;
   esac
   echo "PASS intended compiler rejection: $fixture"

@@ -1,12 +1,59 @@
 # LeanAPI milestone 2 handoff (wave 1)
 
-Updated 2026-10-02 (waves 1 to 3 and the final wave, phases A and B; newest first). Scope: DDD-LAPI-06 bearer transport, the native half of DDD-LAPI-05
+Updated 2026-10-04 (waves 1 to 3, the final wave's phases A and B, and apps with no accounts; newest first). Scope: DDD-LAPI-06 bearer transport, the native half of DDD-LAPI-05
 (explicit route list), the LeanAPI side of DDD-LAPI-07 (`lake exe`, no Python, no
 environment variables), and the KDF-hoisting design note (decision 4). Built and tested
 against the frozen peers in `domain_driven_development/runs/partiful-m2/frozen/{LeanDB,leanreact}`.
 All changes are uncommitted and confined to this repository. `Review_harsh_2026-09-23.md`
 is untouched (SHA-256 `e6508dbd71b41ae382a40e4fda7e666ec5cddd0b22559870e9531f84079a00f6`
 before and after).
+
+## API apps with no accounts (2026-10-04)
+
+`app% Name where api := api` (with optional `migrations := […]`) serves a portable `Api` with
+no credential, no sessions and no pages. Built against `frozen-w2/leanreact-cp4` and
+`frozen-w2/LeanDB-cp3`. Gate script and logs: `.lake/ddd-m2-scratch/leanapi-noacct-*`.
+
+- **Design: a separate `PublicApp s`, with no profile type.** `NativeApp s Profile` and
+  `Context s Profile` need a profile entity and an `Auth.Storage` over credential and session
+  tables. An `Option` inside them would still need some `Profile` type, which would be a
+  fabricated entity. `PublicApp s` holds only `build`, `descriptions` and `migrations`.
+  - It shares `routerService`, `gateDatabase`, `runApp` and `emitRouteClient` with
+    `NativeApp`, which now delegates to them, so its behaviour is unchanged.
+  - Its operations are published by `assemblePublicCommandAt`/`assemblePublicQueryAt`. The
+    actor is `()`, no Origin check is made, and presented credentials are ignored.
+- **Schema.** The domain entities of the api's namespace (the root namespace for a root
+  `api`) go to `native_schema%`. No session entity is added, so the database has no account
+  tables; the counter acceptance checks this.
+- **No actors.** An endpoint whose `f.Actor` is not `Unit` (`SignedIn`, `Option SignedIn`)
+  is an elaboration error at `api := …`. It names the operation and points to `credential`
+  plus `app :=` or `authentication :=`. Negative fixture: `tests/negative/PublicSignedIn.lean`.
+  An operation whose flow hashes, verifies or starts a session is refused when the app is
+  assembled, at startup (`app.accounts_required`).
+- **Credentials, Origin and CSRF.** See the note under decision 9 (wave 1.5): no Origin or
+  CSRF check, and presented credentials are ignored.
+- **Fixture** `tests/CounterApp.lean` (`domain_counter_app v1|v2|v2-unmigrated`): public
+  named counters with `constraint Counter.uniqueName`, `newCounter` (POST, `nameTaken`),
+  `increment` (POST, `notFound`), `getCounter` (`ReadOp`, GET), and the migration `addStep`.
+  The current domain sits at the root namespace. `scripts/ddd_counter_acceptance.mjs` (39
+  checks, real curl and SQLite) covers:
+  - the `{"ok"}`/`{"error"}` bodies and the 400 for an undecodable body;
+  - POST with no Origin, and ignored `Authorization` and cookie headers;
+  - no account tables, and no sign-up route;
+  - the refusal without the migration, the backfill with it, and restart persistence.
+- **Results** (`leanapi-noacct-gates.summary`, 23:10 to 23:14; every gate exit 0):
+
+  | Gate | Result |
+  | --- | --- |
+  | App build and staged files identical / common build | PASS / PASS |
+  | `leanapi_tests` / route checks / `domain_post_app` | 580/0, 50/0, 37/0 |
+  | **No-accounts counter acceptance** | **39** |
+  | `partiful_v2` acceptance / milestone 1 acceptance | 228 / 399 |
+  | `lake exe partiful` | PASS |
+  | `ddd_check_domain.sh` / `ddd_check_partiful.sh` | PASS / PASS (8 rejections, incl. `PublicSignedIn`) |
+  | curl / migration / library / transcripts | 24 / 35 / 41 / 6 and 6 |
+  | generated client ×2 / LeanJS audit | 9 and 9 / PASS |
+  | `git diff --check`, generality grep, protected file | clean, 0 hits, unchanged |
 
 ## Final wave, phase B (2026-10-02): the post's app, served from its `App`
 
@@ -330,6 +377,16 @@ leanreact.
 
 **Decision 9.** An anonymous command (no session cookie, no bearer) skips the Origin
 check only in token mode (`Accept: application/vnd.leanapp.token`); no cookie is set then.
+
+*Apps with no accounts (2026-10-04).* `app% Name where api := api` has no credential and no
+session table, so it has no ambient credential: no cookie it set, no session it could resolve.
+Origin and CSRF exist to stop a cross-site page from using a visitor's credential, or from
+planting one, which is decision 9's case. Without accounts there is nothing to use or plant,
+and a cross-site POST can do exactly what `curl -X POST` can. So its commands need no Origin or
+CSRF check. Presented credentials (cookies, `Authorization`) are ignored rather than refused
+with 401. They can name nobody, and a browser sends a host's cookies to every port of that
+host, so a 401 would break requests that carry another local app's cookies. Apps with
+accounts are unchanged.
 This now holds for every anonymous command (`ActorContext (fun _ => Unit)` passes
 `Auth.tokenRequested req` to `Auth.anonymousGuard`), not just sign-up/sign-in. Cookie-mode
 sign-up and sign-in with no Origin or a wrong Origin are still 403 and set no cookie.
