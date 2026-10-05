@@ -1,12 +1,176 @@
 # LeanAPI milestone 2 handoff (wave 1)
 
-Updated 2026-10-04 (waves 1 to 3, the final wave's phases A and B, apps with no accounts, and the live peers; newest first). Scope: DDD-LAPI-06 bearer transport, the native half of DDD-LAPI-05
+Updated 2026-10-05 (M3 `LeanApi.Core`; waves 1 to 3, the final wave's phases A and B, apps with no accounts, the live peers; newest first). Scope: DDD-LAPI-06 bearer transport, the native half of DDD-LAPI-05
 (explicit route list), the LeanAPI side of DDD-LAPI-07 (`lake exe`, no Python, no
 environment variables), and the KDF-hoisting design note (decision 4). Built and tested
 against the frozen peers in `domain_driven_development/runs/partiful-m2/frozen/{LeanDB,leanreact}`.
 All changes are uncommitted and confined to this repository. `Review_harsh_2026-09-23.md`
 is untouched (SHA-256 `e6508dbd71b41ae382a40e4fda7e666ec5cddd0b22559870e9531f84079a00f6`
 before and after).
+
+## M3: LeanApi.Core (2026-10-05)
+
+LeanAPI owns operations and endpoints and depends on no LeanReact (plan:
+`domain_driven_development/runs/m3-layering/PLAN.md`, phase 3). It builds on LeanDB `f6288e5`
+(`LeanDb.Model`, `LeanDb.Native`) and leanontology `5f54fb8`. LeanReact was only read.
+
+### Build wiring
+
+- **Requires.** LeanDB and leanontology are path dependencies (`../LeanDB`, `../leanontology`), and
+  the git pin on leandb is gone. A pinned git require for fresh clones is DDD-LAPI-04. The
+  manifest resolves LeanDB's `leansqlite` to LeanDB's own checkout
+  (`../LeanDB/.lake/packages/leansqlite`), so the two workspaces share one build:
+  `lake build leandb/LeanDb` from here is up to date. `leancrypto` is unchanged (git, `v0.1.0`).
+- **Decision: toolchain `leanprover/lean4:v4.33.0`, not `nightly-2026-09-26`.** Path dependencies
+  share oleans, so one build graph needs one toolchain, and LeanDB, leanontology, LeanReact and
+  the apps are all on v4.33.0. The trade-off is that leanapi loses the nightly's lean4#15174
+  fix (`Std.Http` no longer parks a thread on every socket read) until every repository moves
+  to v4.36.0. The HTTP suite passes on v4.33.0 (580/0); throughput was not re-measured.
+- **Targets** (`lakefile.toml`):
+  - `LeanContract` and `LeanApiCore` are the portable libraries.
+  - `LeanApi` has the roots `LeanApi`, `LeanApi.Core` and `LeanApi.Native`.
+  - `TestsCore` with `leanapi_core_tests`, and `TestsNative` with `leanapi_native_checks`,
+    `leanapi_apps` and `leanapi_counter_app`.
+  - `Partiful` and `leanapi_partiful_api` are the staged post api.
+  - `LeanApiTests` and `leanapi_tests`.
+- **Decision: rename `Tests.*` to `LeanApiTests.*`.** A `Tests` library in a dependency
+  (leanontology, LeanDB) claims every `Tests.*` module, so `import Tests.X` resolved to
+  `leanontology/tests/Tests/X.lean`. Only module paths changed, not namespaces.
+- **The generated `.lake/ddd-common` workspace is retired.** `ddd_prepare_common.py`,
+  `ddd_partiful.py`, `ddd_browser_target.py` and the milestone 1/2 check scripts are deleted;
+  every gate builds in this repository's own workspace. The old directory
+  (`.lake/ddd-common`, 2.3 GB) is still on disk: a guard stops this worker from deleting under
+  `.lake`, so someone with the permission should remove it.
+- **Tic-tac-toe** (`domain_driven_development/tictactoe/lakefile.lean`, phase 5) should drop
+  `.lake/ddd-common` and require `leanapi from "../../leanapi"` (which brings LeanDB and
+  leanontology as path dependencies), on toolchain v4.33.0. Its domain imports `LeanDb.Model`
+  and `LeanApi.Core`; its server imports `LeanApi.Native` and declares
+  `app% Name where api := api`.
+
+### Modules
+
+| Module | What it is |
+| --- | --- |
+| `LeanContract.*` (names kept) | Ported from leanreact `engine/LeanContract`. Operation contracts and codecs, transports, the HTTP envelope, call failures, channels, the browser bridge, and client generation (`LeanContract.Generate`, with its JS runtime `LeanContract/{Fetch,Codecs,Service}.mjs`). |
+| `LeanApi.Publication.*` | leanreact's pre-domain `LeanApp/*`: `Application`, `Binding` (`PublicOperation`, `PublicMetadata`, `HttpBinding`), `Capability`, `Channel`, `Context`, `Module`, `Policy`, `Testing`. Renamed, because the `LeanApi` namespace already has `Policy`, `Method`, `Endpoint`, `Api` and `Auth`. No module is named `LeanApp`. |
+| `LeanApi.Core.Flow` | The operation IR. `RequestF` EMBEDS LeanDB's `StorageRequest` (one constructor, `storage`, at the access of the operation kind) and adds only `now`, `hashPassword`, `verifyCredential` and `startSession`. `FlowF` adds `pure`, `bind`, `fail` (throw) and `check` (require). It also defines `Resources` (`extends StorageResources` with `auth`), `portableResources`, `portableAuth`, `Algebra`, `Flow.run`, `mapError`, `toCommand`, `capture`/`tryCatch`, `Operation`, `FlowMetadata`, `KdfStep`, `CredentialLink` and `RouteInput`. |
+| `LeanApi.Core.Op` | `Op`, `ReadOp`, `Now`, `Clock.now`, `require` (scoped syntax), `MonadRequire`, `Principal`, `Op.mapError`, and the `Domain`/`Wire` instances for `Empty`. `MonadStorage` instances give `MonadLift DB (Op ε)`, `MonadLift Query (Op ε)` and `MonadLift Query (ReadOp ε)`, request by request (`Program.lift`). |
+| `LeanApi.Core.Auth` | `Password.hash` (as `Ontology.Password.hash`, so `← password.hash` works), `Auth.verifyWith`, `Auth.startSession`, the `credential C.profile C.hash` command (one more `@[command_elab LeanDb.Model.Entities.entityFieldPair]` elaborator; it generates `C.credentialLink` and `C.verify`), and `deriving Principal`. |
+| `LeanApi.Core.Publish` | `derive_operation f`. It uses LeanDB's `Requirements.generalize` with this layer's targets: family `portableResources`, `portableStorage ↦ r.toStorageResources`, `portableInstances.push portableAuth`. Metadata nodes come from `Requirements.storageNode?` plus this layer's requests and guards; KDF steps are read the same way. |
+| `LeanApi.Core.Api` | `def api : Api := [post "/x" f, get "/y/:id" g]`, `Endpoint`, typed `api.f`. |
+| `LeanApi.Core.Memory` | `LeanApi.Memory`, the in-memory runner. LeanDB's `Memory` store, with the clock, sessions and KDF counter around it. |
+| `LeanApi.Native.*` | The native adapter (see below). |
+
+`open LeanApi.Core` exports what an app writes: `Op`, `ReadOp`, `Now`, `Clock.now`, `require`,
+`Principal`, `Password.hash`, `Auth.startSession`, `CredentialLink`, `Api`, `Endpoint`, `post`,
+`get`, `derive_operation`, and the IR (`Flow`, `RequestF`, `Operation`, …). An app opens both
+layers:
+
+```lean
+import LeanDb.Model
+import LeanApi.Core
+open LeanDb.Model LeanApi.Core
+```
+
+`scripts/CoreClosure.lean` checks that `LeanApi.Core` is portable: its import closure is itself,
+`LeanApi.Publication`, `LeanContract`, `LeanDb.Model`, `LeanOntology` and Lean (1472 modules).
+
+**Dropped (milestone 1).**
+- The surface: `command%`, `query%`, `policy%`, `auth%`, `Account`, the library `SignedIn`/`Viewer`.
+- The IR: the `create`/`change`/`remove`/`signUp`/`signIn`/`include` requests, and
+  `Members`/`Policy`/`Projection`/`disclose`.
+- The `app%` forms `operations :=`, `routes :=`, `pages :=` and `app := app`.
+- `native_auth_entities%`/`native_auth_storage%`.
+- The browser shell (`App.mjs`), the LeanJS page emission and the LeanJS audit.
+- The milestone 1 Partiful app with its 399-check acceptance, the `partiful_v2` page and
+  Chromium suite, and `lake exe partiful`. These go to LeanReact in phase 4; the old scripts
+  are in git history.
+
+### Native
+
+**Decision: the adapter is folded into LeanAPI proper as `LeanApi.Native.*`** (namespace
+`LeanApi.Native`; `adapters/domain` is deleted). Its imports are LeanApi's HTTP core,
+`LeanApi.Core`, `LeanDb.Native` and leanontology, all in this build, so a separate package
+had nothing left to isolate.
+
+```lean
+app% server where                                  -- accounts
+  authentication := Member with Login              -- Login declared with `credential Login.member Login.hash`
+  api := api
+  migrations := [addShelf := Book.addField shelf (fill := .general)]
+
+app% counters where                                -- no accounts
+  api := api
+```
+
+- The native family is `LeanApi.Native.resources s := { toStorageResources :=
+  LeanDb.Native.storageResources s, auth := Auth.Storage s _ }`.
+- The algebra passes each embedded storage request to `LeanDb.Native.queryRequest` or
+  `commandRequest`. A `StorageFault` becomes a typed framework failure (`storageFault`);
+  `DbFault.corruption` becomes `storage.corrupt` (500).
+- The session table (`native_session_entity%`) is a `deriving Entity` structure. Its revoke
+  goes through LeanDB's `EntityStorage.update`.
+- `app%` derives the schema inside the app's namespace, so generated instances are named after
+  the app and two apps' modules can be imported together.
+
+**Hooks LeanReact needs to serve pages on top** (phase 4):
+1. `LeanApi.Native.declareApiApp appName api accounts migrationTerms ref : CommandElabM Unit`.
+   It is the core of both `app%` forms. A full-stack `app% … where app := X` reads `X.api`,
+   calls this (with `Accounts {profile, credential}` read off the domain's `credential`), then
+   declares its own value `{ appName with pages := … }`.
+2. `NativeApp.pages : Context s Profile → List PageRoute` and `PublicApp.pages : List PageRoute`,
+   with `PageRoute {path, handler : Req → IO Res}`. They are served next to the api by
+   `withPages`: a page that shares a GET endpoint's path shape is negotiated (`Accept:
+   text/html` gets the page). A page handler gets the `Context`, so it can resolve the
+   bootstrap actor with `Auth.resolve context.cookies env req context.store.live`. The CSRF
+   cookie is `context.cookies.csrfName`.
+3. `NativeApp.authOperations`: the operations whose flow starts a session. The browser shell
+   uses them to recognize a sign-in reply, which carries `x-leanapp-auth-csrf` in cookie mode.
+4. Client generation: `LeanApi.Native.emitRouteClient descriptions out` (or
+   `NativeApp/PublicApp.emitClient`), with `LeanContract/{Fetch,Codecs}.mjs` as the runtime.
+   `runApp s migrations emit serve args config` builds an app executable; its `emit` (run
+   under `LEANAPP_EMIT_CLIENT`) is where a page layer also writes its own browser files.
+5. Removed from the native config: `browserDirectory`, `--browser-dir` and
+   `LEANAPP_BROWSER_DIR`. The page layer finds its own bundle.
+
+Tested here: `RouteChecks` serves a page through the `pages` hook and negotiates it with the
+GET endpoint, both in process and over curl. The generated-client acceptance emits and drives
+both fixture clients.
+
+### Tests and gates
+
+**Ported from leanreact** (`TestsCore/`, compile-time `#guard`/`#guard_msgs`, run by
+`leanapi_core_tests`):
+- `PostPart1` (the post's operations, endpoints, requirements and metadata).
+- `PostPart1Run`: in memory, generic bodies under a witness-checking family, auth, the join,
+  `Changes`, the cascade.
+- `Loans` and `LoansRun`.
+- `Contracts`/`ContractsRun` (the ontology contract fixtures).
+- `Envelope`.
+
+Two expectations changed because `LeanOntology.Scalars` gives `Ref T` (= `EntityId T`) its
+public wire (default scope only): the scoped-reference checks now name the scoped codec
+explicitly.
+
+**Rejections** (`scripts/check_core_fixtures.py`, 28): 20 in `fixtures/core`, among them the
+op-level fixtures from leanreact and the seven contract rejections; 8 in `fixtures/native`,
+among them `PublicSignedIn`, `UndeclaredCredential` and `SessionWire`.
+
+**Native fixtures** (`TestsNative/`):
+- `CounterApp`, `LibraryApp`, `Evolving` and `PartifulBefore` are ported to the new surface.
+- `RouteChecks` is rewritten on plain operations with an authored credential.
+- `NativeChecks` is new: native reads and commands on the new IR.
+- `AuthChecks`, `ContractFixture` and `PostApp` are ported.
+
+**The post's api without pages** comes from `scripts/stage_partiful_api.py`. It copies
+`partiful_v2/Domain.lean` unchanged except for its two import/open lines. The staged Main
+serves it with `authentication := Person with Credential`, `api := api` and the `guestList`
+migration (`unmigrated` drops the migration). `scripts/ddd_partiful_api_acceptance.mjs` runs
+197 checks: auth, host, RSVP, the visibility × role matrix, edit, reschedule, cancel,
+restart, and the migration gate on a real pre-`guestList` database. That is the phase 2
+suite's 228 checks without the 27 Chromium checks and the 4 page checks.
+
+All gates run from `scripts/ddd_check.sh`.
 
 ## Live peers (2026-10-04): leanreact `1a25ecf`, LeanDB `08fd160`
 

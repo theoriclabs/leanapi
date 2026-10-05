@@ -74,11 +74,11 @@ instance teamsAuth : AuthenticatesDb TeamsDb Me :=
 def signup (body : Body SignupBody) (token : FreshToken) :
     Tx TeamsDb ApiError (Created SignupView) := do
   let row : UserRow := { email := body.val.email, name := body.val.name, team := tref body.val.team }
-  match ← Txn.insert UserRow (Checked.of row trivial) with
+  match ← Txn.insert UserRow (Checked.of row ⟨rfl, trivial⟩) with
   | .error (.duplicate ix _) => nomatch ix  -- users have no unique key: nothing can clash
   | .error (.missingRef _) => Txn.throw .unknownTeam
   | .ok user =>
-    match ← Txn.insert TokenRow (Checked.of ⟨Tokens.digest token.val, user.id⟩ trivial) with
+    match ← Txn.insert TokenRow (Checked.of ⟨Tokens.digest token.val, user.id⟩ ⟨rfl, trivial⟩) with
     | .error _ => Txn.throw .tryAgain
     | .ok _ =>
       let view := userView user.toStored
@@ -106,7 +106,7 @@ def teamsApi : DbApi TeamsDb := api! [
 
 def seedTxn : {σ : Type} → Txn σ TeamsDb String Unit := do
   for name in ["Acme", "Globex"] do
-    match ← Txn.insert TeamRow (Checked.of ⟨name⟩ trivial) with
+    match ← Txn.insert TeamRow (Checked.of ⟨name⟩ ⟨rfl, trivial⟩) with
     | .ok _ => pure ()
     | .error _ => Txn.throw "seed failed"
 

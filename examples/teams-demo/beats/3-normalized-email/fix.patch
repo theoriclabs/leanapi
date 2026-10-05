@@ -16,7 +16,7 @@ diff --git a/examples/teams-demo/TeamsDemo/Api.lean b/examples/teams-demo/TeamsD
 -def UserRow.checked (email : String) (name : DisplayName) (team : TeamId) : Checked UserRow :=
 +def UserRow.checked (email : Email) (name : DisplayName) (team : TeamId) : Checked UserRow :=
    Checked.of { email, name := name.raw, team := tref team } (by
-     show UserRow.invariant _ = true
+     refine ⟨rfl, ?_⟩; show UserRow.invariant _ = true
      simp [UserRow.invariant, name.ok.1, name.ok.2])
  
  structure SignupBody where

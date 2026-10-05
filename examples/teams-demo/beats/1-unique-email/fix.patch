@@ -24,9 +24,9 @@ diff --git a/examples/teams-demo/TeamsDemo/Api.lean b/examples/teams-demo/TeamsD
 @@ -75,7 +78,7 @@
      Tx TeamsDb ApiError (Created SignupView) := do
    let row : UserRow := { email := body.val.email, name := body.val.name, team := tref body.val.team }
-   match ← Txn.insert UserRow (Checked.of row trivial) with
+   match ← Txn.insert UserRow (Checked.of row ⟨rfl, trivial⟩) with
 -  | .error (.duplicate ix _) => nomatch ix  -- users have no unique key: nothing can clash
 +  | .error (.duplicate .byEmail _) => Txn.throw .emailTaken
    | .error (.missingRef _) => Txn.throw .unknownTeam
    | .ok user =>
-     match ← Txn.insert TokenRow (Checked.of ⟨Tokens.digest token.val, user.id⟩ trivial) with
+     match ← Txn.insert TokenRow (Checked.of ⟨Tokens.digest token.val, user.id⟩ ⟨rfl, trivial⟩) with

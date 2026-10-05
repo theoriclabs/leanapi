@@ -41,15 +41,19 @@ Sign-up inserts a user and matches every way the insert can fail. The schema now
 +def UserRow.invariant (u : UserRow) : Bool := 0 < u.name.length && u.name.length ≤ 64
 ```
 ```text
-error: examples/teams-demo/TeamsDemo/Api.lean:80:45: Application type mismatch: The argument
+error: examples/teams-demo/TeamsDemo/Api.lean:80:56: Application type mismatch: The argument
   trivial
 has type
   True
 but is expected to have type
-  Invariant UserRow row
+  match Entity.invariant with
+  | none => True
+  | some (fst, p) => p row = true
+in the application
+  ⟨rfl, trivial⟩
 ```
 
-LeanDB stores a row only with evidence that it satisfies the table's rule, and sign-up was passing `trivial`, which is no evidence now. The fix makes the request carry a `DisplayName`, a string with its bound, so an 80-character name is a `422` naming `body.name` when the request is decoded. The row is then `Checked` by proof (`UserRow.checked`). There's no `if` in the handler to forget, and no second copy of "64" to drift.
+LeanDB stores a row only with evidence that it satisfies the table's rule, and sign-up was passing `⟨rfl, trivial⟩` (its references are in range, and there was no rule), which is no evidence now. The fix makes the request carry a `DisplayName`, a string with its bound, so an 80-character name is a `422` naming `body.name` when the request is decoded. The row is then `Checked` by proof (`UserRow.checked`). There's no `if` in the handler to forget, and no second copy of "64" to drift.
 
 ## 3. "Emails are stored normalized"
 

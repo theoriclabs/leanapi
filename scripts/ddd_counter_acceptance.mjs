@@ -3,7 +3,7 @@
 // and applied with it (v2), the {"ok"}/{"error"} bodies, a 400 for an undecodable body, POST
 // without Origin, presented credentials ignored, no account tables, restart persistence, and a
 // `represent`ed field whose corrupt stored value is the framework error `storage.corrupt` (500).
-// Usage: node scripts/ddd_counter_acceptance.mjs COMMON_WORKSPACE
+// Usage: node scripts/ddd_counter_acceptance.mjs [WORKSPACE]  (default: this repository)
 import assert from 'node:assert/strict';
 import {spawn, spawnSync} from 'node:child_process';
 import {createServer} from 'node:net';
@@ -12,8 +12,8 @@ import {existsSync} from 'node:fs';
 import {resolve, join} from 'node:path';
 import {randomBytes} from 'node:crypto';
 
-const workspace = resolve(process.argv[2] ?? '.lake/ddd-common');
-const bin = join(workspace, '.lake/build/bin/domain_counter_app');
+const workspace = resolve(process.argv[2] ?? '.');
+const bin = join(workspace, '.lake/build/bin/leanapi_counter_app');
 const run = resolve('.lake/ddd-counter-acceptance', randomBytes(8).toString('hex'));
 await mkdir(run, {recursive: true});
 const database = join(run, 'counters.sqlite');

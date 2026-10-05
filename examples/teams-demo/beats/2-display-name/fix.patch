@@ -18,7 +18,7 @@ diff --git a/examples/teams-demo/TeamsDemo/Api.lean b/examples/teams-demo/TeamsD
 +/-- A user row built from a `DisplayName` satisfies the table's rule, by proof. -/
 +def UserRow.checked (email : String) (name : DisplayName) (team : TeamId) : Checked UserRow :=
 +  Checked.of { email, name := name.raw, team := tref team } (by
-+    show UserRow.invariant _ = true
++    refine ⟨rfl, ?_⟩; show UserRow.invariant _ = true
 +    simp [UserRow.invariant, name.ok.1, name.ok.2])
 +
  structure SignupBody where
@@ -33,7 +33,7 @@ diff --git a/examples/teams-demo/TeamsDemo/Api.lean b/examples/teams-demo/TeamsD
  def signup (body : Body SignupBody) (token : FreshToken) :
      Tx TeamsDb ApiError (Created SignupView) := do
 -  let row : UserRow := { email := body.val.email, name := body.val.name, team := tref body.val.team }
--  match ← Txn.insert UserRow (Checked.of row trivial) with
+-  match ← Txn.insert UserRow (Checked.of row ⟨rfl, trivial⟩) with
 +  match ← Txn.insert UserRow (UserRow.checked body.val.email body.val.name body.val.team) with
    | .error (.duplicate .byEmail _) => Txn.throw .emailTaken
    | .error (.missingRef _) => Txn.throw .unknownTeam

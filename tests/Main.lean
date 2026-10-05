@@ -1,20 +1,20 @@
-import Tests.Http
-import Tests.Middleware
-import Tests.Notes
-import Tests.Auth
-import Tests.Games
-import Tests.Differential
-import Tests.Tier2
-import Tests.Props
-import Tests.PropsCommands
-import Tests.Registry
-import Tests.Endpoint
-import Tests.TransactionClock
-import Tests.DbEndpoint
-import Tests.Idempotency
-import Tests.Helpdesk
-import Tests.Billing
-import Tests.Scheduling
+import LeanApiTests.Http
+import LeanApiTests.Middleware
+import LeanApiTests.Notes
+import LeanApiTests.Auth
+import LeanApiTests.Games
+import LeanApiTests.Differential
+import LeanApiTests.Tier2
+import LeanApiTests.Props
+import LeanApiTests.PropsCommands
+import LeanApiTests.Registry
+import LeanApiTests.Endpoint
+import LeanApiTests.TransactionClock
+import LeanApiTests.DbEndpoint
+import LeanApiTests.Idempotency
+import LeanApiTests.Helpdesk
+import LeanApiTests.Billing
+import LeanApiTests.Scheduling
 
 open LeanApi.Test
 

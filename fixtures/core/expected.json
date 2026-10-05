@@ -1,0 +1,22 @@
+{
+  "GetRequiresReadOp": "requires a read-only operation, but `rsvp` returns `Op`",
+  "PathMismatch": "path parameter `:partyId` in \"/parties/:partyId/rsvp\" has no matching argument of `rsvp` (arguments: me, party)",
+  "NowFromRequest": "the argument `now` type Now has no wire codec",
+  "ForgedNow": "is marked as private",
+  "ReadOpWrites": "but is expected to have type",
+  "RowPublished": "the output type Row Party has no wire codec",
+  "ExportGuests": "CanSeeGuests p.guestList viewer.role = true",
+  "ActorWire": "failed to synthesize",
+  "ForgedActor": "Unknown constant `SignedIn.mk`",
+  "RequireUndecidable": "require: failed to find a Decidable instance for\n  ∀ (n : Nat), n + 0 = n",
+  "MissingOnePerGuest": "Missing cases",
+  "KdfNotArgument": "cannot publish `hashFixed`",
+  "RejectFieldValue": "ype mismatch",
+  "RejectOperationError": "ype mismatch",
+  "RejectOperationInput": "ype mismatch",
+  "RejectOperationKind": "ype mismatch",
+  "RejectOperationOutput": "ype mismatch",
+  "RejectPath": "ype mismatch",
+  "RejectReference": "ype mismatch",
+  "ApiDuplicate": "listed twice"
+}

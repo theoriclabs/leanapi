@@ -1,9 +1,9 @@
 // The post's curl transcript, with real curl, in the {"ok"}/{"error"} envelope. Tokens are
-// shown as $ASHA/$BEN. By default it runs the post-shaped fixture (`domain_post_app serve`);
-// `--exe partiful` runs the staged `partiful_v2/` app itself. The server clock is pinned to
+// shown as $ASHA/$BEN. By default it runs the post-shaped fixture (`leanapi_native_checks post
+// serve`); `--exe leanapi_partiful_api` runs the post's own api (`partiful_v2/Domain.lean`). The server clock is pinned to
 // 2026-10-01T00:00:00Z (LEANAPP_CLOCK_FILE) so the post's party date stays in the future.
 // Writes RUN/transcript.txt and, with --save PATH, a copy at PATH.
-// Usage: node scripts/ddd_post_transcript.mjs COMMON_WORKSPACE [--exe NAME] [--save PATH]
+// Usage: node scripts/ddd_post_transcript.mjs [WORKSPACE] [--exe NAME] [--save PATH]  (default: this repository)
 import assert from 'node:assert/strict';
 import {spawn, spawnSync} from 'node:child_process';
 import {createServer} from 'node:net';
@@ -11,10 +11,10 @@ import {mkdir, writeFile} from 'node:fs/promises';
 import {resolve, join} from 'node:path';
 import {randomBytes} from 'node:crypto';
 
-const workspace = resolve(process.argv[2] ?? '.lake/ddd-common');
+const workspace = resolve(process.argv[2] && !process.argv[2].startsWith('--') ? process.argv[2] : '.');
 const option = name => process.argv.indexOf(name) > 0 ? process.argv[process.argv.indexOf(name) + 1] : null;
 const save = option('--save') ? resolve(option('--save')) : null;
-const exe = option('--exe') ?? 'domain_post_app';
+const exe = option('--exe') ?? 'leanapi_native_checks';
 const run = resolve('.lake/ddd-post-transcript', randomBytes(8).toString('hex'));
 await mkdir(run, {recursive: true});
 const clock = join(run, 'clock');
@@ -25,7 +25,7 @@ const port = socket.address().port;
 await new Promise(done => socket.close(done));
 const origin = `http://127.0.0.1:${port}`;
 const {LEANAPP_BROWSER_DIR, ...inherited} = process.env;
-const server = spawn(join(workspace, '.lake/build/bin', exe), exe === 'domain_post_app' ? ['serve'] : [], {cwd: run,
+const server = spawn(join(workspace, '.lake/build/bin', exe), exe === 'leanapi_native_checks' ? ['post', 'serve'] : [], {cwd: run,
   env: {...inherited, LEANAPP_PORT: String(port), LEANAPP_DATABASE: join(run, 'post.sqlite'), LEANAPP_CLOCK_FILE: clock},
   stdio: ['ignore', 'pipe', 'pipe']});
 let log = '';
