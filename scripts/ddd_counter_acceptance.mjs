@@ -1,7 +1,8 @@
 // An app with no accounts (`app% counters where api := api`, tests/CounterApp.lean) over real
 // curl and SQLite: the first deployment (v1), the schema change refused without its migration
 // and applied with it (v2), the {"ok"}/{"error"} bodies, a 400 for an undecodable body, POST
-// without Origin, presented credentials ignored, no account tables, and restart persistence.
+// without Origin, presented credentials ignored, no account tables, restart persistence, and a
+// `represent`ed field whose corrupt stored value is the framework error `storage.corrupt` (500).
 // Usage: node scripts/ddd_counter_acceptance.mjs COMMON_WORKSPACE
 import assert from 'node:assert/strict';
 import {spawn, spawnSync} from 'node:child_process';
@@ -27,15 +28,15 @@ let checks = 0;
 const eq = (actual, expected, label) => {checks++; assert.deepEqual(actual, expected, label);};
 const check = (condition, label) => {checks++; assert.ok(condition, label);};
 const command = (...args) => spawnSync(bin, args, {cwd: run, env, encoding: 'utf8'});
-function sql(statement) {
+function sql(statement, file = database) {
   const result = spawnSync('python3', ['-c',
-    'import sqlite3,json,sys\nc=sqlite3.connect(sys.argv[1]); r=c.execute(sys.argv[2]).fetchall(); print(json.dumps(r))',
-    database, statement], {encoding: 'utf8'});
+    'import sqlite3,json,sys\nc=sqlite3.connect(sys.argv[1]); r=c.execute(sys.argv[2]).fetchall(); c.commit(); print(json.dumps(r))',
+    file, statement], {encoding: 'utf8'});
   if (result.status !== 0) throw new Error(`sqlite: ${result.stderr}`);
   return JSON.parse(result.stdout);
 }
-async function start(version) {
-  const server = spawn(bin, [version], {cwd: run, env, stdio: ['ignore', 'pipe', 'pipe']});
+async function start(version, overrides = {}) {
+  const server = spawn(bin, [version], {cwd: run, env: {...env, ...overrides}, stdio: ['ignore', 'pipe', 'pipe']});
   let out = '';
   server.stdout.on('data', bytes => {out += bytes;});
   server.stderr.on('data', bytes => {out += bytes;});
@@ -127,7 +128,41 @@ try {
   eq(sql('SELECT name FROM _leandb_applied_migrations'), [['addStep']], 'the migration is recorded once, by name');
   const current = command('v2', 'migrate', '--check');
   check(current.status === 0 && !current.stdout.startsWith('status: pending'), 'migrate --check: nothing to do');
-  console.log(`PASS: ${checks} no-accounts app checks (curl, SQLite, migration, restart); run ${run}`);
 } finally {
   await app.stop();
 }
+
+// 7. A represented field (`represent Slot as Nat × Nat … checked Slot.check`), and a stored
+// value that fails its check: a framework error with a stable code, and the server keeps serving.
+const bookings = join(run, 'reservations.sqlite');
+app = await start('reservations', {LEANAPP_DATABASE: bookings});
+const header = (...args) => spawnSync('curl', ['-s', '-o', '/dev/null', '-w', '%{http_code} %header{x-leanapp-error}', ...args],
+  {encoding: 'utf8'}).stdout;
+try {
+  reply(curl('-X', 'POST', url('/reservations'), '-d', '{"room":"Oak","slot":[9,10]}'), 200, {ok: 1}, 'reserve: a represented value in the body');
+  reply(curl('-X', 'POST', url('/reservations'), '-d', '{"room":"Elm","slot":[14,16]}'), 200, {ok: 2}, 'reserve another');
+  reply(curl(url('/reservations/1')), 200, {ok: {room: 'Oak', slot: [9, 10]}}, 'the stored value reads back');
+  eq(sql('SELECT room, slot FROM reservation ORDER BY id', bookings), [['Oak', '[9,10]'], ['Elm', '[14,16]']],
+    'one TEXT column of the codec\'s canonical JSON');
+  reply(curl('-X', 'POST', url('/reservations'), '-d', '{"room":"Ash","slot":[10,9]}'), 400, {error: 'badRequest'},
+    'a value the checker rejects is a 400 on input');
+  eq(header('-X', 'POST', url('/reservations'), '-d', '{"room":"Ash","slot":[10,9]}'), '400 request.decode', 'request.decode');
+  // A bad stored value, written straight into SQLite.
+  sql("UPDATE reservation SET slot = '[10,9]' WHERE id = 1", bookings);
+  const corrupt = curl(url('/reservations/1'));
+  eq(corrupt.status, 500, 'a stored value that fails its check: 500');
+  eq(corrupt.json, {error: 'internal'}, 'the framework envelope, with no table, column or reason');
+  check(!corrupt.body.includes('reservation') && !corrupt.body.includes('Slot'), 'no storage detail in the body');
+  eq(header(url('/reservations/1')), '500 storage.corrupt', 'the stable code storage.corrupt in x-leanapp-error');
+  eq(header('-X', 'POST', url('/reservations/1/cancel')), '500 storage.corrupt', 'a command reading it fails the same way');
+  eq(sql('SELECT count(*) FROM reservation WHERE id = 1', bookings), [[1]], 'and changes nothing');
+  sql("UPDATE reservation SET slot = 'not json' WHERE id = 2", bookings);
+  eq(header(url('/reservations/2')), '500 storage.corrupt', 'stored text that is not JSON: storage.corrupt');
+  reply(curl('-X', 'POST', url('/reservations'), '-d', '{"room":"Pine","slot":[1,2]}'), 200, {ok: 3}, 'the server keeps serving');
+  reply(curl(url('/reservations/3')), 200, {ok: {room: 'Pine', slot: [1, 2]}}, 'healthy rows still read');
+  reply(curl('-X', 'POST', url('/reservations/3/cancel')), 200, {ok: null}, 'and commands still run');
+  check(app.out().includes('leanapi.ready'), 'no crash: the same process answered throughout');
+} finally {
+  await app.stop();
+}
+console.log(`PASS: ${checks} no-accounts app checks (curl, SQLite, migration, restart, represented values); run ${run}`);

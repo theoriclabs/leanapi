@@ -42,7 +42,7 @@ private def candidate {s Profile} [IsSchema s] [LeanApp.Domain.Entity Profile]
   | .error .busy => return .error (Native.fault "storage.busy" 503)
   | .error .stopped => return .error (Native.fault "storage.unavailable")
   | .ok (.error _) => return .error (Native.fault "storage.unavailable")
-  | .ok (.ok (.error fault)) => return .error (Native.fault "storage.unavailable" (faultStatus fault))
+  | .ok (.ok (.error fault)) => return .error (Native.fault (if fault matches .corruption _ then "storage.corrupt" else "storage.unavailable") (faultStatus fault))
   | .ok (.ok (.ok result)) => return result.mapError (Contract.CallError.mapDomain Empty.elim)
 
 private def resolveRead {s Profile Actor Scope E} [IsSchema s] [LeanApp.Domain.Entity Profile]
@@ -150,7 +150,7 @@ def prepareAuthored {s Profile Actor I O E} [IsSchema s] [LeanApp.Domain.Entity 
       let found ← match ← context.dc.read (Read.runPrepared (do context.fresh) probe) with
         | .error .busy => return .error (Native.fault "storage.busy" 503)
         | .error .stopped | .ok (.error _) => return .error (Native.fault "storage.unavailable")
-        | .ok (.ok (.error fault)) => return .error (Native.fault "storage.unavailable" (faultStatus fault))
+        | .ok (.ok (.error fault)) => return .error (Native.fault (if fault matches .corruption _ then "storage.corrupt" else "storage.unavailable") (faultStatus fault))
         | .ok (.ok (.ok (.error error))) => return .error error
         | .ok (.ok (.ok (.ok probe))) => pure probe
       let (profile, stored) := match found with

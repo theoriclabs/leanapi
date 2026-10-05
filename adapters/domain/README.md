@@ -56,7 +56,9 @@ def main (args : List String) : IO UInt32 := Shop.main args { database := "shop.
   served, in `/api/manifest` and in the generated client.
 - Replies: `{"ok": v}`, `{"error": "ctor"}`, `{"error": "unauthorized"}` (framework failures
   carry their precise code in `x-leanapp-error`). Milestone 1 `operations := […]` apps keep
-  their Contract envelope.
+  their Contract envelope. A stored row or value that does not decode or fails its check
+  (a raw-SQL edit; a `represent`ed value its checker rejects) is a 500 with code
+  `storage.corrupt`; the table, column and reason stay in the server.
 - Sessions: browsers get an HttpOnly cookie plus CSRF; other clients send
   `Authorization: Bearer <token>`, obtained with `Accept: application/vnd.leanapp.token`.
 - Authored sign-up/sign-in: `Password.hash`, `Credential.verify` and `Auth.startSession` run

@@ -34,10 +34,18 @@ def frameworkReply (codecs : Contract.Http.Codecs) : CallError ε → Res
   | .transport _ => privateReply (Res.json (Contract.Http.protocolResponse "infrastructure.unavailable") 503)
   | .cancelled => privateReply (Res.json (Contract.Http.protocolResponse "request.cancelled") 409)
 
+/-- The stable public code of a database fault: `database.busy` (locking, retryable),
+`storage.corrupt` (a stored row or value that does not decode or fails its check, e.g. a
+raw-SQL edit), else `database.unavailable`. The fault's message (table, column, SQL) is
+never sent. -/
+def faultCode : DbFault → String
+  | .locking _ => "database.busy"
+  | .corruption _ => "storage.corrupt"
+  | _ => "database.unavailable"
+
 /-- Infrastructure detail never enters a public envelope. Locking remains retryable. -/
 def databaseReply (fault : DbFault) : Res :=
-  let res := privateReply (Res.json (Contract.Http.protocolResponse
-    (if faultStatus fault == 503 then "database.busy" else "database.unavailable")) (faultStatus fault))
+  let res := privateReply (Res.json (Contract.Http.protocolResponse (faultCode fault)) (faultStatus fault))
   if faultStatus fault == 503 then res.setHeader "retry-after" "1" else res
 
 /-- The framework class of a failure (decision 5), with its precise code for the
@@ -76,7 +84,7 @@ def failureReply (format : BodyFormat) (codecs : Contract.Http.Codecs) (error : 
 def databaseReplyAt (format : BodyFormat) (fault : DbFault) : Res :=
   match format with
   | .envelope => databaseReply fault
-  | .plain => envelopeFailure (.protocol ⟨if faultStatus fault == 503 then "database.busy" else "database.unavailable",
+  | .plain => envelopeFailure (.protocol ⟨faultCode fault,
       some (if faultStatus fault == 503 then 503 else 500), ""⟩ : CallError Empty)
 
 /-- Status policy and codecs are paired with their operation before erasure. -/
