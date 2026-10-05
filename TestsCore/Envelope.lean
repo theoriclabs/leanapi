@@ -77,8 +77,22 @@ def main : IO Unit := do
   match Envelope.decodeAny refs errors 422 (Envelope.domainError errors .notFound) with
   | .ok (.domain .notFound) => pure ()
   | _ => check "new domain notFound by status" false
+  -- Statuses read a payload-free error's decision-15 bare string as well as the tagged form.
+  let rsvpOp ← parsed (Contract.Operation.create .command ⟨"domain", "rsvp", "1"⟩ refs (Wire.codec (α := Unit)) errors)
+  let bare := (Envelope.domainError errors .notFound).getObjValD "error"
+  check "bare string payload" (bare == .str "notFound")
+  let byTag := Http.ErrorStatus.ofTags rsvpOp [("notFound", 404)]
+  check "ofTags bare string" ((byTag.decodeStatus bare).toOption == some 404)
+  check "ofTags tagged form" ((byTag.decodeStatus (errors.encode .notFound)).toOption == some 404)
+  check "ofTags declared, unlisted: 422" ((byTag.decodeStatus (.str "alreadyStarted")).toOption == some 422)
+  check "ofTags undeclared rejected" ((byTag.decodeStatus (.str "bogus")).toOption.isNone)
+  check "ofTags domainStatus" ((Http.domainStatus [byTag] rsvpOp.identity bare).toOption == some 404)
+  let byValue := Http.ErrorStatus.ofOperation rsvpOp (fun _ => 422)
+  check "ofOperation bare string" ((byValue.decodeStatus (.str "alreadyStarted")).toOption == some 422)
+  check "ofOperation tagged form" ((byValue.decodeStatus (errors.encode .alreadyStarted)).toOption == some 422)
+  check "ofOperation undeclared rejected" ((byValue.decodeStatus (.str "bogus")).toOption.isNone)
   -- The default Contract.Http envelope is unchanged ("tag"/"value").
   check "default envelope untouched" ((Http.successResponse codecs ⟨"a", "b", "1"⟩ .null).getObjValD "tag" == Lean.Json.str "success")
-  IO.println "PASS decision-5 envelope: ok / domain / payload / framework, strict decoding, default unchanged"
+  IO.println "PASS decision-5 envelope: ok / domain / payload / framework, strict decoding, bare-string statuses, default unchanged"
 
 end EnvelopeChecks

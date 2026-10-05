@@ -67,19 +67,50 @@ structure ErrorStatus where
   identity : OperationId
   decodeStatus : Lean.Json → Validation Nat
 
+/-- A domain error's variant tag in either form: the decision-15 bare string of a payload-free
+constructor (`"notFound"`) or a tagged object (`{"tag": "conflict", …}`). -/
+def errorTag (value : Lean.Json) : Validation String :=
+  match value with
+  | .str tag => pure tag
+  | _ => JsonWire.stringField "tag" value
+
+/-- The constructor names of a variant error schema (`none` for any other shape). -/
+def declaredErrorTags : WireSchema → Option (List String)
+  | .named _ _ body => declaredErrorTags body
+  | .variant cases => some (cases.map (·.1))
+  | _ => none
+
+/-- Decode with the error codec. A bare string that the codec rejects is read as the
+payload-free constructor it names (decision 15), so either wire form gets its status. -/
 def ErrorStatus.ofOperation (operation : Operation kind Input Output Error)
     (status : Error → Nat) : ErrorStatus :=
-  ⟨operation.identity, fun value => status <$> operation.errorCodec.decode value⟩
+  ⟨operation.identity, fun value =>
+    match operation.errorCodec.decode value, value with
+    | .ok error, _ => pure (status error)
+    | .error errors, .str tag =>
+      match operation.errorCodec.decode (JsonWire.tagged tag .null) with
+      | .ok error => pure (status error)
+      | .error _ => .error errors
+    | .error errors, _ => .error errors⟩
 
-/-- A status decided by the variant tag alone. Generated clients mirror this table exactly;
-the payload is still checked by the error codec before an application sees it. -/
+private def unknownDomainError (tag : String) : Validation Nat :=
+  Validation.fail "response.unknown_domain_error" [.key "tag"] [("actual", tag)]
+
+/-- A status decided by the variant tag alone, read from a bare string or a tagged object.
+A declared constructor missing from `table` gets `otherwise` (422, the status `describeAt`
+gives every domain error); a tag the error schema does not declare fails. Generated clients
+mirror the resulting table exactly; the payload is still checked by the error codec before an
+application sees it. -/
 def ErrorStatus.ofTags (operation : Operation kind Input Output Error)
-    (table : List (String × Nat)) : ErrorStatus :=
+    (table : List (String × Nat)) (otherwise : Nat := 422) : ErrorStatus :=
   ⟨operation.identity, fun value => do
-    let tag ← JsonWire.stringField "tag" value
+    let tag ← errorTag value
     match table.lookup tag with
     | some status => pure status
-    | none => Validation.fail "response.unknown_domain_error" [.key "tag"] [("actual", tag)]⟩
+    | none =>
+      match declaredErrorTags operation.errorCodec.schema with
+      | some tags => if tags.contains tag then pure otherwise else unknownDomainError tag
+      | none => unknownDomainError tag⟩
 
 def domainStatus (policies : List ErrorStatus) (identity : OperationId)
     (value : Lean.Json) : Validation Nat := do

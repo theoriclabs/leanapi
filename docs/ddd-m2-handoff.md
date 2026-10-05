@@ -1,12 +1,88 @@
 # LeanAPI milestone 2 handoff (wave 1)
 
-Updated 2026-10-05 (M3 `LeanApi.Core`; waves 1 to 3, the final wave's phases A and B, apps with no accounts, the live peers; newest first). Scope: DDD-LAPI-06 bearer transport, the native half of DDD-LAPI-05
+Updated 2026-10-05 (fixes before M3 phase 5; M3 `LeanApi.Core`; waves 1 to 3, the final wave's phases A and B, apps with no accounts, the live peers; newest first). Scope: DDD-LAPI-06 bearer transport, the native half of DDD-LAPI-05
 (explicit route list), the LeanAPI side of DDD-LAPI-07 (`lake exe`, no Python, no
 environment variables), and the KDF-hoisting design note (decision 4). Built and tested
 against the frozen peers in `domain_driven_development/runs/partiful-m2/frozen/{LeanDB,leanreact}`.
 All changes are uncommitted and confined to this repository. `Review_harsh_2026-09-23.md`
 is untouched (SHA-256 `e6508dbd71b41ae382a40e4fda7e666ec5cddd0b22559870e9531f84079a00f6`
 before and after).
+
+## Before M3 phase 5 (2026-10-05): fixture namespace, bare-string statuses, `Service.mjs`
+
+Three issues LeanReact's phase 4 (`423912e`) found in LeanAPI. LeanReact was only read.
+
+### 1. The staged post api no longer claims `Partiful.*`
+
+- **Cause.** A Lake library claims every module under its roots and globs, in every workspace
+  that requires the package, not only in its own. LeanAPI's `lean_lib Partiful` (the staged
+  `partiful_v2/Domain.lean`) therefore provided `Partiful.Domain` to the app repository too,
+  which requires leanreact and so leanapi, and its own `Partiful` library provides the same
+  module: Lake stopped with "could not disambiguate the module".
+- **Fix.** The library is `LeanApiPartifulFixture` (glob `LeanApiPartifulFixture.+`, source
+  `.lake/leanapi-partiful-fixture`). `scripts/stage_partiful_api.py` stages
+  `LeanApiPartifulFixture/Domain.lean` (the post's file, imports changed, nothing else) and
+  `LeanApiPartifulFixture/Server.lean` (its `app%` and `main`, the root of
+  `leanapi_partiful_api`, whose name is unchanged). The old staged sources stay in
+  `.lake/partiful-api` (unused, nothing claims them; the `.lake` guard keeps them). Their build
+  output was moved, not deleted, to `.lake/ddd-m3/leanapi-stale-partiful-build/`: `lake env`
+  puts every package's build directory on `LEAN_PATH`, and a stale `Partiful/Domain.olean`
+  there could still be found by a workspace that has not built its own yet. It can be removed.
+- **The other libraries, checked.** What each claims, in any workspace that requires leanapi:
+  - `LeanApi`, `LeanApiCore`, `LeanContract`, `LeanApiTests`, `LeanApiPartifulFixture`: LeanAPI's
+    own prefixes.
+  - `TestsCore.*`, `TestsNative.*`: test-scoped, but not LeanAPI-prefixed. Not renamed now:
+    LeanReact's domain tests import `TestsCore.PostPart1` (`leanreact/tests/domain/PostViews.lean`
+    and nine negative fixtures), and LeanReact is not edited here. A rename to
+    `LeanApiTestsCore`/`LeanApiTestsNative` should land together with those imports.
+  - The example apps `Notes.*`, `PrivateGames.*`, `PolicyView.*`, `Helpdesk.*`, `Billing.*`,
+    `Scheduling.*` and `TeamsDemo.*`: these are app-shaped namespaces and have the same problem
+    for an app of that name. No current workspace collides (LeanReact's libraries are
+    `LeanReact*`, `LeanJS`, `Examples`, `Ordering`, `Cafe`, `PrivateNotes`, `NativeTickets`,
+    `LeanAppNative`; the app repository's are `Partiful`, `PartifulApp`, `TicTacToe`). Not
+    renamed here: the module paths appear in the teams demo's eight beat patches, its README
+    and the example READMEs, and 50+ test imports. Options for later: a `LeanApiExamples.`
+    prefix, or moving the examples into their own Lake package that requires leanapi, so that
+    no workspace requiring leanapi sees them at all.
+  - Executable roots (`Main`, `Hello`, `Items`, `Users`, `*Main`) are not claimed: Lake
+    resolves imports through libraries only.
+
+### 2. `ErrorStatus.ofTags` reads bare strings (`LeanContract/Http.lean`)
+
+- **Cause.** Since decision 15 a payload-free domain error is the bare string `"notFound"` on
+  the wire, and `ofTags` read only the tagged form (`{"tag": …}`), so such an error had no
+  status (`response.unknown_domain_error`, a 500 to the caller).
+- **Fix.** `Contract.Http.errorTag` reads the tag from either form, and `ofTags` uses it. A
+  constructor the error schema declares but `table` does not list now gets `otherwise`, 422 by
+  default, the status `describeAt` gives every domain error; a tag the schema does not declare
+  still fails. `ErrorStatus.ofOperation` reads a bare string the codec rejects as the
+  payload-free constructor it names, so both policies accept both forms. The generated client
+  is unchanged (its `statusByTag` sees the decoded, tagged error).
+- **Test.** `TestsCore/Envelope.lean` (run by `leanapi_core_tests`): the bare string taken
+  from `Envelope.domainError` maps to 404 through `ofTags` and `domainStatus`, the tagged form
+  to 404, an unlisted declared constructor to 422, an undeclared tag fails; `ofOperation`
+  likewise.
+- **For LeanReact to drop.** `leanreact/examples/lean/Examples/Tickets/Contracts.lean` defines
+  `statusByTag` (lines 112 to 124), a copy of `ofTags` that also reads the bare string, and
+  `PublicOperations.errorStatuses` uses it. It can return to
+  `Contract.Http.ErrorStatus.ofTags ops.save [("notFound", 404), ("conflict", 409)]`.
+
+### 3. `LeanContract/Service.mjs` is deleted
+
+It imported `../runtime/actions.mjs` and `../adapters/leanjs-react.mjs`, which exist only in
+LeanReact, so it could not load from leanapi. Its working copy is LeanReact's
+`engine/adapters/contract-service.mjs`. `LeanContract/Fetch.mjs` and `Codecs.mjs` stay: they
+are the generated client's runtime.
+
+### Gates
+
+`scripts/ddd_check.sh .lake/ddd-m3/leanapi-p4-gate.summary` (with a watchdog that would stop it
+under 500 MB free; 726 MB at the start), every step exit 0: leanapi_tests 580/0, core tests
+(including the new status checks), 28 rejections and the portable closure, native contract,
+prepared, KDF, read, command, routes 51/0, post 37/0; counter 56, library 26, migration 35,
+curl 24, partiful_v2 API 197 (built from `LeanApiPartifulFixture`); both transcripts, both
+generated clients, diff check; 0 LeanReact/LeanJS/LeanApp imports, 0 generality hits.
+`Review_harsh_2026-09-23.md` unchanged (SHA-256 as above).
 
 ## M3: LeanApi.Core (2026-10-05)
 
@@ -31,7 +107,8 @@ LeanAPI owns operations and endpoints and depends on no LeanReact (plan:
   - `LeanApi` has the roots `LeanApi`, `LeanApi.Core` and `LeanApi.Native`.
   - `TestsCore` with `leanapi_core_tests`, and `TestsNative` with `leanapi_native_checks`,
     `leanapi_apps` and `leanapi_counter_app`.
-  - `Partiful` and `leanapi_partiful_api` are the staged post api.
+  - `LeanApiPartifulFixture` (named `Partiful` until the fixes before phase 5, below) and
+    `leanapi_partiful_api` are the staged post api.
   - `LeanApiTests` and `leanapi_tests`.
 - **Decision: rename `Tests.*` to `LeanApiTests.*`.** A `Tests` library in a dependency
   (leanontology, LeanDB) claims every `Tests.*` module, so `import Tests.X` resolved to
