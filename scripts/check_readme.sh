@@ -4,7 +4,7 @@
 # Blocks that start with `-- sketch` are skipped (illustrative only).
 set -euo pipefail
 cd "$(dirname "$0")/.."
-dir=$(mktemp -d -t readme)
+dir=$(mktemp -d "${TMPDIR:-/tmp}/readme.XXXXXX")
 awk -v dir="$dir" '
   /^```lean[[:space:]]*$/ { n++; f = sprintf("%s/snippet%02d.lean", dir, n); inb = 1; next }
   /^```/ && inb { inb = 0; close(f); next }

@@ -27,7 +27,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -f "$post" ] || { echo "no such post: $post" >&2; exit 2; }
-work=$(mktemp -d -t blogcheck)
+work=$(mktemp -d "${TMPDIR:-/tmp}/blogcheck.XXXXXX")
 python3 - "$post" "$work" <<'PY'
 import json, re, sys
 post, work = sys.argv[1:3]
