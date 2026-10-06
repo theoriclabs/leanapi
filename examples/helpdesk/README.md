@@ -56,7 +56,7 @@ curl -sS -H 'Authorization: Bearer gwen' http://127.0.0.1:8080/tickets/1
 or missing: the same body). `forbidden` is 403; a closed ticket is 409.
 
 A `GET` whose handler is a `Tx` does not compile (`#guard_msgs` in
-`tests/Tests/Helpdesk.lean`).
+`tests/LeanApiTests/Helpdesk.lean`).
 
 ## Layout
 
@@ -126,7 +126,7 @@ instants bounded below 2^63.
 
 **Enforced by the types:** unscoped `Read` cannot enter `ReadAs`; `OrgRow`
 has no `Policy`; `Actor.mk` and `TxAs.mk` are private; a GET cannot return
-`Tx` (`#guard_msgs` in `Policies.lean` and `tests/Tests/Helpdesk.lean`).
+`Tx` (`#guard_msgs` in `Policies.lean` and `tests/LeanApiTests/Helpdesk.lean`).
 `Checked` message rows come from domain proofs.
 
 **Tested** (`Tests.HelpdeskHttp.run`): tenant isolation (including existence

@@ -9,13 +9,13 @@
 #   ./scripts/gen_evidence.sh --check  fail if EVIDENCE.md is out of date (CI)
 set -euo pipefail
 cd "$(dirname "$0")/.."
-tmp=$(mktemp -t evidence).lean
+tmp=$(mktemp "${TMPDIR:-/tmp}/evidence.XXXXXX").lean
 printf 'import PrivateGames.Evidence\n#evidence_tables\n' > "$tmp"
 raw=$(lake env lean "$tmp" 2>&1) || { echo "$raw"; exit 1; }
-gen=$(mktemp -t evidence_gen)
+gen=$(mktemp "${TMPDIR:-/tmp}/evidence_gen.XXXXXX")
 # Strip the "<file>:<line>:<col>: info: " prefix from the first line.
 echo "$raw" | sed -E '1s/^[^ ]*: info: //' > "$gen"
-out=$(mktemp -t evidence_out)
+out=$(mktemp "${TMPDIR:-/tmp}/evidence_out.XXXXXX")
 python3 - "$gen" EVIDENCE.md "$out" <<'PY'
 import re, sys
 gen, src, dst = sys.argv[1:4]

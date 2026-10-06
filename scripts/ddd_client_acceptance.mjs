@@ -1,7 +1,7 @@
 // The generated client for an app served with explicit routes: path templates, GET, plain
 // bodies and the {"ok"}/{"error"} envelope, against the real server.
-// Usage: node scripts/ddd_client_acceptance.mjs COMMON_WORKSPACE LEANREACT [EXE MODE]
-// EXE is domain_post_app (mode `serve`) or domain_library_app (mode `v2`).
+// The client's runtime is this repository's `LeanContract/Fetch.mjs` and `Codecs.mjs`.
+// Usage: node scripts/ddd_client_acceptance.mjs [post | library]
 import assert from 'node:assert/strict';
 import {spawn, spawnSync} from 'node:child_process';
 import {createServer} from 'node:net';
@@ -10,9 +10,10 @@ import {resolve, join} from 'node:path';
 import {randomBytes} from 'node:crypto';
 import {pathToFileURL} from 'node:url';
 
-const workspace = resolve(process.argv[2] ?? '.lake/ddd-common');
-const peer = resolve(process.argv[3]);
-const exeName = process.argv[4] ?? 'domain_post_app', mode = process.argv[5] ?? 'serve';
+const workspace = resolve(new URL('..', import.meta.url).pathname);
+const which = process.argv[2] ?? 'post';
+const library = which === 'library';
+const [exeName, appArgs] = library ? ['leanapi_apps', ['library', 'v2']] : ['leanapi_native_checks', ['post', 'serve']];
 const exe = join(workspace, '.lake/build/bin', exeName);
 const run = resolve('.lake/ddd-client-acceptance', randomBytes(8).toString('hex'));
 const out = join(run, 'client');
@@ -22,9 +23,9 @@ const eq = (actual, expected, label) => {checks++; assert.deepEqual(actual, expe
 const check = (condition, label) => {checks++; assert.ok(condition, label);};
 
 // 1. Emit the client (the app executable in emit mode) and stage its runtime.
-const emitted = spawnSync(exe, [mode], {cwd: run, env: {...process.env, LEANAPP_EMIT_CLIENT: out}, encoding: 'utf8'});
+const emitted = spawnSync(exe, appArgs, {cwd: run, env: {...process.env, LEANAPP_EMIT_CLIENT: out}, encoding: 'utf8'});
 eq(emitted.status, 0, `client emitted: ${emitted.stderr}`);
-for (const name of ['Fetch.mjs', 'Codecs.mjs']) await copyFile(join(peer, 'engine/LeanContract', name), join(out, 'runtime', name));
+for (const name of ['Fetch.mjs', 'Codecs.mjs']) await copyFile(join(workspace, 'LeanContract', name), join(out, 'runtime', name));
 
 // 2. Serve the same app.
 const socket = createServer();
@@ -32,7 +33,7 @@ await new Promise(done => socket.listen(0, '127.0.0.1', done));
 const port = socket.address().port;
 await new Promise(done => socket.close(done));
 const origin = `http://127.0.0.1:${port}`;
-const server = spawn(exe, [mode], {cwd: run, env: {...process.env, LEANAPP_PORT: String(port),
+const server = spawn(exe, appArgs, {cwd: run, env: {...process.env, LEANAPP_PORT: String(port),
   LEANAPP_DATABASE: join(run, 'app.sqlite')}, stdio: ['ignore', 'pipe', 'pipe']});
 let log = '';
 server.stdout.on('data', bytes => {log += bytes;});
@@ -47,7 +48,7 @@ try {
   eq(generated.canonical(served), generated.canonical(generated.manifest), 'the embedded manifest is the served manifest');
   eq(JSON.parse(await readFile(join(out, 'manifest.json'), 'utf8')), served, 'manifest.json is the served manifest');
   const routes = Object.fromEntries(Object.entries(generated.operations).map(([key, op]) => [key, `${op.method} ${op.path}`]));
-  const signUpPath = exeName === 'domain_library_app' ? '/join' : '/sign-up';
+  const signUpPath = library ? '/join' : '/sign-up';
   // Sessions for a non-browser test client: token-mode sign-up (raw fetch), then bearer.
   const token = async (name, email) => (await (await fetch(`${origin}${signUpPath}`, {method: 'POST',
     headers: {accept: 'application/vnd.leanapp.token'}, body: JSON.stringify({name, email,
@@ -56,7 +57,7 @@ try {
     fetch: (url, init = {}) => fetch(url, {...init, headers: {...(init.headers ?? {}), authorization: `Bearer ${bearer}`}})});
   const ops = generated.operations;
   const anonymous = generated.createClient({baseURL: origin});
-  if (exeName === 'domain_library_app') {
+  if (library) {
     check(routes.bookPage === 'GET /books/:book' && routes.borrow === 'POST /books/:book/loans', 'templates and GET reach the client');
     const ada = await token('Ada', 'ada@example.com'), bea = await token('Bea', 'bea@example.com');
     spawnSync('python3', ['-c', 'import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute("UPDATE member SET librarian=1 WHERE id=1"); c.commit()',

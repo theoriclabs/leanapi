@@ -3,3 +3,5 @@
 *.sqlite-wal
 *.sqlite-shm
 .lake/test-db/
+__pycache__/
+*.pyc

@@ -1,5 +1,5 @@
 // LeanDB's migration gate at app startup, on a real old SQLite database.
-// Usage: node scripts/ddd_migration_acceptance.mjs [COMMON_WORKSPACE]
+// Usage: node scripts/ddd_migration_acceptance.mjs [WORKSPACE]  (default: this repository)
 import assert from 'node:assert/strict';
 import {spawn, spawnSync} from 'node:child_process';
 import {createServer} from 'node:net';
@@ -8,8 +8,8 @@ import {existsSync} from 'node:fs';
 import {resolve, join} from 'node:path';
 import {randomBytes} from 'node:crypto';
 
-const workspace = resolve(process.argv[2] ?? '.lake/ddd-common');
-const bin = join(workspace, '.lake/build/bin/domain_migration_checks');
+const workspace = resolve(process.argv[2] ?? '.');
+const bin = join(workspace, '.lake/build/bin/leanapi_apps');
 const run = resolve('.lake/ddd-migration-acceptance', randomBytes(8).toString('hex'));
 await mkdir(run, {recursive: true});
 const database = join(run, 'evolving.sqlite');
@@ -23,7 +23,7 @@ let checks = 0;
 const eq = (actual, expected, label) => {checks++; assert.deepEqual(actual, expected, label);};
 const check = (condition, label) => {checks++; assert.ok(condition, label);};
 
-const command = (...args) => spawnSync(bin, args, {cwd: run, env, encoding: 'utf8'});
+const command = (...args) => spawnSync(bin, ['evolving', ...args], {cwd: run, env, encoding: 'utf8'});
 function sql(statement, parameters = []) {
   const result = spawnSync('python3', ['-c',
     'import sqlite3,json,sys\nc=sqlite3.connect(sys.argv[1]); q=json.loads(sys.argv[2]); print(json.dumps(c.execute(q[0],q[1]).fetchall()))',
@@ -35,7 +35,7 @@ const columns = table => sql(`PRAGMA table_info("${table}")`).map(row => row[1])
 
 // Start a version; resolve when it is ready, or with its exit code if it stops first.
 async function start(version) {
-  const server = spawn(bin, [version], {cwd: run, env, stdio: ['ignore', 'pipe', 'pipe']});
+  const server = spawn(bin, ['evolving', version], {cwd: run, env, stdio: ['ignore', 'pipe', 'pipe']});
   let out = '', err = '';
   server.stdout.on('data', bytes => {out += bytes;});
   server.stderr.on('data', bytes => {err += bytes;});

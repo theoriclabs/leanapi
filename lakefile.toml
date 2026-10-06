@@ -8,20 +8,91 @@ name = "leancrypto"
 git = "https://github.com/theoriclabs/leancrypto"
 rev = "v0.1.0"
 
-# Toolchain pinned to nightly-2026-09-26 (see lean-toolchain) for lean4#15174,
-# which stops `Std.Http` from parking a thread on every socket read. LeanDB and
-# leancrypto build on it unchanged. Move to v4.36.0 when it ships.
+# Toolchain: leanprover/lean4:v4.33.0, the toolchain of LeanDB, leanontology and
+# LeanReact. The packages build together, so the whole stack must use one
+# toolchain. (The nightly-2026-09-26 pin for lean4#15174, which stops `Std.Http`
+# from parking a thread on every socket read, returns with v4.36.0 for every repo.)
 
-# Persistence (M4). Pinned by commit at LeanDB M15-pre (`ldb-m15-state`:
-# a lawful DbState, reads that carry validity evidence); move to the tag
-# once LeanDB releases M15.
+# Persistence and the portable data model (`LeanDb.Model`, `LeanDb.Native`).
 [[require]]
 name = "leandb"
 git = "https://github.com/theoriclabs/LeanDB"
-rev = "79cfbcca1662c559f78743903c6bb9ad6098571b"
+rev = "d5253e5b0d83fc528927f340d1e50baab3e94999"
+
+# Wire codecs and checked value types (`Ontology`). The same revision LeanDB pins.
+[[require]]
+name = "leanontology"
+git = "https://github.com/theoriclabs/leanontology"
+rev = "322a4c12631dd8ece6ae9841a5e6b630d08d1e3b"
 
 [[lean_lib]]
 name = "LeanApi"
+roots = ["LeanApi", "LeanApi.Core", "LeanApi.Native"]
+
+# The portable contract layer (no sockets, SQLite or native code; LeanJS-compilable):
+# operation contracts and codecs, transports, the HTTP envelope, call failures, channels,
+# and browser client generation (`LeanContract.Generate`, with its JS runtime next to it).
+[[lean_lib]]
+name = "LeanContract"
+globs = ["LeanContract", "LeanContract.+"]
+
+# `LeanApi.Core`, the portable operation layer: `Op`/`ReadOp`, `require`, `Clock`, auth,
+# `derive_operation`, `Api`/`post`/`get`, the in-memory runner, and the application
+# assembly it publishes into (`LeanApi.Publication`). Its import closure is this library,
+# `LeanContract`, `LeanDb.Model`, `LeanOntology` and Lean (`scripts/CoreClosure.lean`).
+[[lean_lib]]
+name = "LeanApiCore"
+roots = ["LeanApi.Core"]
+
+# `LeanApi.Core` tests, checked when the modules compile (`#guard`, `#guard_msgs`) and run in
+# memory by `leanapi_core_tests`: the post's operations and endpoints, loans, auth, the
+# envelope and the contracts.
+[[lean_lib]]
+name = "TestsCore"
+globs = ["TestsCore.+"]
+
+[[lean_exe]]
+name = "leanapi_core_tests"
+root = "TestsCore"
+
+# Native fixtures and checks (`TestsNative/`): apps served over HTTP and SQLite by the
+# acceptance scripts under `scripts/`, and in-process checks of the native layer.
+[[lean_lib]]
+name = "TestsNative"
+globs = ["TestsNative.+"]
+
+# The native layer's in-process checks (contract, prepared, KDF gate, native reads and
+# commands, routes and sessions, the post's api); `routes --serve` and `post serve` serve apps.
+[[lean_exe]]
+name = "leanapi_native_checks"
+root = "TestsNative.Checks"
+
+# Fixture apps served by the acceptance scripts: the library (generality), the migration gate,
+# and the post's app before `guestList`.
+[[lean_exe]]
+name = "leanapi_apps"
+root = "TestsNative.Apps"
+
+# An app with no accounts at the root namespace (public counters) and a represented field
+# (reservations). Root-level entities, so its own executable.
+[[lean_exe]]
+name = "leanapi_counter_app"
+root = "TestsNative.CounterApp"
+
+# The Part 1 post's api without pages (`Partiful/Domain.lean`, staged unchanged as
+# `LeanApiPartifulFixture.Domain` by `scripts/stage_partiful_api.py`). Root-level entities, so its own
+# executable. A library claims every module under its name, also in workspaces that require
+# leanapi, so a test fixture never takes an app's namespace (an app's `Partiful.*` would
+# otherwise have two providers): it is `LeanApiPartifulFixture.*`.
+[[lean_lib]]
+name = "LeanApiPartifulFixture"
+srcDir = ".lake/leanapi-partiful-fixture"
+globs = ["LeanApiPartifulFixture.+"]
+
+[[lean_exe]]
+name = "leanapi_partiful_api"
+srcDir = ".lake/leanapi-partiful-fixture"
+root = "LeanApiPartifulFixture.Server"
 
 [[lean_lib]]
 name = "Notes"
@@ -43,10 +114,12 @@ name = "games"
 srcDir = "examples/private-games"
 root = "GamesMain"
 
+# The core HTTP/runtime test modules. Named `LeanApiTests.*`, not `Tests.*`: a `Tests` library
+# in a dependency (leanontology, LeanDB) would claim every `Tests.*` module.
 [[lean_lib]]
-name = "Tests"
+name = "LeanApiTests"
 srcDir = "tests"
-globs = ["Tests.+"]
+globs = ["LeanApiTests.+"]
 
 [[lean_exe]]
 name = "leanapi_tests"

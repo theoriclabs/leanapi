@@ -1,8 +1,7 @@
 // Generality fixture: the library-loans app over real curl and SQLite. The first deployment
 // (v1), a schema change refused without its migration, then applied at startup (v2), a
-// curl transcript of the current app in the {"ok"}/{"error"} envelope, and the current app's
-// LeanReact `App` (served by `app% … where app := Library.Web.app`) in Chromium.
-// Usage: node scripts/ddd_library_acceptance.mjs COMMON_WORKSPACE [--save PATH] [--node-modules PATH]
+// curl transcript of the current app in the {"ok"}/{"error"} envelope. (Its pages are LeanReact's.)
+// Usage: node scripts/ddd_library_acceptance.mjs [WORKSPACE] [--save PATH]  (default: this repository)
 import assert from 'node:assert/strict';
 import {spawn, spawnSync} from 'node:child_process';
 import {createServer} from 'node:net';
@@ -10,13 +9,11 @@ import {mkdir, writeFile} from 'node:fs/promises';
 import {existsSync} from 'node:fs';
 import {resolve, join} from 'node:path';
 import {randomBytes} from 'node:crypto';
-import {pathToFileURL} from 'node:url';
 
-const workspace = resolve(process.argv[2] ?? '.lake/ddd-common');
+const workspace = resolve(process.argv[2] && !process.argv[2].startsWith('--') ? process.argv[2] : '.');
 const option = name => process.argv.indexOf(name) > 0 ? resolve(process.argv[process.argv.indexOf(name) + 1]) : null;
 const save = option('--save');
-const nodeModules = option('--node-modules') ?? '/Users/harshwork/code/leanreact/node_modules';
-const bin = join(workspace, '.lake/build/bin/domain_library_app');
+const bin = join(workspace, '.lake/build/bin/leanapi_apps');
 const run = resolve('.lake/ddd-library-acceptance', randomBytes(8).toString('hex'));
 await mkdir(run, {recursive: true});
 const database = join(run, 'library.sqlite');
@@ -31,7 +28,7 @@ const env = {...inherited, LEANAPP_DATABASE: database, LEANAPP_PORT: String(port
 let checks = 0;
 const eq = (actual, expected, label) => {checks++; assert.deepEqual(actual, expected, label);};
 const check = (condition, label) => {checks++; assert.ok(condition, label);};
-const command = (...args) => spawnSync(bin, args, {cwd: run, env, encoding: 'utf8'});
+const command = (...args) => spawnSync(bin, ['library', ...args], {cwd: run, env, encoding: 'utf8'});
 function sql(statement) {
   const result = spawnSync('python3', ['-c',
     'import sqlite3,json,sys\nc=sqlite3.connect(sys.argv[1]); r=c.execute(sys.argv[2]).fetchall(); c.commit(); print(json.dumps(r))',
@@ -40,7 +37,7 @@ function sql(statement) {
   return JSON.parse(result.stdout);
 }
 async function start(version) {
-  const server = spawn(bin, [version], {cwd: run, env, stdio: ['ignore', 'pipe', 'pipe']});
+  const server = spawn(bin, ['library', version], {cwd: run, env, stdio: ['ignore', 'pipe', 'pipe']});
   let out = '', err = '';
   server.stdout.on('data', bytes => {out += bytes;});
   server.stderr.on('data', bytes => {err += bytes;});
@@ -126,57 +123,7 @@ try {
   await writeFile(join(run, 'transcript.txt'), text);
   if (save) await writeFile(save, text);
 
-  // 4. The pages: the `App`'s routes as HTML, and its compiled component in Chromium.
-  for (const path of ['/join', '/books/new', '/books/2']) {
-    const response = await fetch(url(path), {headers: {accept: 'text/html'}});
-    const html = await response.text();
-    eq([response.status, (response.headers.get('content-type') ?? '').split(';')[0]], [200, 'text/html'], `page ${path}`);
-    check(html.includes('href="/join"') && html.includes('href="/books/new"') && !html.includes('href="/books/:book"'),
-      `page ${path}: the static pages as navigation`);
-  }
-  eq((await fetch(url('/books/2'))).headers.get('content-type'), 'application/json', 'a non-navigation GET reaches the endpoint');
-  const pagesJson = JSON.parse(await (await import('node:fs/promises')).readFile(join(workspace, '.lake/ddd-browser/LibraryApp/pages.json'), 'utf8'));
-  eq(pagesJson.authentication.map(identity => identity.name).sort(), ['join', 'signIn'],
-    'the browser treats the operations that start a session as sign-in (read from the flows)');
-  const {chromium} = await import(pathToFileURL(join(nodeModules, 'playwright-core/index.mjs')));
-  const browser = await chromium.launch({headless: true});
-  try {
-    const page = await browser.newPage();
-    const errors = [];
-    page.on('pageerror', error => errors.push(error.message));
-    await page.goto(url('/join'));
-    await page.locator('input[name=name]').fill('Cy');
-    await page.locator('input[name=email]').fill('cy@example.com');
-    await page.locator('input[name=password]').fill(password);
-    await page.locator('button[type=submit]').click();
-    await page.waitForURL(url('/books/new'));
-    check((await page.context().cookies()).some(cookie => cookie.name === 'leanapp_session' && cookie.httpOnly), 'the join form signs in (cookie)');
-    await page.locator('input[name=title]').fill('Persuasion');
-    await page.locator('button[type=submit]').click();
-    await page.locator('main').getByText('Only librarians shelve books.').waitFor();
-    check(true, 'a domain error from a form shows its notice');
-    await page.goto(url('/books/2'));
-    await page.locator('main').getByRole('heading', {name: 'Emma'}).waitFor();
-    await page.getByRole('button', {name: 'Borrow', exact: true}).click();
-    await page.locator('main').getByText('Cy', {exact: true}).waitFor();
-    check(true, 'the borrow call reloads the book page: Cy is a borrower');
-    await page.getByRole('button', {name: 'Borrow', exact: true}).click();
-    await page.locator('main').getByText('You already have this book.').waitFor();
-    check(true, 'the second borrow shows the typed conflict');
-    eq(sql("SELECT count(*) FROM loan WHERE book = 2"), [[1]], 'one loan stored');
-    const dup = await browser.newPage();
-    await dup.goto(url('/join'));
-    await dup.locator('input[name=name]').fill('Cy again');
-    await dup.locator('input[name=email]').fill('cy@example.com');
-    await dup.locator('input[name=password]').fill(password);
-    await dup.locator('button[type=submit]').click();
-    await dup.locator('main').getByText('This email already has a library card.').waitFor();
-    check(true, 'the join form shows the emailTaken field error');
-    eq(errors, [], 'no page errors');
-  } finally {
-    await browser.close();
-  }
-  console.log(`PASS: ${checks} library checks (migration, envelope, auth, rules, pages); run ${run}`);
+  console.log(`PASS: ${checks} library checks (migration, envelope, auth, rules); run ${run}`);
 } finally {
   await app.stop();
 }

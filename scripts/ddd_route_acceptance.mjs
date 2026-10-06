@@ -1,5 +1,5 @@
 // Explicit routes + bearer over a real socket and SQLite, driven by real curl.
-// Usage: node scripts/ddd_route_acceptance.mjs [COMMON_WORKSPACE]
+// Usage: node scripts/ddd_route_acceptance.mjs [WORKSPACE]  (default: this repository)
 import assert from 'node:assert/strict';
 import {spawn, spawnSync} from 'node:child_process';
 import {createServer} from 'node:net';
@@ -7,10 +7,9 @@ import {mkdir, writeFile} from 'node:fs/promises';
 import {resolve, join} from 'node:path';
 import {randomBytes} from 'node:crypto';
 
-const workspace = resolve(process.argv[2] ?? '.lake/ddd-common');
+const workspace = resolve(process.argv[2] ?? '.');
 const run = resolve('.lake/ddd-route-acceptance', randomBytes(8).toString('hex'));
 await mkdir(run, {recursive: true});
-await writeFile(join(run, 'app.mjs'), 'export {};\n');
 await writeFile(join(run, 'clock'), '100');
 const socket = createServer();
 await new Promise(done => socket.listen(0, '127.0.0.1', done));
@@ -21,9 +20,9 @@ let checks = 0, log = '';
 const eq = (actual, expected, label) => {checks++; assert.deepEqual(actual, expected, label);};
 const check = (condition, label) => {checks++; assert.ok(condition, label);};
 
-const server = spawn(join(workspace, '.lake/build/bin/domain_route_checks'), ['--serve'], {cwd: run,
+const server = spawn(join(workspace, '.lake/build/bin/leanapi_native_checks'), ['routes', '--serve'], {cwd: run,
   env: {...process.env, LEANAPP_PORT: String(port), LEANAPP_DATABASE: join(run, 'routes.sqlite'),
-    LEANAPP_BROWSER_DIR: run, LEANAPP_CLOCK_FILE: join(run, 'clock')}, stdio: ['ignore', 'pipe', 'pipe']});
+    LEANAPP_CLOCK_FILE: join(run, 'clock')}, stdio: ['ignore', 'pipe', 'pipe']});
 server.stdout.on('data', bytes => {log += bytes;});
 server.stderr.on('data', bytes => {log += bytes;});
 const deadline = performance.now() + 15000;  // awake time: a system sleep does not count
@@ -99,7 +98,7 @@ try {
   const title = curl(url(`/parties/${key}`));
   eq([title.status, title.body], [200, {ok: 'Housewarming'}], 'GET reads the path parameter');
   const page = curl(url(`/parties/${key}`), '-H', 'Accept: text/html');
-  check(page.status === 200 && page.text.includes('/assets/app.mjs'), 'browser navigation gets the page on the same path');
+  check(page.status === 200 && page.text === '<p>party page</p>', 'browser navigation gets the page on the same path (the pages hook)');
   eq(curl('-X', 'POST', url('/sign-in'), '-d', JSON.stringify({email: 'ben@example.com', password})).status, 403,
     'default sign-in needs the browser Origin');
   const browser = curl('-X', 'POST', url('/sign-in'), '-H', `Origin: ${origin}`, '-d', JSON.stringify({email: 'ben@example.com', password}));

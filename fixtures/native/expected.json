@@ -1,0 +1,10 @@
+{
+  "PublicSignedIn": "Board.write takes an actor (Board.SignedIn), but app% board has no accounts",
+  "UndeclaredCredential": "RouteChecks.Party is not a declared credential",
+  "SessionWire": "failed to synthesize\n  Ontology.Wire RouteChecks.app.Session",
+  "RawPublication": "Unknown constant `LeanApi.Native.Published.mk`",
+  "QueryWrite": "Application type mismatch",
+  "RouteGetCommand": "GET \"/parties/:party/rsvp\" requires a query operation",
+  "RouteMissingParam": "path parameter :id in \"/parties/:id/rsvp\" has no matching input field",
+  "RoutePathCodec": "path parameter :password"
+}

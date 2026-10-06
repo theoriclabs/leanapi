@@ -1,17 +1,9 @@
-{"version": "1.2.0",
+{
+ "version": "1.2.0",
  "packagesDir": ".lake/packages",
- "packages":
- [{"url": "https://github.com/theoriclabs/LeanDB",
-   "type": "git",
-   "subDir": null,
-   "scope": "",
-   "rev": "79cfbcca1662c559f78743903c6bb9ad6098571b",
-   "name": "leandb",
-   "manifestFile": "lake-manifest.json",
-   "inputRev": "79cfbcca1662c559f78743903c6bb9ad6098571b",
-   "inherited": false,
-   "configFile": "lakefile.toml"},
-  {"url": "https://github.com/theoriclabs/leancrypto",
+ "packages": [
+  {
+   "url": "https://github.com/theoriclabs/leancrypto",
    "type": "git",
    "subDir": null,
    "scope": "",
@@ -20,8 +12,34 @@
    "manifestFile": "lake-manifest.json",
    "inputRev": "v0.1.0",
    "inherited": false,
-   "configFile": "lakefile.lean"},
-  {"url": "https://github.com/leanprover/leansqlite",
+   "configFile": "lakefile.lean"
+  },
+  {
+   "url": "https://github.com/theoriclabs/LeanDB",
+   "type": "git",
+   "subDir": null,
+   "scope": "",
+   "rev": "d5253e5b0d83fc528927f340d1e50baab3e94999",
+   "name": "leandb",
+   "manifestFile": "lake-manifest.json",
+   "inputRev": "d5253e5b0d83fc528927f340d1e50baab3e94999",
+   "inherited": false,
+   "configFile": "lakefile.toml"
+  },
+  {
+   "url": "https://github.com/theoriclabs/leanontology",
+   "type": "git",
+   "subDir": null,
+   "scope": "",
+   "rev": "322a4c12631dd8ece6ae9841a5e6b630d08d1e3b",
+   "name": "leanontology",
+   "manifestFile": "lake-manifest.json",
+   "inputRev": "322a4c12631dd8ece6ae9841a5e6b630d08d1e3b",
+   "inherited": false,
+   "configFile": "lakefile.toml"
+  },
+  {
+   "url": "https://github.com/leanprover/leansqlite",
    "type": "git",
    "subDir": null,
    "scope": "",
@@ -30,7 +48,10 @@
    "manifestFile": "lake-manifest.json",
    "inputRev": "0be4df908d1a8e75b58961041e2b4973692623df",
    "inherited": true,
-   "configFile": "lakefile.lean"}],
+   "configFile": "lakefile.lean"
+  }
+ ],
  "name": "leanapi",
  "lakeDir": ".lake",
- "fixedToolchain": false}
+ "fixedToolchain": false
+}

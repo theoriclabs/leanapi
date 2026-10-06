@@ -7,7 +7,7 @@ diff --git a/examples/teams-demo/TeamsDemo/Api.lean b/examples/teams-demo/TeamsD
  def UserRow.checked (email : Email) (name : DisplayName) (team : TeamId) : Checked UserRow :=
 -  Checked.of { email, name := name.raw, team := tref team } (by
 +  Checked.of { email, name := name.raw, team := tref team, isPublic := false } (by
-     show UserRow.invariant _ = true
+     refine ⟨rfl, ?_⟩; show UserRow.invariant _ = true
      simp [UserRow.invariant, name.ok.1, name.ok.2])
  
 diff --git a/examples/teams-demo/TeamsDemo/Rules.lean b/examples/teams-demo/TeamsDemo/Rules.lean

@@ -12,7 +12,7 @@ if [ -z "$names" ]; then echo "axiom audit: no theorems listed"; exit 0; fi
 # Build every audited module (some, like Notes.Shared, are not reached by
 # the default targets).
 lake build $mods >/dev/null
-tmp=$(mktemp -t audit).lean
+tmp=$(mktemp "${TMPDIR:-/tmp}/audit.XXXXXX").lean
 {
   for m in $mods; do echo "import $m"; done
   for n in $names; do echo "#print axioms $n"; done

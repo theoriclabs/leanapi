@@ -24,7 +24,7 @@ lake build scheduling
 
 Three tables: `PersonRow` (handle + token digest), `AvailabilityRow` (host, slot), `BookingRow` (host, invitee, slot, title, notes). What a policy needs sits on the row (review D1–D10: no child-list filters, no `Option (Ref _)`, no cascades, Nats below 2^63).
 
-**No double booking** is `unique% BookingRow.bySlot := (host, slot)`. Two concurrent inserts serialize under `BEGIN IMMEDIATE`; the second is `InsertError.duplicate .bySlot`, mapped to 409. That constructor is the only inhabitant of `Unique BookingRow`. Omitting the case, or `nomatch` on it, does not compile (`tests/Tests/Scheduling.lean`).
+**No double booking** is `unique% BookingRow.bySlot := (host, slot)`. Two concurrent inserts serialize under `BEGIN IMMEDIATE`; the second is `InsertError.duplicate .bySlot`, mapped to 409. That constructor is the only inhabitant of `Unique BookingRow`. Omitting the case, or `nomatch` on it, does not compile (`tests/LeanApiTests/Scheduling.lean`).
 
 **Free/busy is a projection**, not a filter in the handler. `ProjRead` (private constructor) returns `List BusyInterval`. Titles, notes and invitees cannot be named in that type. The SQL still `SELECT`s the entity — LeanDB has no column-restricted SELECT yet — and maps in Lean. The handler cannot observe the hidden fields; pushing the projection into SQL is planned with DESIGN.md §7.5.
 

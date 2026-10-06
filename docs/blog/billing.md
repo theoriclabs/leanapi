@@ -328,13 +328,13 @@ The compiler refuses, pinned with `#guard_msgs`:
 - `TxnAs.mk` and `Seen.mk` from outside `Policies.lean`.
 - `ReadAs.all TenantRow`: no policy, default deny.
 - `PolicyView.Actor` constructed in application code.
-- An `Auth` for someone else: its constructor is private, so only authentication makes one (`#guard_msgs` in `tests/Tests/Endpoint.lean`; CI's `check_private_escapes.sh` keeps the framework's one internal constructor out of application code).
+- An `Auth` for someone else: its constructor is private, so only authentication makes one (`#guard_msgs` in `tests/LeanApiTests/Endpoint.lean`; CI's `check_private_escapes.sh` keeps the framework's one internal constructor out of application code).
 
 Handlers take `Auth Tenant`, `EventId`, `Quantity`, `Instant`, `Money .usd`. There is no stringly-typed status and no bare `Nat` for money.
 
 ### Tested
 
-`tests/Tests/Billing.lean`, section `billing: ingest once, isolate tenants, freeze finalized invoices`:
+`tests/LeanApiTests/Billing.lean`, section `billing: ingest once, isolate tenants, freeze finalized invoices`:
 
 - `ingest 201`, `resend marked replay`, `same id, other quantity: 409`, `conflict body has no quantity`, `stored event unchanged after conflict`, `concurrent ingest all 201`, `GET after race is the original quantity`.
 - `3 × 10¢ = 30`, `same period replays`, `2 × 25¢ = 50`.
