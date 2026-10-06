@@ -52,15 +52,15 @@ player and token tables. They reveal whether a name is taken, by design.
 | For a request that authenticates as `p`, only `p`'s view (sessions, visible games in order, own receipts, player ids, next id) matters for the complete response (status, all headers, body bytes), even if another player's view differs | **Proved** | `PrivateGames.Model.step_noninterference_caller`, `PrivateGames.Model.generic_isolation_caller` |
 | If two worlds agree on every player's view, responses are identical and the successor worlds again agree | **Proved** | `PrivateGames.Model.step_noninterference` |
 | The caller view is not vacuous: for every player, two different worlds look the same to them (hiddenness witness) | **Proved** | `PrivateGames.Model.gamesObs_hidden` |
-| An observation whose view determines the world has no hiddenness witness (review C1); the search reports the all-players view as such | **Checked** | `LeanApi.Props.Observation.not_hidden_of_injective` (proved, generic); `tests/Tests/Props.lean` "hiddenness witness" (search) |
+| An observation whose view determines the world has no hiddenness witness (review C1); the search reports the all-players view as such | **Checked** | `LeanApi.Props.Observation.not_hidden_of_injective` (proved, generic); `tests/LeanApiTests/Props.lean` "hiddenness witness" (search) |
 | A request that authenticates as `p` preserves `p`'s view in the successor worlds, even if other players' views differ | **Proved** | `PrivateGames.Model.step_view_caller` |
 | Trace noninterference for a coalition: after any sequence of requests by coalition members, every member's response depends only on what the coalition can see together | **Proved** | `PrivateGames.Model.trace_noninterference`, `PrivateGames.Model.byCoalition_of_auth` |
 | The per-caller claim as a library `NIPackage`, with every non-vacuity obligation discharged (for every player: a hidden difference in a world where they act, a successful read of their own game; and a refused read), given `ReadPlumbing`: some request routes to `GET /games/{id}`, decodes and carries a bearer token | **Proved** | `PrivateGames.Model.gamesNI`, `LeanApi.Props.NIPackage.acts_nonempty`, `LeanApi.Props.NIPackage.ok_nontrivial` |
-| `ReadPlumbing` holds for a concrete request (`GET /games/1` with a bearer token) | **Checked** | `tests/Tests/Props.lean` "read plumbing" |
+| `ReadPlumbing` holds for a concrete request (`GET /games/1` with a bearer token) | **Checked** | `tests/LeanApiTests/Props.lean` "read plumbing" |
 | Typed API: for a request that authenticates as `p`, the complete response depends only on `p`'s view, even if another player's view differs. By the framework's `Api.noninterference` for typed APIs; private-games discharges the per-endpoint obligations computed from its signatures | **Proved** | `LeanApi.Api.noninterference`, `PrivateGames.Api.api_isolated`, `PrivateGames.Api.api_noninterference` |
 | Typed API: a game you do not participate in is indistinguishable from a game that does not exist | **Proved** | `PrivateGames.Api.api_existence_private` |
 | Existence privacy: a game you do not participate in is indistinguishable from a game that does not exist | **Proved** | `PrivateGames.Model.existence_private` |
-| The native repository puts the policy into the SQL predicate and re-checks it on the decoded row; other user's game ≡ missing id, byte for byte, for read, move and resign | **Checked** | `tests/Tests/Games.lean` §9.3 |
+| The native repository puts the policy into the SQL predicate and re-checks it on the decoded row; other user's game ≡ missing id, byte for byte, for read, move and resign | **Checked** | `tests/LeanApiTests/Games.lean` §9.3 |
 | SQLite's physical execution does not expose other rows | **Assumed** |  |
 <!-- END GENERATED: Isolation -->
 
@@ -78,7 +78,7 @@ the total number of games; this is decision 0009's known release.
 | Keyed replay after any sequence of intervening requests, from any player, returns the recorded response (marked) and changes nothing, in the model's own receipt path. Same premises as the immediate replay | **Proved** | `PrivateGames.Model.keyed_replay_after`, `PrivateGames.Model.step_receipts` |
 | The same holds for any system wrapped by the library's `Keyed` transformer with a ledger satisfying `LedgerLaws`; private-games instantiated with the list ledger | **Proved** | `LeanApi.Props.Keyed.keyed_replay_after`, `LeanApi.Props.listLedger_laws`, `PrivateGames.Model.gamesKeyed_replay_after` |
 | Reusing a key with different input is refused and changes nothing (`Keyed` wrapper over the model; the model's own `keyReused` branch has no separate theorem) | **Proved** | `PrivateGames.Model.gamesKeyed_reuse`, `LeanApi.Props.Keyed.keyed_reuse` |
-| Reusing a key with different input is refused (422) natively | **Checked** | `tests/Tests/Games.lean` "keyed idempotence" |
+| Reusing a key with different input is refused (422) natively | **Checked** | `tests/LeanApiTests/Games.lean` "keyed idempotence" |
 | Resigning twice has the same domain state effect; the model's second unkeyed resignation leaves its state unchanged | **Proved** | `PrivateGames.resign_idem`, `PrivateGames.resign_resign`, `PrivateGames.Model.resign_state_idem` |
 | Reads (`GET /games`, `GET /games/{id}`) never change the world, on any branch, and so preserve every invariant | **Proved** | `PrivateGames.Model.reads_safe`, `LeanApi.Proofs.ScopedApp.safe_of_pure_plans`, `PrivateGames.Model.reads_preserve` |
 | Unrouted requests (404, 405, OPTIONS, redirects) never change the world | **Proved** | `PrivateGames.Model.unrouted_pure` |
@@ -107,7 +107,7 @@ is decision 0010.
 | LeanDB refuses to store a game that is not `Valid`; one written behind its back (raw SQL) is a typed error (500 without detail), never a crash | **Checked** | "stored row that fails validation" |
 | Typed API (`PrivateGames/Api.lean`): GET and HEAD requests never change the state. Free for every typed API: each GET endpoint carries the proof, checked when it is built | **Proved** | `LeanApi.Api.step_safe`, `PrivateGames.Api.api_reads_safe` |
 | Typed API: every stored game is `Valid`, ids are unique, and every id is below `nextGame`, in every reachable state. Per-endpoint obligations computed from the signatures; the writes are steps of the game store, whose writers are the domain decisions | **Proved** | `LeanApi.Api.inductive_of`, `PrivateGames.Api.api_allValid`, `PrivateGames.Api.api_uniqueIds`, `PrivateGames.Api.api_freshIds` |
-| The typed API answers exactly as the reference model (status, ETag, Location, replay marker, Allow, WWW-Authenticate, body) on random request sequences, including every error status (401, 404, 405, 409, 412, 415, 422, 428) | **Checked** | `tests/Tests/Differential.lean` "typed API ≡ model" |
+| The typed API answers exactly as the reference model (status, ETag, Location, replay marker, Allow, WWW-Authenticate, body) on random request sequences, including every error status (401, 404, 405, 409, 412, 415, 422, 428) | **Checked** | `tests/LeanApiTests/Differential.lean` "typed API ≡ model" |
 <!-- END GENERATED: Domain -->
 
 ### 4. Concurrency and consistency
@@ -136,7 +136,7 @@ is decision 0010.
 | Invariants and step properties transfer along simulations; step properties are invariants of the transition-augmented system | **Proved** | `LeanApi.Props.Invariant.pullback`, `LeanApi.Props.StepProp.pullback`, `LeanApi.Props.stepInv_iff` |
 | Trace noninterference follows from single-step NI plus the unwinding condition, for any system | **Proved** | `LeanApi.Props.Observation.trace_ni` |
 | Typed middleware: `decorate` preserves status and body, a passing `guard` is transparent, and a `guard`'s refusal depends only on its declared observation | **Proved** | `LeanApi.Stage.decorate_preserves`, `LeanApi.Stage.guard_transparent`, `LeanApi.Stage.guard_observes` |
-| Exported routes outside the proved set are reported, and tests fail on any not declared here | **Checked** | `Router.coverage`, `tests/Tests/Tier2.lean` |
+| Exported routes outside the proved set are reported, and tests fail on any not declared here | **Checked** | `Router.coverage`, `tests/LeanApiTests/Tier2.lean` |
 | Every writer touching a table a system invariant is about is covered by its proof or listed as unproved; the build fails on drift | **Checked** | `#check_writer_coverage` in `PrivateGames/Evidence.lean` (a build-time check) |
 <!-- END GENERATED: Reusable -->
 

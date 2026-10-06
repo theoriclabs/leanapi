@@ -264,7 +264,7 @@ The retry is `HTTP/1.1 200 OK` with the same body and no `Location`.
 ## What a mistake looks like
 
 A GET that posts a message does not build. The compiler's words, from
-`#guard_msgs` in `tests/Tests/Helpdesk.lean`:
+`#guard_msgs` in `tests/LeanApiTests/Helpdesk.lean`:
 
 ```text
 error: a GET or HEAD endpoint must not change state, but this handler's effect is `writes`. Return `Reads σ _` (or a pure value), or use POST, PUT, PATCH or DELETE.
@@ -338,11 +338,11 @@ None of these quantify over `DbState`, `Read.denote`, or `Txn.denote`.
 The compiler refuses:
 
 - a GET or HEAD whose handler writes (`#guard_msgs` in
-  `tests/Tests/Helpdesk.lean`);
+  `tests/LeanApiTests/Helpdesk.lean`);
 - an unscoped `Read` inside `ReadAs`, a forged `Actor`, a read of `OrgRow`
   (`#guard_msgs` in `Helpdesk/Policies.lean`);
 - an unscoped `Txn` inside `TxAs` (`sneakyWrite`);
-- an `Auth` for someone else: its constructor is private, so only authentication makes one (`#guard_msgs` in `tests/Tests/Endpoint.lean`; CI's `check_private_escapes.sh` keeps the framework's one internal constructor out of application code);
+- an `Auth` for someone else: its constructor is private, so only authentication makes one (`#guard_msgs` in `tests/LeanApiTests/Endpoint.lean`; CI's `check_private_escapes.sh` keeps the framework's one internal constructor out of application code);
 - a `Checked MessageRow` that fails `Message.ok` (customer internal notes
   have no `checkedCustomer` path).
 
@@ -351,7 +351,7 @@ by HTTP and storage. A wrapped ticket id is 422, not a silent `Nat`.
 
 ### Tested
 
-`Tests.HelpdeskHttp.run` in `tests/Tests/Helpdesk.lean`, against SQLite:
+`Tests.HelpdeskHttp.run` in `tests/LeanApiTests/Helpdesk.lean`, against SQLite:
 
 - `helpdesk auth` — missing or unknown bearer is 401.
 - `helpdesk inbound exactly-once` — retry 200, same id; same Message-ID in
