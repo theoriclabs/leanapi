@@ -9,21 +9,21 @@ git = "https://github.com/theoriclabs/leancrypto"
 rev = "v0.1.0"
 
 # Toolchain: leanprover/lean4:v4.33.0, the toolchain of LeanDB, leanontology and
-# LeanReact. Path dependencies share one build, so the whole stack must use one
+# LeanReact. The packages build together, so the whole stack must use one
 # toolchain. (The nightly-2026-09-26 pin for lean4#15174, which stops `Std.Http`
 # from parking a thread on every socket read, returns with v4.36.0 for every repo.)
 
 # Persistence and the portable data model (`LeanDb.Model`, `LeanDb.Native`).
-# Path dependencies on the sibling checkouts during development; a pinned git
-# require for fresh clones is DDD-LAPI-04.
 [[require]]
 name = "leandb"
-path = "../LeanDB"
+git = "https://github.com/theoriclabs/LeanDB"
+rev = "d5253e5b0d83fc528927f340d1e50baab3e94999"
 
-# Wire codecs and checked value types (`Ontology`).
+# Wire codecs and checked value types (`Ontology`). The same revision LeanDB pins.
 [[require]]
 name = "leanontology"
-path = "../leanontology"
+git = "https://github.com/theoriclabs/leanontology"
+rev = "322a4c12631dd8ece6ae9841a5e6b630d08d1e3b"
 
 [[lean_lib]]
 name = "LeanApi"
@@ -79,8 +79,8 @@ root = "TestsNative.Apps"
 name = "leanapi_counter_app"
 root = "TestsNative.CounterApp"
 
-# The Part 1 post's api without pages (`partiful_v2/Domain.lean`, staged unchanged but for its
-# imports and module name by `scripts/stage_partiful_api.py`). Root-level entities, so its own
+# The Part 1 post's api without pages (`Partiful/Domain.lean`, staged unchanged as
+# `LeanApiPartifulFixture.Domain` by `scripts/stage_partiful_api.py`). Root-level entities, so its own
 # executable. A library claims every module under its name, also in workspaces that require
 # leanapi, so a test fixture never takes an app's namespace (an app's `Partiful.*` would
 # otherwise have two providers): it is `LeanApiPartifulFixture.*`.

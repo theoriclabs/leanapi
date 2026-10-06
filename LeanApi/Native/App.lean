@@ -35,6 +35,9 @@ open LeanApi LeanDb LeanDb.Model LeanApi.Core
 
 structure AppConfig where
   database : System.FilePath := "app.sqlite"
+  /-- The IPv4 address to listen on. `0.0.0.0` accepts connections from other machines, as a
+  container host needs. -/
+  host : String := "127.0.0.1"
   port : UInt16 := 8080
   origin : Option String := none
   development : Bool := true
@@ -105,17 +108,18 @@ private def cli (config : AppConfig) : List String → IO AppConfig
   | [] => pure config
   | "--database" :: value :: rest => cli {config with database := value} rest
   | "--clock-file" :: value :: rest => cli {config with clockFile := some value} rest
+  | "--host" :: value :: rest => cli {config with host := value} rest
   | "--port" :: value :: rest => do
     let some port := value.toNat? | throw (IO.userError "invalid port")
     if port == 0 || port > 65535 then throw (IO.userError "invalid port")
     cli {config with port := UInt16.ofNat port} rest
   | _ => throw (IO.userError "unsupported app arguments")
 
-/-- `LEANAPP_*` development overrides, applied over the authored configuration. -/
+/-- `LEANAPP_*` overrides, applied over the authored configuration. -/
 def configure (config : AppConfig) : IO AppConfig := do
   let mut args := []
   for (key, option) in [("LEANAPP_DATABASE", "--database"), ("LEANAPP_CLOCK_FILE", "--clock-file"),
-      ("LEANAPP_PORT", "--port")] do
+      ("LEANAPP_HOST", "--host"), ("LEANAPP_PORT", "--port")] do
     if let some value ← IO.getEnv key then args := args ++ [option, value]
   cli config args
 
@@ -230,7 +234,7 @@ def runApp (s : Type) [IsSchema s] (migrations : List LeanDb.SchemaMigration)
 def NativeApp.main {s Profile} [IsSchema s] [LeanDb.Model.Entity Profile]
     (app : NativeApp s Profile) (args : List String) (config : AppConfig := {}) : IO UInt32 :=
   runApp s app.migrations app.emitClient
-    (fun config => app.withService config fun _ service => LeanApi.serve service { port := config.port })
+    (fun config => app.withService config fun _ service => LeanApi.serve service { host := config.host, port := config.port })
     args config
 
 /-- A `main : IO Unit` (no arguments) still gets the startup gate and exits with the
@@ -276,7 +280,7 @@ def PublicApp.withService {s} [IsSchema s] (app : PublicApp s) (config : AppConf
 /-- The executable: `migrate --check` / `migrate`, or the startup gate then the server. -/
 def PublicApp.main {s} [IsSchema s] (app : PublicApp s) (args : List String) (config : AppConfig := {}) : IO UInt32 :=
   runApp s app.migrations app.emitClient
-    (fun config => app.withService config fun service => LeanApi.serve service { port := config.port })
+    (fun config => app.withService config fun service => LeanApi.serve service { host := config.host, port := config.port })
     args config
 
 def PublicApp.serve {s} [IsSchema s] (app : PublicApp s) (config : AppConfig := {}) : IO Unit := do

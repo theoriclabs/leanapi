@@ -10,16 +10,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # Ubuntu 22.04, not latest: leancrypto links the system's static libcrypto, and the one
+        # built for glibc 2.38+ (Ubuntu 24.04) calls `__isoc23_*` functions that Lean's bundled
+        # glibc does not have.
+        os: [ubuntu-22.04, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      # leancrypto is private: a token with read access lets lake clone it.
-      - name: Private dependency access
-        env:
-          TOKEN: ${{ secrets.LEANCRYPTO_TOKEN }}
-        if: env.TOKEN != ''
-        run: git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
       - name: Install system packages (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libssl-dev libsqlite3-dev

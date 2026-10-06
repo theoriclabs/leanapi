@@ -1,29 +1,26 @@
 #!/usr/bin/env python3
-"""Stage the Part 1 post's domain (`partiful_v2/Domain.lean`) for the API-only acceptance.
+"""Stage the Part 1 post's domain (`Partiful/Domain.lean`) for the API-only acceptance.
 
-The post's files are read, never edited. `Domain.lean` is copied to
-`.lake/leanapi-partiful-fixture/LeanApiPartifulFixture/Domain.lean` with the milestone 3
-imports (`LeanDb.Model` and `LeanApi.Core` in place of `LeanApp.Core`); nothing else in it
-changes. The server entry, `LeanApiPartifulFixture/Server.lean`, serves its `api` with its
+The post's files are read, never edited. `Domain.lean` is copied unchanged to
+`.lake/leanapi-partiful-fixture/LeanApiPartifulFixture/Domain.lean`; it imports only
+`LeanDb.Model` and `LeanApi.Core`. The server entry, `LeanApiPartifulFixture/Server.lean`, serves its `api` with its
 credential and the `guestList` migration, and (`unmigrated`) the same app without the
 migration, for the refusal check. Pages are LeanReact's.
 
 The module names are test-scoped: a library of leanapi claims its modules in every workspace
 that requires leanapi, and an app's own `Partiful.*` must not have a second provider.
-Usage: python3 scripts/stage_partiful_api.py [PARTIFUL_V2_DIR]
+Usage: python3 scripts/stage_partiful_api.py [PARTIFUL_DIR]
 """
 import sys
 from pathlib import Path
 
 root = Path(__file__).resolve().parent.parent
-spec = Path(sys.argv[1] if len(sys.argv) > 1 else root.parent / 'domain_driven_development/partiful_v2').resolve()
+spec = Path(sys.argv[1] if len(sys.argv) > 1 else root.parent / 'domain_driven_development/Partiful').resolve()
 out = root / '.lake/leanapi-partiful-fixture'
 (out / 'LeanApiPartifulFixture').mkdir(parents=True, exist_ok=True)
 domain = (spec / 'Domain.lean').read_text()
-assert domain.count('import LeanApp.Core\n') == 1 and domain.count('open LeanApp.Core\n') == 1, \
-    'expected `import LeanApp.Core` and `open LeanApp.Core` once each'
-domain = domain.replace('import LeanApp.Core\n', 'import LeanDb.Model\nimport LeanApi.Core\n')
-domain = domain.replace('open LeanApp.Core\n', 'open LeanDb.Model LeanApi.Core\n')
+assert 'import LeanDb.Model\n' in domain and 'import LeanApi.Core\n' in domain, \
+    'expected the post to import `LeanDb.Model` and `LeanApi.Core`'
 target = out / 'LeanApiPartifulFixture/Domain.lean'
 if not target.exists() or target.read_text() != domain:
     target.write_text(domain)

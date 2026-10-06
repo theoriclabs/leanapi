@@ -825,8 +825,9 @@ marker; they were overwritten, not deleted.
 
 ### C. DDD-LAPI-07, LeanAPI side
 
-- `AppConfig.port` defaults to 8080. `LEANAPP_PORT`, `LEANAPP_DATABASE`,
-  `LEANAPP_BROWSER_DIR`, `LEANAPP_CLOCK_FILE` and `LEANAPP_EMIT_CLIENT` still override.
+- `AppConfig.port` defaults to 8080, and `AppConfig.host` to `127.0.0.1`. `LEANAPP_PORT`,
+  `LEANAPP_HOST` (`0.0.0.0` in a container), `LEANAPP_DATABASE`, `LEANAPP_BROWSER_DIR`,
+  `LEANAPP_CLOCK_FILE` and `LEANAPP_EMIT_CLIENT` still override.
 - The executable finds its bundle without `LEANAPP_BROWSER_DIR`:
   `NativeApp.browserCandidates` tries an explicit directory, then
   `<exe>/../../../../.lake/ddd-browser/<App>` (the build workspace of `.lake/build/bin/<exe>`),
