@@ -27,6 +27,12 @@ namespace, plus the session table of an app with accounts), the migrations it li
 constant: `Name : NativeApp …` (accounts) or `Name : PublicApp …` (no accounts). `Name.main`
 runs LeanDB's migration gate and serves the api's routes.
 
+The domain entities are those declared in the api's namespace and those nested under them: an
+entity is stored when every name between the api's namespace and the entity is a type. For
+`Domain.api` that is `Domain.Organization`, its part `Domain.Organization.Membership`, and
+`Domain.AgentRun.Attempt.Lease`; not `Domain.V1.Organization`, whose `Domain.V1` is a namespace
+(`isDomainEntity`).
+
 Pages are LeanReact's: a `NativeApp`/`PublicApp` carries `pages`, extra GET routes served next to
 the api, negotiated with a GET endpoint on the same path (`Accept: text/html` gets the page). -/
 
@@ -356,9 +362,26 @@ structure Accounts where
   profile : Lean.Name
   credential : Lean.Name
 
+/-- `entity` is a domain entity of the api namespace `domain`: every name between `domain` and
+`entity` is a type, so the entity is declared in the namespace or nested under one of its types,
+as a part of a concept (`Domain.Organization.Membership`, `Domain.AgentRun.Attempt.Lease`). An
+entity in another namespace is not, even one inside `domain` (`Domain.V1.Organization`, when
+`Domain.V1` is a namespace and not a type). For an api at the root namespace this keeps the
+entities of every namespace out (`CounterV1.Counter`), as a plain prefix test would not. -/
+def isDomainEntity (env : Lean.Environment) (domain entity : Lean.Name) : Bool :=
+  partOfDomain entity.getPrefix
+where
+  /-- `name` is `domain`, or a type whose enclosing names up to `domain` are all types. -/
+  partOfDomain : Lean.Name → Bool
+    | .anonymous => domain.isAnonymous
+    | name@(.str enclosing _) | name@(.num enclosing _) =>
+      name == domain || ((env.find? name matches some (.inductInfo _)) && partOfDomain enclosing)
+
 /-- Declare the native app `appName` for the portable `Api` constant `api`: the native schema
 (the domain entities of the api's namespace, plus the session table with accounts), the
 migrations, and `appName : NativeApp …` (with accounts) or `appName : PublicApp …` (without).
+An entity is stored when every name between the api's namespace and the entity is a type
+(`isDomainEntity`): the entities declared in the namespace, and their parts nested under them.
 Both `app%` forms run this; LeanReact's full-stack form runs it too, then sets `pages`. -/
 def declareApiApp (appName api : Lean.Name) (accounts : Option Accounts) (migrationTerms : Array Syntax)
     (apiRef : Syntax) : CommandElabM Unit := do
@@ -368,8 +391,9 @@ def declareApiApp (appName api : Lean.Name) (accounts : Option Accounts) (migrat
   let schema := root schemaName
   let domain := api.getPrefix
   let place := if domain.isAnonymous then "the root namespace" else s!"namespace {domain}"
-  let entities := (LeanDb.Model.Deriving.entityDeclarations.getState (← getEnv)).filter
-    (fun entry => entry.name.getPrefix == domain)
+  let env ← getEnv
+  let entities := (LeanDb.Model.Deriving.entityDeclarations.getState env).filter
+    (fun entry => isDomainEntity env domain entry.name)
   if entities.isEmpty then throwErrorAt apiRef "{api}: {place} declares no entities to store"
   if let some accounts := accounts then
     unless entities.any (·.name == accounts.credential) do
@@ -461,7 +485,9 @@ def declareApiApp (appName api : Lean.Name) (accounts : Option Accounts) (migrat
       "  migrations := " ++ migrationList ++ " }")
 
 /-- `app% Name where api := api`: serve a portable `Api` with no accounts. The schema is the
-domain entities of the api's namespace (the root namespace for a root `api`); there is no
+domain entities of the api's namespace (the root namespace for a root `api`): an entity is stored
+when every name between that namespace and the entity is a type, so `Order.Line` nested under the
+entity `Order` is stored and an entity in another namespace (`V1.Order`) is not. There is no
 credential or session table. Every operation must take no actor: one that needs a signed-in
 user (`SignedIn`, `Option SignedIn`) is an error here. -/
 syntax (name := publicApp) "app% " ident " where " &"api" ":=" ident (appMigrations)? : command

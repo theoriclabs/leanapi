@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.5.1 (2026-10-10)
 
+- **`app%` stores entities nested under entities** (#6): an entity is part of the api's domain when every name between the api's namespace and the entity is a type, so `Domain.Organization.Membership` and `Domain.AgentRun.Attempt.Lease` are stored beside `Domain.Organization`. They were left out of the schema, and an entity referring to one failed with `failed to synthesize LeanDb.Entity …`. Entities in other namespaces stay out: `Domain.V1.Organization` when `Domain.V1` is a namespace and not a type, and, for an api at the root namespace, the entities of every namespace (`CounterV1.Counter`).
 - **Toolchain:** `leanprover/lean4-nightly:nightly-2026-09-26`, until Lean 4.36 ships. Its `Std.Http` no longer parks a thread on every socket read (lean4#15174): Hello World goes from about 1,800 to 6,400 requests per second (Apple M4, 50 keep-alive connections).
 - **Requests without a body are faster:** a body declared empty (a GET, say) is no longer read from the stream. Hello World reaches about 8,800 requests per second.
 - **Handlers run on reused threads:** the server and `timeout` no longer start a thread per request (`spawnBlocking`). A thread idle for a second exits. Hello World is about 9% faster, and 25% with `timeout` in the stack.

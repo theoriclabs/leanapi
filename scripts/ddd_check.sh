@@ -28,6 +28,7 @@ for check in contract prepared kdf read command routes post; do
   run "native_$check" .lake/build/bin/leanapi_native_checks "$check"
 done
 run counter_acceptance node scripts/ddd_counter_acceptance.mjs
+run shop_acceptance node scripts/ddd_shop_acceptance.mjs
 run library_acceptance node scripts/ddd_library_acceptance.mjs --save docs/ddd-m2-library-transcript.txt
 run migration_acceptance node scripts/ddd_migration_acceptance.mjs
 run curl_acceptance node scripts/ddd_route_acceptance.mjs
@@ -45,7 +46,7 @@ general=$(grep -rniEw 'partiful|party|parties|rsvps?|persons?|people|guests?|att
   LeanApi/Core LeanApi/Core.lean LeanApi/Native LeanApi/Native.lean LeanApi/Publication LeanApi/Publication.lean \
   LeanContract LeanContract.lean | wc -l | tr -d ' ')
 echo "-- generality hits in library code: $general" >> "$summary"
-for log in core_tests leanapi_tests native_routes native_post counter_acceptance library_acceptance \
+for log in core_tests leanapi_tests native_routes native_post counter_acceptance shop_acceptance library_acceptance \
     migration_acceptance curl_acceptance partiful_api_acceptance rejections; do
   echo "   $log: $(grep -aE 'PASS|passed' "$logs/ddd-check-$log.log" | tail -1)" >> "$summary"
 done
