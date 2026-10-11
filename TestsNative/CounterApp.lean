@@ -142,6 +142,19 @@ app% counters where
     addStep := Counter.addField step (fill := 1)
   ]
 
+-- The root app stores the root entities only: `CounterV1` and `Reservations` are namespaces, not
+-- types, so their entities stay out (a prefix test would take them, and `CounterV1.Counter`'s
+-- table would collide with `counter`).
+run_cmd do
+  let env ← Lean.getEnv
+  unless LeanApi.Native.isDomainEntity env .anonymous ``Counter do
+    Lean.throwError "Counter should be an entity of the root app"
+  for entity in [``CounterV1.Counter, ``Reservations.Reservation] do
+    if LeanApi.Native.isDomainEntity env .anonymous entity then
+      Lean.throwError "{entity} is not an entity of the root namespace"
+
+#guard (LeanDb.IsSchema.specs counters.Database).map (·.name) == ["counter"]
+
 def main (args : List String) : IO UInt32 := do
   let config : LeanApi.Native.AppConfig := { database := "counters.sqlite" }
   match args with
