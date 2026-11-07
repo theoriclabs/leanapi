@@ -32,6 +32,8 @@ So one property (isolation) is plug-and-play today. Its earlier all-observer for
 
 ## 2. The system signature everything is stated against
 
+The kernel (`Sys` and everything in this document except `ScopedApp.toSys`) is `LeanApi.Props.Kernel`, built as the `LeanProps` library with no server import (`scripts/PropsClosure.lean`). LeanReact states UI components against it: a component's `update : Msg → Model → Model × Cmd Msg` is a `Sys` whose output is its commands, and `preserves` accepts that shape.
+
 Every library property is stated against one abstract signature. An app instantiates it once. Today's `ScopedApp` is a richer, pipeline-specific instance of it.
 
 ```lean
