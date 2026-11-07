@@ -40,6 +40,13 @@ globs = ["LeanContract", "LeanContract.+"]
 # `derive_operation`, `Api`/`post`/`get`, the in-memory runner, and the application
 # assembly it publishes into (`LeanApi.Publication`). Its import closure is this library,
 # `LeanContract`, `LeanDb.Model`, `LeanOntology` and Lean (`scripts/CoreClosure.lean`).
+# The property kernel (`LeanApi.Props.Kernel`): every `LeanApi.Props` module except `Bridge`.
+# Its import closure is itself and Lean (`scripts/PropsClosure.lean`): no HTTP, SQLite, crypto
+# or other LeanAPI module, so clients (LeanReact components) prove properties without the server.
+[[lean_lib]]
+name = "LeanProps"
+roots = ["LeanApi.Props.Kernel"]
+
 [[lean_lib]]
 name = "LeanApiCore"
 roots = ["LeanApi.Core"]

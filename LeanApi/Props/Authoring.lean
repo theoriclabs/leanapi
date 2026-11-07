@@ -33,7 +33,9 @@
   function with no such argument is a constructor; a function with several
   must name the state: `preserves N by setTo[s]`), the theorem
   `N.preserved_f : ∀ args s', N s → f args = .ok s' → N s'` (or
-  `f args = .ok s' → N s'`). It runs `invariant_cases`, then the optional
+  `f args = .ok s' → N s'`). A transition that cannot refuse and also returns an output,
+  `f : … → α → α × β` (a UI component's `update`, whose output is its commands), gets
+  `N.preserved_f : ∀ args s' out, N s → f args = (s', out) → N s'`. It runs `invariant_cases`, then the optional
   tactic given for that function. If goals remain, the command fails and
   lists each one by field.
 -/
@@ -216,9 +218,12 @@ partial def splitDecision (h : Name) (g : MVarId) : TacticM (List MVarId) := do
   let ty ← g.withContext do
     let some d := (← getLCtx).findFromUserName? h | throwError "invariant_cases: no hypothesis `{h}`"
     whnfR (← instantiateMVars d.type)
-  let isCtorEq : MetaM Bool := do
+  -- Reduce in the goal's context: the left side mentions the goal's local variables.
+  let isCtorEq : MetaM Bool := g.withContext do
     match ty.eq? with
-    | some (_, lhs, _) => return (← whnfR lhs).getAppFn.isConstOf ``Except.ok || (← whnfR lhs).getAppFn.isConstOf ``Except.error
+    | some (_, lhs, _) =>
+      let head := (← whnfR lhs).getAppFn
+      return head.isConstOf ``Except.ok || head.isConstOf ``Except.error || head.isConstOf ``Prod.mk
     | none => return false
   if ← isCtorEq then
     if let some gs ← tryCases then return gs
@@ -329,10 +334,13 @@ def preservesType (inv f : Name) (stateName? : Option Name := none) : MetaM (Exp
   let fTy ← inferType (← mkConstWithFreshMVarLevels f)
   forallTelescopeReducing fTy fun xs res => do
     let res ← whnfR res
-    unless res.isAppOfArity ``Except 2 do
-      throwError "preserves: `{f}` must return `Except ε {α}`, but returns{indentExpr res}"
-    unless ← isDefEq res.appArg! α do
-      throwError "preserves: `{f}` returns `Except _ {res.appArg!}`, not the invariant's carrier `{α}`"
+    -- `Except ε α` (a decision that may refuse) or `α × β` (a transition with an output).
+    let paired := res.isAppOfArity ``Prod 2
+    unless res.isAppOfArity ``Except 2 || paired do
+      throwError "preserves: `{f}` must return `Except ε {α}` or `{α} × β`, but returns{indentExpr res}"
+    let carrier := if paired then res.appFn!.appArg! else res.appArg!
+    unless ← isDefEq carrier α do
+      throwError "preserves: `{f}` returns a state of type `{carrier}`, not the invariant's carrier `{α}`"
     let names ← xs.mapIdxM fun i x => do
       let n := (← x.fvarId!.getDecl).userName
       pure (if n.hasMacroScopes || n.isAnonymous then Name.mkSimple s!"a{i}" else n)
@@ -355,18 +363,20 @@ def preservesType (inv f : Name) (stateName? : Option Name := none) : MetaM (Exp
           throwError "preserves: `{f}` has {carrierIdxs.size} arguments of type `{α}` \
 ({", ".intercalate ((carrierIdxs.map (names[·]!)).toList.map toString)}), so the state is ambiguous. Name it: `preserves {inv} by {f}[{names[carrierIdxs.back!]!}]`"
         pure carrierIdxs[0]?
-    withLocalDeclD `s' α fun s' => do
-      let ok ← mkAppOptM ``Except.ok #[res.appFn!.appArg!, α, s']
-      let heq ← mkEq (mkAppN (← mkConstWithFreshMVarLevels f) xs) ok
+    withLocalDeclD `s' α fun s' => withLocalDeclD `out (if paired then res.appArg! else α) fun out => do
+      let result ← if paired then mkAppOptM ``Prod.mk #[α, res.appArg!, s', out]
+        else mkAppOptM ``Except.ok #[res.appFn!.appArg!, α, s']
+      let heq ← mkEq (mkAppN (← mkConstWithFreshMVarLevels f) xs) result
       let concl := mkApp (mkConst inv) s'
+      let outputs := if paired then #[s', out] else #[s']
       let body ← match stateIdx with
         | some i => do
           let pre := mkApp (mkConst inv) xs[i]!
           withLocalDeclD `hI pre fun hI => withLocalDeclD `h heq fun h => do
-            mkForallFVars (xs.push s' |>.push hI |>.push h) concl
-        | none => withLocalDeclD `h heq fun h => mkForallFVars (xs.push s' |>.push h) concl
+            mkForallFVars (xs ++ outputs |>.push hI |>.push h) concl
+        | none => withLocalDeclD `h heq fun h => mkForallFVars (xs ++ outputs |>.push h) concl
       let body ← instantiateMVars body
-      let names := names.push `s' ++ (if stateIdx.isSome then #[`hI, `h] else #[`h])
+      let names := names.push `s' ++ (if paired then #[`out] else #[]) ++ (if stateIdx.isSome then #[`hI, `h] else #[`h])
       return (body, names, stateIdx.isSome)
 
 syntax preservesAlt := ppLine "| " ident " => " tacticSeq

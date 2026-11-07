@@ -7,6 +7,7 @@ import LeanApiTests.Differential
 import LeanApiTests.Tier2
 import LeanApiTests.Props
 import LeanApiTests.PropsCommands
+import LeanApiTests.PropsKernel
 import LeanApiTests.Registry
 import LeanApiTests.Endpoint
 import LeanApiTests.TransactionClock
