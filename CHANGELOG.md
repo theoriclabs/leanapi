@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 (2026-11-24)
+
+- **Toolchain:** Lean 4.36.0, including the `Std.Http` socket-read changes first tested on the September nightly. LeanDB, LeanOntology, and LeanCrypto pins match the new toolchain.
 
 - **The property kernel builds on its own** (#1): `LeanApi.Props.Kernel` is every `LeanApi.Props` module except `Bridge`, built as the `LeanProps` library. Its import closure is itself and the toolchain (`scripts/PropsClosure.lean`, checked in CI), so a client such as LeanReact can prove properties of its own state machines without depending on the server. Module names are unchanged; `import LeanApi.Props` still brings in everything.
 - **`preserves` accepts transitions that return an output:** for `f : … → α → α × β` (a UI component's `update`, whose output is its commands) it generates `∀ args s' out, N s → f args = (s', out) → N s'`.

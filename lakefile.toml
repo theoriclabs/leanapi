@@ -1,29 +1,26 @@
 name = "leanapi"
-version = "0.5.1"
+version = "0.6.0"
 defaultTargets = ["LeanApi", "PolicyView", "Helpdesk", "Billing", "Scheduling", "TeamsDemo"]
 
 # Crypto dependency (M2), pinned by tag.
 [[require]]
 name = "leancrypto"
 git = "https://github.com/theoriclabs/leancrypto"
-rev = "v0.1.0"
+rev = "v0.1.1"
 
-# Toolchain: leanprover/lean4:v4.33.0, the toolchain of LeanDB, leanontology and
-# LeanReact. The packages build together, so the whole stack must use one
-# toolchain. (The nightly-2026-09-26 pin for lean4#15174, which stops `Std.Http`
-# from parking a thread on every socket read, returns with v4.36.0 for every repo.)
+# Keep the dependency pins compatible with the Lean version in lean-toolchain.
 
 # Persistence and the portable data model (`LeanDb.Model`, `LeanDb.Native`).
 [[require]]
 name = "leandb"
 git = "https://github.com/theoriclabs/LeanDB"
-rev = "d5253e5b0d83fc528927f340d1e50baab3e94999"
+rev = "v0.7.1"
 
-# Wire codecs and checked value types (`Ontology`). The same revision LeanDB pins.
+# Wire codecs and checked value types (`Ontology`).
 [[require]]
 name = "leanontology"
 git = "https://github.com/theoriclabs/leanontology"
-rev = "322a4c12631dd8ece6ae9841a5e6b630d08d1e3b"
+rev = "v0.1.1"
 
 [[lean_lib]]
 name = "LeanApi"

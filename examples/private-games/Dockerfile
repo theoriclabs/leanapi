@@ -1,6 +1,6 @@
 # private-games on LeanAPI. Build context: the leanapi checkout.
 #   docker build -f examples/private-games/Dockerfile -t private-games .
-# leancrypto is private: pass a token with read access, e.g.
+# To authenticate GitHub dependency fetches, optionally pass a token with read access:
 #   docker build --secret id=gh,env=GH_TOKEN ...
 FROM debian:bookworm-slim AS build
 
@@ -10,11 +10,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV ELAN_HOME=/usr/local/elan
 ENV PATH="${ELAN_HOME}/bin:${PATH}"
-RUN curl -fsSL https://elan.lean-lang.org/elan-init.sh | sh -s -- -y --default-toolchain none \
-    && elan toolchain install leanprover/lean4-nightly:nightly-2026-09-26 \
-    && elan default leanprover/lean4-nightly:nightly-2026-09-26
+RUN curl -fsSL https://elan.lean-lang.org/elan-init.sh | sh -s -- -y --default-toolchain none
 
 WORKDIR /src/leanapi
+COPY lean-toolchain .
+RUN lean --version
 COPY . /src/leanapi
 RUN --mount=type=secret,id=gh \
     if [ -f /run/secrets/gh ]; then \

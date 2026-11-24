@@ -3,7 +3,7 @@
 **A fully functional API server for Lean 4. Think of it as Express or FastAPI, for Lean.**
 
 
-> **Status: v0.1.0, the first release.** Usable, and experimental: APIs may change.
+> **Status: v0.6.0.** LeanAPI is experimental and its APIs may change.
 
 ## Features
 
@@ -22,11 +22,11 @@ In your `lakefile.toml`:
 [[require]]
 name = "leanapi"
 git = "https://github.com/theoriclabs/leanapi"
-rev = "v0.1.0"
+rev = "v0.6.0"
 ```
 
 You need:
-- the toolchain of the revision you pin: `leanprover/lean4:v4.33.0` for v0.1.0. `main` is on `leanprover/lean4-nightly:nightly-2026-09-26` until Lean 4.36 ships, for its faster `Std.Http`;
+- `leanprover/lean4:v4.36.0` for LeanAPI v0.6.0;
 - OpenSSL 3 (`brew install openssl@3`, or `apt install libssl-dev`).
 
 ## Hello World
