@@ -199,27 +199,36 @@ def declareEntry (apiName : Lean.Name) (entry : Entry) : CommandElabM Lean.Name 
   let constant := apiName ++ .mkSimple f.getString!
   if (← getEnv).contains constant then
     throwErrorAt entry.function "`{f.getString!}` is listed twice in `{apiName}`"
-  let full := Deriving.full
-  let errorText ← liftTermElabM <| Deriving.sourceOf shape.error
-  let outputText ← liftTermElabM <| Deriving.sourceOf shape.output
-  let builder := match entry.method with | .get => "LeanApi.Core.Endpoint.get" | .post => "LeanApi.Core.Endpoint.post"
-  let endpointType := "LeanApi.Core.Endpoint " ++ full (f ++ `Input) ++ " (" ++ errorText ++ ") (" ++ outputText ++ ")"
-  let route := builder ++ " " ++ Deriving.quoted path ++ " " ++ full (f ++ `operation)
+  let rootIdent := LeanApi.Core.Declarations.rootIdent
+  let delabTerm := LeanApi.Core.Declarations.delabTerm
+  let errorTerm ← liftTermElabM <| delabTerm shape.error
+  let outputTerm ← liftTermElabM <| delabTerm shape.output
+  let inputIdent := rootIdent (f ++ `Input)
+  let opIdent := rootIdent (f ++ `operation)
+  let builder := rootIdent (match entry.method with | .get => ``LeanApi.Core.Endpoint.get | .post => ``LeanApi.Core.Endpoint.post)
+  let endpointType ← `(LeanApi.Core.Endpoint $inputIdent ($errorTerm) ($outputTerm))
+  let pathLit : Term := quote path
+  let route ← `($builder $pathLit $opIdent)
   let parameters := pathParameters path
   if parameters.isEmpty then
-    Deriving.runCommand ("def " ++ full constant ++ " : " ++ endpointType ++ " := " ++ route)
+    let constIdent := rootIdent constant
+    elabCommand (← `(def $constIdent : $endpointType := $route))
     return constant
   -- Path parameters are arguments, in path order: `api.borrow book`.
   let unbound := constant ++ `endpoint
-  Deriving.runCommand ("def " ++ full unbound ++ " : " ++ endpointType ++ " := " ++ route)
-  let mut binders := ""
-  let mut body := full unbound
+  let unboundIdent := rootIdent unbound
+  elabCommand (← `(def $unboundIdent : $endpointType := $route))
+  let mut binders : Array (TSyntax ``Lean.Parser.Term.bracketedBinderF) := #[]
+  let mut body : Term := unboundIdent
   for parameter in parameters do
     let some p := shape.params.find? (·.name.toString == parameter) | unreachable!
-    let typeText ← liftTermElabM <| Deriving.sourceOf p.type
-    binders := binders ++ " (" ++ parameter ++ " : " ++ typeText ++ ")"
-    body := "(" ++ body ++ ").bindPath " ++ Deriving.quoted parameter ++ " (Ontology.Wire.codec.encode " ++ parameter ++ ")"
-  Deriving.runCommand ("def " ++ full constant ++ binders ++ " : " ++ endpointType ++ " := " ++ body)
+    let typeTerm ← liftTermElabM <| delabTerm p.type
+    let paramIdent := mkIdent (.mkSimple parameter)
+    let paramLit : Term := quote parameter
+    binders := binders.push (← `(Lean.Parser.Term.bracketedBinderF| ($paramIdent : $typeTerm)))
+    body ← `(($body).bindPath $paramLit (Ontology.Wire.codec.encode $paramIdent))
+  let constIdent := rootIdent constant
+  elabCommand (← `(def $constIdent $binders* : $endpointType := $body))
   return unbound
 
 /-- Elaborate `def api : Api := [post "/x" f, get "/y/:id" g, …]`. -/

@@ -61,85 +61,90 @@ private def operationRequests : List (Lean.Name × Contract.OperationKind) :=
   [(``RequestF.now, .query), (``RequestF.hashPassword, .command), (``RequestF.verifyCredential, .command),
    (``RequestF.startSession, .command)]
 
-/-- The entity argument (`T`) of an operation-level request, if any. -/
-private def requestEntity (c : Lean.Name) (args : Array Expr) : MetaM String := do
+/-- Argument supplied to named parameter `paramName` of request constructor `c`. -/
+private def requestNamedArg? (c paramName : Lean.Name) (args : Array Expr) : MetaM (Option Expr) := do
   forallTelescope (← getConstInfo c).type fun binders _ => do
     let names ← binders.mapM fun b => return (← b.fvarId!.getDecl).userName
-    match names.findIdx? (· == `T) >>= (args[·]?) with
-    | some (.const t _) => return t.toString
-    | _ => return ""
+    return names.findIdx? (· == paramName) >>= (args[·]?)
 
-/-- Ordered storage steps, operation requests and guards of the unfolded body. -/
-partial def scanNodes (e : Expr) : MetaM (Array Node) := do
-  let out ← IO.mkRef (#[] : Array Node)
-  let failureOf (err : Expr) : MetaM (Option String) := do
-    match err.getAppFn with
-    | .const c _ => if err.getAppNumArgs == 0 then return some c.getString! else return none
-    | _ => return none
-  let seen ← IO.mkRef (Std.HashSet.emptyWithCapacity 64 : Std.HashSet Expr)
-  let rec visit (e : Expr) : MetaM Unit := do
-    if (← seen.get).contains e then return
-    seen.modify (·.insert e)
-    match e with
-    | .app .. =>
-      let fn := e.getAppFn
-      let args := e.getAppArgs
-      if let some node ← Requirements.storageNode? e then
-        let effect : Contract.OperationKind := match node.access with
-          | .command => .command
-          | .query => .query
-        out.modify (·.push { kind := node.kind, effect, detail := node.entity, constraints := node.constraints })
-      else if let .const c _ := fn then
-        if let some (_, effect) := operationRequests.find? (·.1 == c) then
-          let detail ← requestEntity c args
-          out.modify (·.push { kind := c.getString!, effect, detail })
-        else if (c == ``FlowF.check || c == ``Flow.check || c == ``MonadRequire.requireWith) && args.size >= 6 &&
-            !args.back!.hasLooseBVars then
-          out.modify (·.push { kind := "require", effect := .query, detail := "", failure := ← failureOf args.back! })
-        else if (c == ``FlowF.fail || c == ``Flow.fail || c == ``MonadExcept.throw || c == ``MonadExceptOf.throw) &&
-            args.size ≥ 4 && !args.back!.hasLooseBVars then
-          out.modify (·.push { kind := "throw", effect := .query, detail := "", failure := ← failureOf args.back! })
-      visit fn
-      for arg in args do visit arg
-    | .lam _ _ b _ => visit b
-    | .forallE .. => pure ()
-    | .letE _ _ v b _ => visit v; visit b
-    | .mdata _ b => visit b
-    | .proj _ _ b => visit b
-    | _ => pure ()
-  visit e
-  out.get
+/-- The entity argument (`T`) of an operation-level request, if any. -/
+private def requestEntity (c : Lean.Name) (args : Array Expr) : MetaM String := do
+  match ← requestNamedArg? c `T args with
+  | some (.const t _) => return t.toString
+  | _ => return ""
 
-/-- KDF steps the body can reach, keyed by the input field each consumes (decision 4). A KDF
-input that is not one of the operation's own (non-actor) arguments cannot be prepared before
-writer admission, so it is a publication error. -/
-def kdfSteps (f : Lean.Name) (params : Array Lean.Name) (actors : Array Bool) (inlined : Expr) : MetaM (List KdfStep) :=
+/-- Ordered storage steps, operation requests, guards, and KDF input fields of an operation
+body, collected in a single pass over the request structure. -/
+partial def scanFlow (f : Lean.Name) (params : Array Lean.Name) (actors : Array Bool) (inlined : Expr) :
+    MetaM (Array Node × List KdfStep) := do
   lambdaTelescope inlined fun binders body => do
-    let steps ← IO.mkRef (#[] : Array KdfStep)
-    let mut failure : Option String := none
-    let check (kind : String) (password : Expr) : MetaM (Option String) := do
+    let nodes ← IO.mkRef (#[] : Array Node)
+    let kdf ← IO.mkRef (#[] : Array KdfStep)
+    let kdfError ← IO.mkRef (none : Option String)
+    let checkKdf (kind : String) (password : Expr) : MetaM Unit := do
+      if (← kdfError.get).isSome then return
+      let password := password.consumeMData
       match binders.findIdx? (· == password) with
       | some i =>
         if i < params.size then
-          if actors[i]! then return some s!"its {kind} input is the actor"
-          return none
-        else return some s!"its {kind} input is not an argument of `{f}`"
-      | none => return some s!"`{kind}` must be applied directly to a `Password` argument of `{f}`"
-    let found ← IO.mkRef (#[] : Array (String × Expr))
-    body.forEach fun e => do
-      if e.isAppOfArity ``RequestF.hashPassword 3 then found.modify (·.push ("Password.hash", e.appArg!))
-      if e.isAppOfArity ``RequestF.verifyCredential 10 then found.modify (·.push ("Credential.verify", e.appArg!))
-    for (kind, password) in ← found.get do
-      if let some problem ← check kind password then
-        failure := some problem
-      else
-        let i := (binders.findIdx? (· == password)).getD 0
-        let field := params[i]!.toString
-        let step := if kind == "Password.hash" then KdfStep.hash field else KdfStep.verify field
-        unless (← steps.get).contains step do steps.modify (·.push step)
-    if let some problem := failure then
+          if actors[i]! then
+            kdfError.set (some s!"its {kind} input is the actor")
+          else
+            let field := params[i]!.toString
+            let step := if kind == "Password.hash" then KdfStep.hash field else KdfStep.verify field
+            unless (← kdf.get).contains step do kdf.modify (·.push step)
+        else
+          kdfError.set (some s!"its {kind} input is not an argument of `{f}`")
+      | none =>
+        kdfError.set (some s!"`{kind}` must be applied directly to a `Password` argument of `{f}`")
+    let failureOf (err : Expr) : MetaM (Option String) := do
+      match err.getAppFn with
+      | .const c _ => if err.getAppNumArgs == 0 then return some c.getString! else return none
+      | _ => return none
+    let seen ← IO.mkRef (Std.HashSet.emptyWithCapacity 64 : Std.HashSet Expr)
+    let rec visit (e : Expr) : MetaM Unit := do
+      if (← seen.get).contains e then return
+      seen.modify (·.insert e)
+      match e with
+      | .app .. =>
+        let fn := e.getAppFn
+        let args := e.getAppArgs
+        if let some node ← Requirements.storageNode? e then
+          let effect : Contract.OperationKind := match node.access with
+            | .command => .command
+            | .query => .query
+          nodes.modify (·.push { kind := node.kind, effect, detail := node.entity, constraints := node.constraints })
+        else if let .const c _ := fn then
+          if let some (_, effect) := operationRequests.find? (·.1 == c) then
+            let detail ← requestEntity c args
+            nodes.modify (·.push { kind := c.getString!, effect, detail })
+            if c == ``RequestF.hashPassword then
+              if let some pw ← requestNamedArg? c `password args then
+                checkKdf "Password.hash" pw
+            else if c == ``RequestF.verifyCredential then
+              if let some pw ← requestNamedArg? c `password args then
+                checkKdf "Credential.verify" pw
+          else if (c == ``FlowF.check || c == ``Flow.check || c == ``MonadRequire.requireWith) && args.size >= 6 &&
+              !args.back!.hasLooseBVars then
+            nodes.modify (·.push { kind := "require", effect := .query, detail := "", failure := ← failureOf args.back! })
+          else if (c == ``FlowF.fail || c == ``Flow.fail || c == ``MonadExcept.throw || c == ``MonadExceptOf.throw) &&
+              args.size ≥ 4 && !args.back!.hasLooseBVars then
+            nodes.modify (·.push { kind := "throw", effect := .query, detail := "", failure := ← failureOf args.back! })
+        visit fn
+        for arg in args do visit arg
+      | .lam _ _ b _ => visit b
+      | .forallE .. => pure ()
+      | .letE _ _ v b _ =>
+        let v' := v.consumeMData
+        if binders.contains v' then visit (b.instantiate1 v')
+        else visit v; visit b
+      | .mdata _ b => visit b
+      | .proj _ _ b => visit b
+      | _ => pure ()
+    visit body
+    if let some problem ← kdfError.get then
       throwError "cannot publish `{f}`: {problem}, so the runtime cannot run the KDF before writer admission"
-    return (← steps.get).toList
+    return (← nodes.get, (← kdf.get).toList)
 
 /-- A parameter of a published function. -/
 structure Parameter where
@@ -193,9 +198,9 @@ def failuresOf (error : Expr) : MetaM (List String) := do
     | _ => return []
   | _ => return []
 
-private def kindSyntax : Contract.OperationKind → String
-  | .command => "command"
-  | .query => "query"
+private def kindTerm : Contract.OperationKind → Term
+  | .command => mkIdent ``Contract.OperationKind.command
+  | .query => mkIdent ``Contract.OperationKind.query
 
 /-- Generate the `Operation` value and its input record for a published function. -/
 def deriveOperation (f : Lean.Name) (ref : Syntax) : CommandElabM Unit := do
@@ -210,25 +215,33 @@ def deriveOperation (f : Lean.Name) (ref : Syntax) : CommandElabM Unit := do
       (shape.params.filter (!·.actor)).toList.map (fun p => (s!"argument `{p.name}`", p.type)) do
     unless ← liftTermElabM (return (← synthInstance? (mkApp (mkConst ``Ontology.Wire) ty)).isSome) do
       throwErrorAt ref "cannot publish `{f}`: the {what} type {← liftTermElabM (ppExpr ty)} has no wire codec (entities, rows and actors are never published)"
+  let rootIdent := LeanApi.Core.Declarations.rootIdent
+  let delabTerm := LeanApi.Core.Declarations.delabTerm
   let inputs := shape.params.filter (!·.actor)
-  let full := Deriving.full
   let inputName := f ++ `Input
+  let inputIdent := rootIdent inputName
   if inputs.isEmpty then
-    Deriving.runCommand ("abbrev " ++ full inputName ++ " := Unit")
+    elabCommand (← `(abbrev $inputIdent := Unit))
   else
-    let fields ← liftTermElabM <| inputs.mapM (m := TermElabM) fun p => do
-      return p.name.toString ++ " : " ++ (← Deriving.sourceOf p.type)
-    Deriving.runCommand ("structure " ++ full inputName ++ " where\n  " ++ String.intercalate "\n  " fields.toList ++ "\n  deriving LeanDb.Model.Domain")
+    let fieldDecls ← liftTermElabM <| inputs.mapM (m := TermElabM) fun p => do
+      let fieldId := mkIdent p.name
+      let fieldTy ← delabTerm p.type
+      `(Lean.Parser.Command.structSimpleBinder| $fieldId:ident : $fieldTy)
+    let fieldsStx : TSyntax ``Lean.Parser.Command.structFields :=
+      ⟨Syntax.node .none ``Lean.Parser.Command.structFields #[mkNullNode (fieldDecls.map (·.raw))]⟩
+    let ctorId := mkIdent `mk
+    elabCommand (← `(structure $inputIdent where $ctorId:ident :: $fieldsStx:structFields deriving LeanDb.Model.Domain))
     if inputs.size == 1 && (← liftTermElabM (whnfR inputs[0]!.type)).isAppOfArity ``Ontology.EntityId 1 then
-      let target ← liftTermElabM do Deriving.sourceOf (← whnfR inputs[0]!.type).appArg!
-      Deriving.runCommand ("instance : LeanApi.Core.RouteInput " ++ full inputName ++ " := { Target := " ++ target ++
-        ", targetIdentity := inferInstance, parse := fun raw => (Ontology.Ref.parse (T := " ++ target ++ ") raw).map " ++
-        full inputName ++ ".mk, reference := " ++ full (inputName ++ inputs[0]!.name) ++ " }")
+      let target ← liftTermElabM do delabTerm (← whnfR inputs[0]!.type).appArg!
+      let mkIdent' := rootIdent (inputName ++ `mk)
+      let projIdent := rootIdent (inputName ++ inputs[0]!.name)
+      elabCommand (← `(instance : LeanApi.Core.RouteInput $inputIdent :=
+        { Target := $target, targetIdentity := inferInstance,
+          parse := fun raw => (Ontology.Ref.parse (T := $target) raw).map $mkIdent',
+          reference := $projIdent }))
   let (nodes, kdf) ← liftTermElabM do
     let generalized ← Requirements.generalize targets f (f ++ `flowWithResources)
-    let nodes ← scanNodes generalized.inlined
-    let kdf ← kdfSteps f (shape.params.map (·.name)) (shape.params.map (·.actor)) generalized.inlined
-    return (nodes, kdf)
+    scanFlow f (shape.params.map (·.name)) (shape.params.map (·.actor)) generalized.inlined
   -- bodyWithResources {resources} requirements {Scope} actor input := flowWithResources … (actor | input.field)…
   liftTermElabM do
     let flow := mkConst (f ++ `flowWithResources)
@@ -252,35 +265,47 @@ def deriveOperation (f : Lean.Name) (ref : Syntax) : CommandElabM Unit := do
         Requirements.addDefinition (f ++ `bodyWithResources) (← mkForallFVars binders result) (← mkLambdaFVars binders invocation)
   let ns := f.getPrefix
   let namespaceText := if ns.isAnonymous then "domain" else ns.toString
-  let q := Deriving.quoted
-  let identity := "{ namespaceName := " ++ q namespaceText ++ ", name := " ++ q f.getString! ++ ", version := \"1\" }"
+  let identity ← `({ namespaceName := $(quote namespaceText), name := $(quote f.getString!), version := "1" })
   let failures ← liftTermElabM <| failuresOf shape.error
+  let failureTerms : Array Term := failures.toArray.map fun s => quote s
   let actorText ← liftTermElabM do
     if let some p := shape.params.find? (·.actor) then return (← ppExpr p.type).pretty else return "Unit"
-  let nodesText := String.intercalate ", " (nodes.toList.map fun n =>
-    "{ kind := " ++ q n.kind ++ ", effect := ." ++ kindSyntax n.effect ++ ", detail := " ++ q n.detail ++
-    ", failure := " ++ (n.failure.map (fun s => "some " ++ q s) |>.getD "none") ++
-    ", constraints := [" ++ String.intercalate ", " (n.constraints.map q) ++ "] }")
+  let nodeTerms : Array Term ← nodes.mapM fun n => do
+    let failTerm ← match n.failure with
+      | some s => `(some $(quote s))
+      | none => `(none)
+    let constraintTerms : Array Term := n.constraints.toArray.map fun s => quote s
+    let eff := kindTerm n.effect
+    `({ kind := $(quote n.kind), effect := $eff, detail := $(quote n.detail), failure := $failTerm, constraints := [$constraintTerms,*] })
   let pos := (ref.getPos?.map fun position => position.byteIdx).getD 0
   let location := (← getEnv).mainModule.toString.replace "." "/" ++ ".lean:" ++ toString pos
-  let kdfText := String.intercalate ", " (kdf.map fun
-    | .hash field => "LeanApi.Core.KdfStep.hash " ++ q field
-    | .verify field => "LeanApi.Core.KdfStep.verify " ++ q field)
+  let kdfTerms : Array Term ← kdf.toArray.mapM fun
+    | .hash field => `(LeanApi.Core.KdfStep.hash $(quote field))
+    | .verify field => `(LeanApi.Core.KdfStep.verify $(quote field))
   let session := nodes.any (·.kind == "startSession")
-  let metadata := "{ identity := " ++ identity ++ ", kind := ." ++ kindSyntax shape.kind ++ ", failures := [" ++
-    String.intercalate ", " (failures.map q) ++ "], source := " ++ q location ++ ", actor := " ++ q actorText ++
-    ", nodes := [" ++ nodesText ++ "], establishesSession := " ++ toString session ++ ", kdf := [" ++ kdfText ++ "] }"
-  let errorText ← liftTermElabM <| Deriving.sourceOf shape.error
-  let outputText ← liftTermElabM <| Deriving.sourceOf shape.output
-  Deriving.runCommand ("def " ++ full (f ++ `operation) ++ " : LeanApi.Core.Operation ." ++ kindSyntax shape.kind ++ " " ++
-    full (f ++ `Actor) ++ " " ++ full inputName ++ " (" ++ outputText ++ ") (" ++ errorText ++ ") := { contract := Contract.Operation.ofValidated ." ++
-    kindSyntax shape.kind ++ " " ++ identity ++ " (by decide), Requirements := " ++ full (f ++ `Requirements) ++
-    ", portable := " ++ full (f ++ `portableRequirements) ++ ", bodyWithResources := " ++ full (f ++ `bodyWithResources) ++
-    ", metadata := " ++ metadata ++ " }")
+  let kind := kindTerm shape.kind
+  let opIdent := rootIdent (f ++ `operation)
+  let reqIdent := rootIdent (f ++ `Requirements)
+  let portIdent := rootIdent (f ++ `portableRequirements)
+  let bodyIdent := rootIdent (f ++ `bodyWithResources)
+  let actorIdent := rootIdent (f ++ `Actor)
+  let errorTerm ← liftTermElabM <| delabTerm shape.error
+  let outputTerm ← liftTermElabM <| delabTerm shape.output
+  elabCommand (← `(def $opIdent : LeanApi.Core.Operation $kind $actorIdent $inputIdent ($outputTerm) ($errorTerm) :=
+    { contract := Contract.Operation.ofValidated $kind $identity (by decide),
+      Requirements := $reqIdent,
+      portable := $portIdent,
+      bodyWithResources := $bodyIdent,
+      metadata := {
+        identity := $identity, kind := $kind, failures := [$failureTerms,*],
+        source := $(quote location), actor := $(quote actorText),
+        nodes := [$nodeTerms,*], establishesSession := $(quote session), kdf := [$kdfTerms,*] } }))
   -- `post "/x" f` / `get "/x" f` find the operation through the function value.
   if (← getEnv).contains `LeanApi.Core.PublishedOperation then
-    Deriving.runCommand ("instance : LeanApi.Core.PublishedOperation " ++ full f ++ " ." ++ kindSyntax shape.kind ++ " " ++
-      full (f ++ `Actor) ++ " " ++ full inputName ++ " (" ++ outputText ++ ") (" ++ errorText ++ ") := ⟨" ++ full (f ++ `operation) ++ "⟩")
+    let fIdent := rootIdent f
+    let pubClassIdent := rootIdent `LeanApi.Core.PublishedOperation
+    elabCommand (← `(instance : $pubClassIdent $fIdent $kind $actorIdent $inputIdent ($outputTerm) ($errorTerm) :=
+      ⟨$opIdent⟩))
 
 end LeanApi.Core.Publish
 

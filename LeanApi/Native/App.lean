@@ -297,11 +297,6 @@ def PublicApp.serve {s} [IsSchema s] (app : PublicApp s) (config : AppConfig := 
 
 open Lean Elab Command Meta
 
-private def generated (source : String) : CommandElabM Unit := do
-  match Parser.runParserCategory (← getEnv) `command source with
-  | .error error => throwError "app assembly: {error}\n{source}"
-  | .ok command => elabCommand command
-
 /-- `name := Entity.addField field (fill := v)` declares the migration (through LeanDB's
 `migration%`) once `app%` has derived the native schema it needs; a bare name refers to a
 `LeanDb.SchemaMigration` declared elsewhere. -/
@@ -335,25 +330,24 @@ def apiEndpoints (apiName : Lean.Name) : CommandElabM (Array (String × String �
 the native entities, so an inline one is declared here, after the schema, under the app's
 name, and recorded by LeanDB under its own short name. -/
 def declareMigrations (appName : Lean.Name) (migrationTerms : Array Syntax) :
-    CommandElabM (Array String) := do
-  let root := fun n : Lean.Name => "_root_." ++ n.toString
-  let mut migrations : Array String := #[]
+    CommandElabM (Array Term) := do
+  let rootIdent := LeanApi.Core.Declarations.rootIdent
+  let withRootNamespace := LeanApi.Core.Declarations.withRootNamespace
+  let mut migrations : Array Term := #[]
   for migration in migrationTerms do
     let migrationName := migration[0].getId
     if migration[1].getNumArgs == 2 then
-      let body ← liftCoreM <| PrettyPrinter.ppTerm ⟨migration[1][1]⟩
-      generated ("namespace " ++ appName.toString)
-      try
-        withRef migration <| generated ("migration% " ++ migrationName.toString ++ " := " ++
-          (body.pretty 100000))
-      finally
-        generated ("end " ++ appName.toString)
-      migrations := migrations.push (root (appName ++ migrationName))
+      let body : Term := ⟨migration[1][1]⟩
+      let migId := mkIdent migrationName
+      withRootNamespace appName <|
+        withRef migration <|
+          elabCommand (← `(migration% $migId:ident := $body:term))
+      migrations := migrations.push (rootIdent (appName ++ migrationName))
     else
       let resolved ← resolveGlobalConstNoOverload (TSyntax.mk (ks := `ident) migration[0])
       unless (← getConstInfo resolved).type.isConstOf ``LeanDb.SchemaMigration do
         throwErrorAt migration "{resolved} is not a migration (LeanDb.SchemaMigration)"
-      migrations := migrations.push (root resolved)
+      migrations := migrations.push (rootIdent resolved)
   return migrations
 
 /-- What an app with accounts authenticates with: its profile entity and the credential
@@ -385,10 +379,12 @@ An entity is stored when every name between the api's namespace and the entity i
 Both `app%` forms run this; LeanReact's full-stack form runs it too, then sets `pages`. -/
 def declareApiApp (appName api : Lean.Name) (accounts : Option Accounts) (migrationTerms : Array Syntax)
     (apiRef : Syntax) : CommandElabM Unit := do
-  let root := fun n : Lean.Name => "_root_." ++ n.toString
-  let base := root appName
+  let rootIdent := LeanApi.Core.Declarations.rootIdent
+  let delabTerm := LeanApi.Core.Declarations.delabTerm
+  let withRootNamespace := LeanApi.Core.Declarations.withRootNamespace
+  let base := rootIdent appName
   let schemaName := appName ++ `Database
-  let schema := root schemaName
+  let schema := rootIdent schemaName
   let domain := api.getPrefix
   let place := if domain.isAnonymous then "the root namespace" else s!"namespace {domain}"
   let env ← getEnv
@@ -404,20 +400,23 @@ def declareApiApp (appName api : Lean.Name) (accounts : Option Accounts) (migrat
   -- derived inside the app's namespace, so the instances it generates are named after the app
   -- and two apps' modules can be imported together.
   let sessionName := appName ++ `Session
-  generated ("namespace " ++ appName.toString)
-  try
+  let sessionId := rootIdent sessionName
+  let entityIdents : Array Ident := entities.map (fun entry => rootIdent entry.name)
+  let schemaIdents : Array Ident :=
+    if accounts.isSome then entityIdents.push sessionId else entityIdents
+  withRootNamespace appName do
     if let some accounts := accounts then
-      generated ("native_session_entity% " ++ root sessionName ++ " for " ++ root accounts.profile)
-    generated ("native_schema% Database := " ++ String.intercalate ", "
-      (entities.toList.map (fun entry => root entry.name) ++ (if accounts.isSome then [root sessionName] else [])))
+      let profileId := rootIdent accounts.profile
+      elabCommand (← `(native_session_entity% $sessionId for $profileId))
+    let dbIdent := mkIdent `Database
+    elabCommand (← `(native_schema% $dbIdent:ident := $schemaIdents,*))
     if let some accounts := accounts then
-      generated ("native_credential_storage% " ++ schema ++ " for " ++ root accounts.profile ++ " using " ++
-        root accounts.credential ++ " session " ++ root sessionName)
-  finally
-    generated ("end " ++ appName.toString)
+      let profileId := rootIdent accounts.profile
+      let credId := rootIdent accounts.credential
+      elabCommand (← `(native_credential_storage% $schema for $profileId using $credId session $sessionId))
   let migrations ← declareMigrations appName migrationTerms
   -- One publication per endpoint.
-  let mut entries : Array (Lean.Name × String × String) := #[]
+  let mut entries : Array (Lean.Name × Term × Term) := #[]
   for (method, template, operation) in ← withRef apiRef (apiEndpoints api) do
     discard <| withRef apiRef (liftTermElabM (checkRoute method template operation))
     if entries.any (·.1 == operation) then
@@ -428,22 +427,23 @@ def declareApiApp (appName api : Lean.Name) (accounts : Option Accounts) (migrat
     let info ← getConstInfo operation
     let kind ← liftTermElabM <| whnf (info.type.getArg! 0)
     let query := kind.isConstOf ``Contract.OperationKind.query
-    let binding := "(route_binding% " ++ method ++ " " ++ (Lean.Json.str template).compress ++ " " ++ root operation ++ ")"
-    let requirements := "(" ++ root function ++ ".Requirements.infer)"
+    let methodIdent := mkIdent (.mkSimple method)
+    let templateLit : Syntax.StrLit := quote template
+    let opIdent := rootIdent operation
+    let binding ← `(route_binding% $methodIdent $templateLit $opIdent)
+    let reqInferIdent := rootIdent (function ++ `Requirements ++ `infer)
+    let requirements ← `(($reqInferIdent))
     -- The actor family `f.Actor`, read off the operation.
     let actor ← liftTermElabM do
       let family ← whnf (mkConst (function ++ `Actor))
       lambdaTelescope family fun _ body => do
         if body.isConstOf ``Unit then return none
-        let rooted := body.replace fun
-          | .const name levels => some (.const (`_root_ ++ name) levels)
-          | _ => none
-        let text ← withOptions (fun o => (o.setBool `pp.fullNames true).setBool `pp.notation false) <| ppExpr rooted
-        return some (body.isAppOfArity ``Option 1, text.pretty 100000, ← ppExpr body)
+        let actorTerm ← delabTerm body
+        return some (body.isAppOfArity ``Option 1, actorTerm, ← ppExpr body)
     let publish ← match accounts, actor with
       | none, none =>
-        pure ("LeanApi.Native." ++ (if query then "assemblePublicQueryAt" else "assemblePublicCommandAt") ++
-          " codecs " ++ binding ++ " " ++ root operation ++ " " ++ requirements)
+        let fn := rootIdent (if query then ``LeanApi.Native.assemblePublicQueryAt else ``LeanApi.Native.assemblePublicCommandAt)
+        `($fn codecs $binding $opIdent $requirements)
       | none, some (_, _, shown) =>
         -- No accounts, no actor: an operation that needs a signed-in user cannot be served.
         throwErrorAt apiRef "{function} takes an actor ({shown}), but app% {appName} has no accounts, \
@@ -452,37 +452,45 @@ def declareApiApp (appName api : Lean.Name) (accounts : Option Accounts) (migrat
       | some accounts, actor =>
         -- The Principal dictionaries are passed by name: their profile index is a class
         -- projection that instance search does not unfold.
-        let actorArgs := match actor with
-          | none => "(Actor := fun _ => Unit) "
-          | some (optional, text, _) =>
-            "(Actor := fun _ => " ++ text ++ ") (actorContext := LeanApi.Native." ++
-              (if optional then "optionalPrincipalActor" else "principalActor") ++ " (P := " ++ root accounts.profile ++
-              ") inferInstance rfl) "
-        pure ("LeanApi.Native." ++ (if query then "assembleQueryAt" else "assembleCommandAt") ++ " " ++ actorArgs ++
-          "context codecs " ++ binding ++ " " ++ root operation ++ " " ++ requirements)
+        let fn := rootIdent (if query then ``LeanApi.Native.assembleQueryAt else ``LeanApi.Native.assembleCommandAt)
+        match actor with
+        | none =>
+          `($fn (Actor := fun _ => Unit) context codecs $binding $opIdent $requirements)
+        | some (optional, actorTerm, _) =>
+          let helper := rootIdent (if optional then ``LeanApi.Native.optionalPrincipalActor else ``LeanApi.Native.principalActor)
+          let profileId := rootIdent accounts.profile
+          `($fn (Actor := fun _ => $actorTerm) (actorContext := $helper (P := $profileId) inferInstance rfl) context codecs $binding $opIdent $requirements)
     entries := entries.push (operation, binding, publish)
-  let descriptions := "[" ++ String.intercalate ", " (entries.toList.map fun (operation, binding, _) =>
-    "LeanApi.Native.describeAt " ++ binding ++ " " ++ root operation) ++ "]"
-  let publications := "[" ++ String.intercalate ", " (entries.toList.map (·.2.2)) ++ "]"
-  let migrationList := "[" ++ String.intercalate ", " migrations.toList ++ "]"
+  let descTerms : Array Term ← entries.mapM fun (operation, binding, _) => do
+    let opId := rootIdent operation
+    `(LeanApi.Native.describeAt $binding $opId)
+  let pubTerms : Array Term := entries.map (·.2.2)
+  let publications ← `([$pubTerms,*])
+  let descriptions ← `([$descTerms,*])
+  let migrationList ← `([$migrations,*])
   match accounts with
   | some accounts =>
-    let authOperations := "[" ++ String.intercalate ", " (entries.toList.map fun (operation, _, _) =>
-      "(if " ++ root operation ++ ".metadata.establishesSession then some " ++ root operation ++ ".contract.identity else none)") ++
-      "].filterMap id"
-    generated ("def " ++ base ++ " : LeanApi.Native.NativeApp " ++ schema ++ " " ++ root accounts.profile ++ " := {\n" ++
-      "  profile := LeanDb.Native.HasEntityStorage.storage\n  store := LeanApi.Native.Auth.HasStorage.storage\n" ++
-      "  build := fun context codecs => LeanApi.Native.Application.create " ++ publications ++ "\n" ++
-      "  descriptions := " ++ descriptions ++ "\n" ++
-      "  authOperations := " ++ authOperations ++ "\n" ++
-      "  migrations := " ++ migrationList ++ " }")
+    let profileId := rootIdent accounts.profile
+    let authTerms : Array Term ← entries.mapM fun (operation, _, _) => do
+      let opId := rootIdent operation
+      `((if ($opId).metadata.establishesSession then some ($opId).contract.identity else none))
+    let authOperations ← `(([$authTerms,*]).filterMap id)
+    elabCommand (← `(def $base : LeanApi.Native.NativeApp $schema $profileId := {
+      profile := LeanDb.Native.HasEntityStorage.storage
+      store := LeanApi.Native.Auth.HasStorage.storage
+      build := fun context codecs => LeanApi.Native.Application.create $publications
+      descriptions := $descriptions
+      authOperations := $authOperations
+      migrations := $migrationList }))
   | none =>
-    generated ("def " ++ base ++ " : LeanApi.Native.PublicApp " ++ schema ++ " := {\n" ++
-      "  build := fun codecs => (([" ++ String.intercalate ", " (entries.toList.map fun (operation, _, _) =>
-        "LeanApi.Native.requireNoAccounts " ++ root operation) ++ "] : List (Ontology.Validation Unit)).forM id).bind fun _ =>\n" ++
-      "    LeanApi.Native.Application.create " ++ publications ++ "\n" ++
-      "  descriptions := " ++ descriptions ++ "\n" ++
-      "  migrations := " ++ migrationList ++ " }")
+    let noAccTerms : Array Term ← entries.mapM fun (operation, _, _) => do
+      let opId := rootIdent operation
+      `(LeanApi.Native.requireNoAccounts $opId)
+    elabCommand (← `(def $base : LeanApi.Native.PublicApp $schema := {
+      build := fun codecs => (([$noAccTerms,*] : List (Ontology.Validation Unit)).forM id).bind fun _ =>
+        LeanApi.Native.Application.create $publications
+      descriptions := $descriptions
+      migrations := $migrationList }))
 
 /-- `app% Name where api := api`: serve a portable `Api` with no accounts. The schema is the
 domain entities of the api's namespace (the root namespace for a root `api`): an entity is stored

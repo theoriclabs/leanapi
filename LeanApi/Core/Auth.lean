@@ -61,8 +61,22 @@ def Ontology.Password.hash {ε : Type} (password : Ontology.Password) : LeanApi.
 namespace LeanApi.Core.Declarations
 open Lean Elab Command Meta LeanDb.Model
 
-private def full := LeanDb.Model.Deriving.full
-private def quoted := LeanDb.Model.Deriving.quoted
+/-- Rooted identifier syntax for a global constant name. -/
+def rootIdent (name : Lean.Name) : Ident :=
+  mkIdent (`_root_ ++ name.replacePrefix `_root_ .anonymous)
+
+/-- Elaborable term syntax for a closed expression, using full names and no notation. -/
+def delabTerm (e : Expr) : MetaM Term :=
+  withOptions (fun o => (o.setBool `pp.fullNames true).setBool `pp.notation false) <|
+    PrettyPrinter.delab e
+
+/-- Run `act` with `currNamespace` set to `ns` (root-relative), restoring the prior scope. -/
+def withRootNamespace (ns : Lean.Name) (act : CommandElabM α) : CommandElabM α := do
+  let saved ← getScope
+  let rootNs := ns.replacePrefix `_root_ .anonymous
+  modifyScope fun s => { s with currNamespace := rootNs }
+  try act
+  finally modifyScope fun _ => saved
 
 /-- Field `field` of entity `owner`, with its (reducible-unfolded) type. -/
 private def entityField (target : Syntax) : CommandElabM (Lean.Name × Lean.Name × Expr) := do
@@ -90,14 +104,20 @@ private def declareCredential (profileField hashField : Syntax) : CommandElabM U
     throwErrorAt profileField "`{profileField.getId}` must have type `Ref T`"
   let .const profile _ := profileType.appArg! | throwErrorAt profileField "`{profileField.getId}` must reference an entity"
   unless (← getEnv).contains (profile ++ `Row) do throwErrorAt profileField "{profile} is not an entity with a row view"
-  let ty := full owner
-  let profileTy := full profile
-  Deriving.runCommand ("def " ++ full (owner ++ `credentialLink) ++ " : LeanApi.Core.CredentialLink " ++ ty ++ " " ++ profileTy ++
-    " := { identity := " ++ quoted owner.toString ++ ", profile := " ++ full (owner ++ .mkSimple (profileName.toString ++ "Path")) ++
-    ", hash := " ++ full (owner ++ .mkSimple (hash.toString ++ "Path")) ++ " }")
-  Deriving.runCommand ("def " ++ full (owner ++ `verify) ++ " {ε : Type} : Option (" ++ full (profile ++ `Row) ++
-    " LeanDb.Model.OpScope) → Ontology.Password → LeanApi.Core.Op ε (Option (Ontology.Ref " ++ profileTy ++
-    ")) := fun profile password => LeanApi.Core.Auth.verifyWith " ++ full (owner ++ `credentialLink) ++ " profile password")
+  let ty := rootIdent owner
+  let profileTy := rootIdent profile
+  let linkId := rootIdent (owner ++ `credentialLink)
+  let verifyId := rootIdent (owner ++ `verify)
+  let profilePathId := rootIdent (owner ++ .mkSimple (profileName.toString ++ "Path"))
+  let hashPathId := rootIdent (owner ++ .mkSimple (hash.toString ++ "Path"))
+  let profileRowId := rootIdent (profile ++ `Row)
+  let ownerStr : Term := quote owner.toString
+  elabCommand (← `(def $linkId : LeanApi.Core.CredentialLink $ty $profileTy :=
+    { identity := $ownerStr, profile := $profilePathId, hash := $hashPathId }))
+  let epsId := mkIdent `ε
+  elabCommand (← `(def $verifyId {$epsId : Type} : Option ($profileRowId LeanDb.Model.OpScope) → Ontology.Password →
+      LeanApi.Core.Op $epsId (Option (Ontology.Ref $profileTy)) :=
+    fun profile password => LeanApi.Core.Auth.verifyWith $linkId profile password))
 
 /-- `credential C.profile C.hash` is one more reading of LeanDB's identifier-led
 `E.a E.b` declaration shape (`link` is LeanDB's). -/
@@ -119,9 +139,11 @@ initialize registerDerivingHandler ``LeanApi.Core.Principal fun names => do
       let body ← whnfR body
       unless body.isAppOfArity ``Ontology.EntityId 1 do
         throwError "deriving Principal: field {field} must have type `Ref Profile`"
-      Deriving.sourceOf body.appArg!
-    Deriving.runCommand ("instance : LeanApi.Core.Principal " ++ full name ++ " := { Profile := " ++ profile ++
-      ", id := " ++ full (name ++ field) ++ ", trusted := fun id _ => ⟨id⟩ }")
+      delabTerm body.appArg!
+    let ty := rootIdent name
+    let proj := rootIdent (name ++ field)
+    elabCommand (← `(instance : LeanApi.Core.Principal $ty :=
+      { Profile := $profile, id := $proj, trusted := fun id _ => ⟨id⟩ }))
   return true
 
 end LeanApi.Core.Declarations
